@@ -4,5 +4,5 @@
 set -e
 TAG=v3.1.0
 DIR="${1:-${TMPDIR:-/tmp}/grux-$TAG}"
-[ -d "$DIR/.git" ] || git clone -q --depth 1 --branch "$TAG" https://github.com/dotcomjack/grux.git "$DIR"
+[ -d "$DIR/.git" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$TAG" https://github.com/dotcomjack/grux.git "$DIR" 2>/dev/null
 echo "$DIR/Grux-Mac/Sources/Grux"
