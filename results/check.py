@@ -4,7 +4,7 @@
   python3 results/check.py                                  # the live surfaces and the live registry
   python3 results/check.py --card README.md --readme ../grux/README.md --site page.html --registry https://<host>
 
-Each surface is a path or a URL. Two checks per surface, both from v1.json:
+Each surface is a path or a URL; the blog is the dotcomjack.com announcement, checked on its prose. Two checks per surface, both from v1.json:
   rows   every table row and headline sentence that surface carries, matched whole, so a right number in
          the wrong row, or a row that went missing, fails;
   shape  every number on the surface shaped like one of ours ("N (P%)", "N of 464", "N out of 70",
@@ -34,6 +34,7 @@ LIVE = {
     "card": "https://raw.githubusercontent.com/dotcomjack/grux-local/main/README.md",
     "readme": "https://raw.githubusercontent.com/dotcomjack/grux/main/README.md",
     "site": "https://gruxai.com/answers/grux-local-model/",
+    "blog": "https://dotcomjack.com/blog/jybp4hg1",
     "registry": "https://gruxai.com",
 }
 UA = {"User-Agent": "grux-local-numbers-check"}
@@ -132,6 +133,14 @@ def expected(v1):
             ("headline", "4B lead", rf"the 4B got {big['grux_local']['pass']} right, against "
                                     rf"{big['before_training']['pass']} for the same model before training"),
         ],
+        # The dotcomjack.com announcement (2026-10-23) carries prose, not the tables.
+        "blog": [
+            ("headline", "blog task count", rf"across {of} held-out Grux tasks"),
+            ("headline", "blog 4B", rf"the 4B version got {big['grux_local']['pass']} right, against "
+                                    rf"{big['before_training']['pass']} for the same model before training"),
+            ("headline", "blog 2B", rf"2B version, made for 8 GB Macs, went from {small['before_training']['pass']} "
+                                    rf"to {small['grux_local']['pass']}\b"),
+        ],
     }
     return rows, headline, allowed, of, big["grux_local"]["hidden_instruction_cases"]
 
@@ -206,7 +215,7 @@ def main():
     v1 = json.load(open(a.results))
     rows, headline, allowed, of, hc = expected(v1)
     failed = 0
-    for name in ("card", "readme", "site"):
+    for name in ("card", "readme", "site", "blog"):
         src = getattr(a, name)
         try:
             raw, _ = fetch(src)
@@ -216,11 +225,12 @@ def main():
             continue
         md = raw.decode("utf-8", "replace")
         text = text_of(readme_scope(md).encode() if name == "readme" else raw, src)
-        want = rows + headline.get(name, [])
+        want = ([] if name == "blog" else rows) + headline.get(name, [])
         miss = [label for _, label, rx in want if not re.search(rx, text)]
         n, bad = shape(text, allowed, of, hc)
         claims = absolutes(text, v1)
-        ok = not miss and not bad and not claims and n > 0
+        # Prose (the blog) has no table shapes, so there every row matching is the floor instead.
+        ok = not miss and not bad and not claims and (n > 0 or (name == "blog" and bool(want)))
         failed += not ok
         print(f"{'PASS' if ok else 'FAIL'} {name}: {len(want) - len(miss)} of {len(want)} rows match, "
               f"{n} numbers checked by shape, {len(bad)} wrong, {len(claims)} absolute claims ({src})")
