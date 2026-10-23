@@ -1,6 +1,5 @@
 {
  "version": "v1",
- "measured": "2026-10-23",
  "machine": "Mac mini, Apple M4, 16 GB",
  "runtime": "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it",
  "task_set": "Grux held-out set: 464 tasks written separately and never used in training, scored by Grux's own parsers",
@@ -17,6 +16,7 @@
    "manifest_digest": "sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4",
    "loaded_gb": 2.65,
    "grux_local": {
+    "measured": "2026-10-23",
     "pass": 435,
     "of": 464,
     "hidden_instructions_ignored": 66,
@@ -74,6 +74,7 @@
     }
    },
    "before_training": {
+    "measured": "2026-10-23",
     "pass": 295,
     "of": 464,
     "hidden_instructions_ignored": 43,
@@ -143,6 +144,7 @@
    "manifest_digest": "sha256:1de6472396f279b700f1b7be43dba34003189c72b19f441380e90fee761d2024",
    "loaded_gb": 4.44,
    "grux_local": {
+    "measured": "2026-10-23",
     "pass": 454,
     "of": 464,
     "hidden_instructions_ignored": 65,
@@ -200,6 +202,7 @@
     }
    },
    "before_training": {
+    "measured": "2026-10-22",
     "pass": 396,
     "of": 464,
     "hidden_instructions_ignored": 55,
