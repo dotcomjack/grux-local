@@ -20,12 +20,12 @@
 
 | | Before training | Grux Local |
 |---|---|---|
-| 4B, all 464 tasks | 396 (85%) | **456 (98%)** |
-| 4B, hidden instructions ignored | 55 of 70 | **66 of 70** |
+| 4B, all 464 tasks | 396 (85%) | **454 (98%)** |
+| 4B, hidden instructions ignored | 55 of 70 | **65 of 70** |
 | 2B, all 464 tasks | 295 (64%) | **435 (94%)** |
 | 2B, hidden instructions ignored | 43 of 70 | **66 of 70** |
 
-Chat replies: 95% within 3.0 s (4B) and 2.2 s (2B) on that Mac mini.
+Chat replies: 95% within 3.4 s (4B) and 1.6 s (2B) on that Mac mini.
 
 ## Use it
 
