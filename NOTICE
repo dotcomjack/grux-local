@@ -1,0 +1,10 @@
+Grux Local
+Copyright 2026 DotcomJack
+
+Grux Local is a fine-tune of Qwen 3.5 (2B and 4B) by the Qwen team, Alibaba Cloud,
+released under the Apache License, Version 2.0 (https://huggingface.co/Qwen).
+Training answers were generated with Gemma 4 26B by Google, released under the
+Apache License, Version 2.0 (https://huggingface.co/google).
+
+The fine-tuned weights in this repository's releases are distributed under the
+Apache License, Version 2.0. See LICENSE.
