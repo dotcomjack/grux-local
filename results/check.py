@@ -9,6 +9,9 @@ Each surface is a path or a URL. Two checks per surface, both from v1.json:
          the wrong row, or a row that went missing, fails;
   shape  every number on the surface shaped like one of ours ("N (P%)", "N of 464", "N out of 70",
          "X.XX GB", "X.X s") must be one of ours, so a stray wrong number elsewhere on the page fails too.
+  claims an absolute behaviour claim ("it ignores instructions hidden in...", "are not followed",
+         "it says so instead of pretending") fails while v1.json shows that family below 100%: no
+         tag is perfect at it, so the surface must say "trained to" and let the table carry the rate.
 The registry check ties the numbers to the files: each tag's manifest must hash to v1.json's digest.
 Exit 0 only when every surface passes; a surface with nothing matched is a FAIL, never a pass.
 """
@@ -59,6 +62,29 @@ def readme_scope(md):
     return (callout.group(0) if callout else "") + "\n" + (section.group(0) if section else "")
 
 
+# Third-person absolutes, per scored family. "Trained to ignore" or an imperative under a "trained to do"
+# heading is fine; "it ignores" states a 100% that the table contradicts. Found by the 2026-10-23 copy
+# review on the card and the site: three such claims, while the families scored 65 to 118 of 120.
+ABSOLUTE = {
+    "injection": [r"\bignores instructions hidden\b", r"\b(?:are|is) not followed\b", r"\bnever follows\b"],
+    "chat_honesty": [r"\bit says so instead of pretending\b", r"\bsays no honestly\b"],
+    "chat_tools": [r"\bit calls the right\b", r"(?<![Tt]rained to )\bCalls the right Grux tool\b"],
+}
+
+
+def absolutes(text, v1):
+    out = []
+    for fam, pats in ABSOLUTE.items():
+        rates = [(t, d["grux_local"]["families"][fam]) for t, d in v1["tags"].items()]
+        imperfect = [f"{t} {r['pass']}/{r['of']}" for t, r in rates if r["pass"] < r["of"]]
+        if not imperfect:
+            continue
+        for pat in pats:
+            for m in re.finditer(pat, text):
+                out.append(f"{m.group(0)!r} while {fam} is {', '.join(imperfect)}")
+    return out
+
+
 def pct(n, of):
     return round(100 * n / of)
 
@@ -91,10 +117,11 @@ def expected(v1):
         "readme": [
             ("headline", "4B headline", rf"\b{big['grux_local']['pass']} of {of} held-out Grux tasks right, against "
                                         rf"{big['before_training']['pass']} for the same model before training"),
-            ("headline", "4B hidden headline", rf"\b{big['grux_local']['hidden_instructions_ignored']} times out of "
-                                               rf"{big['grux_local']['hidden_instruction_cases']}\b"),
-            ("headline", "2B headline", rf"8 GB version went from {small['before_training']['pass']} to "
-                                        rf"{small['grux_local']['pass']}\b"),
+            ("headline", "4B hidden headline", rf"\bin {big['grux_local']['hidden_instructions_ignored']} of "
+                                               rf"{big['grux_local']['hidden_instruction_cases']} held-out cases, against "
+                                               rf"{big['before_training']['hidden_instructions_ignored']}\b"),
+            ("headline", "2B headline", rf"2B, made for 8 GB Macs, went from {small['before_training']['pass']} to "
+                                        rf"{small['grux_local']['pass']} of {of}\b"),
         ],
         "site": [
             ("headline", "4B lead", rf"the 4B got {big['grux_local']['pass']} right, against "
@@ -151,14 +178,17 @@ def main():
         want = rows + headline.get(name, [])
         miss = [label for _, label, rx in want if not re.search(rx, text)]
         n, bad = shape(text, allowed, of, hc)
-        ok = not miss and not bad and n > 0
+        claims = absolutes(text, v1)
+        ok = not miss and not bad and not claims and n > 0
         failed += not ok
         print(f"{'PASS' if ok else 'FAIL'} {name}: {len(want) - len(miss)} of {len(want)} rows match, "
-              f"{n} numbers checked by shape, {len(bad)} wrong ({src})")
+              f"{n} numbers checked by shape, {len(bad)} wrong, {len(claims)} absolute claims ({src})")
         for label in miss:
             print(f"     missing or different: {label}")
         for b in bad:
             print(f"     not a v1.json number: {b!r}")
+        for c in claims:
+            print(f"     absolute claim: {c}")
     for tag, d in v1["tags"].items():
         for ref in [tag] + d["aliases"]:
             url = f"{a.registry.rstrip('/')}/v2/grux/grux-local/manifests/{ref}"
