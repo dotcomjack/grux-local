@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Numbers check: every surface that states a Grux Local number must state the one in results/v1.json.
+
+  python3 results/check.py                                  # the live surfaces and the live registry
+  python3 results/check.py --card README.md --readme ../grux/README.md --site page.html --registry https://<host>
+
+Each surface is a path or a URL. Two checks per surface, both from v1.json:
+  rows   every table row and headline sentence that surface carries, matched whole, so a right number in
+         the wrong row, or a row that went missing, fails;
+  shape  every number on the surface shaped like one of ours ("N (P%)", "N of 464", "N out of 70",
+         "X.XX GB", "X.X s") must be one of ours, so a stray wrong number elsewhere on the page fails too.
+The registry check ties the numbers to the files: each tag's manifest must hash to v1.json's digest.
+Exit 0 only when every surface passes; a surface with nothing matched is a FAIL, never a pass.
+"""
+import argparse
+import hashlib
+import html
+import json
+import os
+import re
+import sys
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+LIVE = {
+    "card": "https://raw.githubusercontent.com/dotcomjack/grux-local/main/README.md",
+    "readme": "https://raw.githubusercontent.com/dotcomjack/grux/main/README.md",
+    "site": "https://gruxai.com/answers/grux-local-model/",
+    "registry": "https://gruxai.com",
+}
+UA = {"User-Agent": "grux-local-numbers-check"}
+
+
+def fetch(src, headers=None):
+    if re.match(r"https?://", src):
+        req = urllib.request.Request(src, headers={**UA, **(headers or {})})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read(), dict(r.headers)
+    return open(src, "rb").read(), {}
+
+
+def text_of(raw, src):
+    s = raw.decode("utf-8", "replace")
+    if "<html" in s[:2000].lower():
+        m = re.search(r"<main\b.*?</main>", s, re.S | re.I)
+        s = m.group(0) if m else s
+        s = re.sub(r"<(script|style)\b.*?</\1>", " ", s, flags=re.S | re.I)
+        s = html.unescape(re.sub(r"<[^>]+>", " ", s))
+    else:
+        s = re.sub(r"^\s*>\s?", "", s, flags=re.M)
+        s = s.replace("**", "").replace("`", "").replace("|", " ")
+    return re.sub(r"\s+", " ", s)
+
+
+def readme_scope(md):
+    """The Grux README talks about much else; only the announcement and the Grux Local section are ours."""
+    callout = re.search(r"^> \*\*New: Grux Local.*?(?=^[^>])", md, re.S | re.M)
+    section = re.search(r"^## Grux Local\n.*?(?=^---|^## )", md, re.S | re.M)
+    return (callout.group(0) if callout else "") + "\n" + (section.group(0) if section else "")
+
+
+def pct(n, of):
+    return round(100 * n / of)
+
+
+def expected(v1):
+    t = v1["tags"]
+    rows, allowed = [], {"pairs": set(), "of_tasks": set(), "of_hidden": set(), "gb": set(), "s": set()}
+    for tag, d in t.items():
+        T, a, b = d["size"], d["grux_local"], d["before_training"]
+        of, hc = a["of"], a["hidden_instruction_cases"]
+        ap, bp = pct(a["pass"], of), pct(b["pass"], of)
+        rows += [
+            ("all", f"{T} all tasks: {b['pass']} ({bp}%) to {a['pass']} ({ap}%)",
+             rf"{T}, all (?:{of} )?tasks {b['pass']} \({bp}%\) {a['pass']} \({ap}%\)"),
+            ("hidden", f"{T} hidden instructions: {b['hidden_instructions_ignored']} to {a['hidden_instructions_ignored']} of {hc}",
+             rf"{T}, hidden instructions ignored {b['hidden_instructions_ignored']} of {hc} {a['hidden_instructions_ignored']} of {hc}"),
+            ("loaded", f"{T} loaded {d['loaded_gb']:.2f} GB on {d['made_for']}",
+             rf"grux-local:{tag}\b[^0-9]{{0,40}}?{re.escape(d['made_for'])} {d['loaded_gb']:.2f} GB"),
+            ("chat", f"{T} chat p95 {a['chat_p95_s']:.1f} s",
+             rf"{a['chat_p95_s']:.1f} s(?:econds)?(?: on the {T}| \({T}\))"),
+        ]
+        allowed["pairs"] |= {(a["pass"], ap), (b["pass"], bp)}
+        allowed["of_tasks"] |= {a["pass"], b["pass"]}
+        allowed["of_hidden"] |= {a["hidden_instructions_ignored"], b["hidden_instructions_ignored"]}
+        allowed["gb"].add(f"{d['loaded_gb']:.2f}")
+        allowed["s"].add(f"{a['chat_p95_s']:.1f}")
+    big, small = t["4b"], t["2b"]
+    of = big["grux_local"]["of"]
+    headline = {
+        "readme": [
+            ("headline", "4B headline", rf"\b{big['grux_local']['pass']} of {of} held-out Grux tasks right, against "
+                                        rf"{big['before_training']['pass']} for the same model before training"),
+            ("headline", "4B hidden headline", rf"\b{big['grux_local']['hidden_instructions_ignored']} times out of "
+                                               rf"{big['grux_local']['hidden_instruction_cases']}\b"),
+            ("headline", "2B headline", rf"8 GB version went from {small['before_training']['pass']} to "
+                                        rf"{small['grux_local']['pass']}\b"),
+        ],
+        "site": [
+            ("headline", "4B lead", rf"the 4B got {big['grux_local']['pass']} right, against "
+                                    rf"{big['before_training']['pass']} for the same model before training"),
+        ],
+    }
+    return rows, headline, allowed, of, big["grux_local"]["hidden_instruction_cases"]
+
+
+def shape(text, allowed, of, hc):
+    bad, n = [], 0
+    for m in re.finditer(r"\b(\d+) \((\d+)%\)", text):
+        n += 1
+        if (int(m.group(1)), int(m.group(2))) not in allowed["pairs"]:
+            bad.append(m.group(0))
+    for m in re.finditer(rf"\b(\d+) of {of}\b", text):
+        n += 1
+        if int(m.group(1)) not in allowed["of_tasks"]:
+            bad.append(m.group(0))
+    for m in re.finditer(rf"\b(\d+) (?:times )?(?:out )?of {hc}\b", text):
+        n += 1
+        if int(m.group(1)) not in allowed["of_hidden"]:
+            bad.append(m.group(0))
+    for m in re.finditer(r"\b(\d+\.\d+) GB\b", text):
+        n += 1
+        if m.group(1) not in allowed["gb"]:
+            bad.append(m.group(0))
+    for m in re.finditer(r"\b(\d+\.\d) s(?:econds)?\b", text):
+        n += 1
+        if m.group(1) not in allowed["s"]:
+            bad.append(m.group(0))
+    return n, bad
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    for k, v in LIVE.items():
+        ap.add_argument("--" + k, default=v)
+    ap.add_argument("--results", default=os.path.join(HERE, "v1.json"))
+    a = ap.parse_args()
+    v1 = json.load(open(a.results))
+    rows, headline, allowed, of, hc = expected(v1)
+    failed = 0
+    for name in ("card", "readme", "site"):
+        src = getattr(a, name)
+        try:
+            raw, _ = fetch(src)
+        except Exception as e:
+            print(f"FAIL {name}: could not read {src}: {e}")
+            failed += 1
+            continue
+        md = raw.decode("utf-8", "replace")
+        text = text_of(readme_scope(md).encode() if name == "readme" else raw, src)
+        want = rows + headline.get(name, [])
+        miss = [label for _, label, rx in want if not re.search(rx, text)]
+        n, bad = shape(text, allowed, of, hc)
+        ok = not miss and not bad and n > 0
+        failed += not ok
+        print(f"{'PASS' if ok else 'FAIL'} {name}: {len(want) - len(miss)} of {len(want)} rows match, "
+              f"{n} numbers checked by shape, {len(bad)} wrong ({src})")
+        for label in miss:
+            print(f"     missing or different: {label}")
+        for b in bad:
+            print(f"     not a v1.json number: {b!r}")
+    for tag, d in v1["tags"].items():
+        for ref in [tag] + d["aliases"]:
+            url = f"{a.registry.rstrip('/')}/v2/grux/grux-local/manifests/{ref}"
+            try:
+                body, hdr = fetch(url, {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+                got = "sha256:" + hashlib.sha256(body).hexdigest()
+                served = {k.lower(): v for k, v in hdr.items()}.get("docker-content-digest")
+                ok = got == d["manifest_digest"] == served
+            except Exception as e:
+                got, served, ok = f"error {e}", None, False
+            failed += not ok
+            print(f"{'PASS' if ok else 'FAIL'} registry {ref}: body {got[:19]}, header {str(served)[:19]}, "
+                  f"v1.json {d['manifest_digest'][:19]} ({url})")
+    print("ALL PASS" if not failed else f"{failed} FAILED")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

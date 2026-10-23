@@ -27,6 +27,8 @@
 
 Chat replies: 95% within 3.4 s (4B) and 1.6 s (2B) on that Mac mini.
 
+Every number here, with the count for each kind of task, is in [`results/v1.json`](results/v1.json). `python3 results/check.py` checks it against this card, the Grux README and gruxai.com, and checks that each tag's manifest hashes to the digest recorded there.
+
 ## Use it
 
 ```

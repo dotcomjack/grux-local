@@ -1,0 +1,261 @@
+{
+ "version": "v1",
+ "measured": "2026-10-23",
+ "machine": "Mac mini, Apple M4, 16 GB",
+ "runtime": "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it",
+ "task_set": "Grux held-out set: 464 tasks written separately and never used in training, scored by Grux's own parsers",
+ "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
+ "requires": "Apple silicon, Ollama 0.40.8 or later",
+ "tags": {
+  "2b": {
+   "name": "gruxai.com/grux/grux-local:2b",
+   "aliases": [],
+   "size": "2B",
+   "made_for": "8 GB Macs",
+   "base_model": "Qwen/Qwen3.5-2B",
+   "manifest_digest": "sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4",
+   "loaded_gb": 2.65,
+   "grux_local": {
+    "pass": 435,
+    "of": 464,
+    "hidden_instructions_ignored": 66,
+    "hidden_instruction_cases": 70,
+    "chat_p95_s": 1.58,
+    "families": {
+     "ambient": {
+      "pass": 19,
+      "of": 20
+     },
+     "chat_honesty": {
+      "pass": 29,
+      "of": 32
+     },
+     "chat_plain": {
+      "pass": 40,
+      "of": 41
+     },
+     "chat_tools": {
+      "pass": 104,
+      "of": 120
+     },
+     "dictation": {
+      "pass": 48,
+      "of": 51
+     },
+     "email_audit": {
+      "pass": 28,
+      "of": 28
+     },
+     "email_triage": {
+      "pass": 26,
+      "of": 26
+     },
+     "injection": {
+      "pass": 66,
+      "of": 70
+     },
+     "issue": {
+      "pass": 15,
+      "of": 15
+     },
+     "meeting": {
+      "pass": 9,
+      "of": 10
+     },
+     "notification": {
+      "pass": 35,
+      "of": 35
+     },
+     "title": {
+      "pass": 16,
+      "of": 16
+     }
+    }
+   },
+   "before_training": {
+    "pass": 295,
+    "of": 464,
+    "hidden_instructions_ignored": 43,
+    "hidden_instruction_cases": 70,
+    "chat_p95_s": 3.26,
+    "families": {
+     "ambient": {
+      "pass": 14,
+      "of": 20
+     },
+     "chat_honesty": {
+      "pass": 14,
+      "of": 32
+     },
+     "chat_plain": {
+      "pass": 39,
+      "of": 41
+     },
+     "chat_tools": {
+      "pass": 54,
+      "of": 120
+     },
+     "dictation": {
+      "pass": 32,
+      "of": 51
+     },
+     "email_audit": {
+      "pass": 25,
+      "of": 28
+     },
+     "email_triage": {
+      "pass": 13,
+      "of": 26
+     },
+     "injection": {
+      "pass": 43,
+      "of": 70
+     },
+     "issue": {
+      "pass": 13,
+      "of": 15
+     },
+     "meeting": {
+      "pass": 8,
+      "of": 10
+     },
+     "notification": {
+      "pass": 28,
+      "of": 35
+     },
+     "title": {
+      "pass": 12,
+      "of": 16
+     }
+    }
+   },
+   "before_training_model": "qwen3.5:2b, the Ollama library build, on the same Mac"
+  },
+  "4b": {
+   "name": "gruxai.com/grux/grux-local:4b",
+   "aliases": [
+    "latest"
+   ],
+   "size": "4B",
+   "made_for": "16 GB Macs and up",
+   "base_model": "Qwen/Qwen3.5-4B",
+   "manifest_digest": "sha256:1de6472396f279b700f1b7be43dba34003189c72b19f441380e90fee761d2024",
+   "loaded_gb": 4.44,
+   "grux_local": {
+    "pass": 454,
+    "of": 464,
+    "hidden_instructions_ignored": 65,
+    "hidden_instruction_cases": 70,
+    "chat_p95_s": 3.4,
+    "families": {
+     "ambient": {
+      "pass": 19,
+      "of": 20
+     },
+     "chat_honesty": {
+      "pass": 30,
+      "of": 32
+     },
+     "chat_plain": {
+      "pass": 41,
+      "of": 41
+     },
+     "chat_tools": {
+      "pass": 118,
+      "of": 120
+     },
+     "dictation": {
+      "pass": 51,
+      "of": 51
+     },
+     "email_audit": {
+      "pass": 28,
+      "of": 28
+     },
+     "email_triage": {
+      "pass": 26,
+      "of": 26
+     },
+     "injection": {
+      "pass": 65,
+      "of": 70
+     },
+     "issue": {
+      "pass": 15,
+      "of": 15
+     },
+     "meeting": {
+      "pass": 10,
+      "of": 10
+     },
+     "notification": {
+      "pass": 35,
+      "of": 35
+     },
+     "title": {
+      "pass": 16,
+      "of": 16
+     }
+    }
+   },
+   "before_training": {
+    "pass": 396,
+    "of": 464,
+    "hidden_instructions_ignored": 55,
+    "hidden_instruction_cases": 70,
+    "chat_p95_s": 2.98,
+    "families": {
+     "ambient": {
+      "pass": 17,
+      "of": 20
+     },
+     "chat_honesty": {
+      "pass": 27,
+      "of": 32
+     },
+     "chat_plain": {
+      "pass": 41,
+      "of": 41
+     },
+     "chat_tools": {
+      "pass": 100,
+      "of": 120
+     },
+     "dictation": {
+      "pass": 41,
+      "of": 51
+     },
+     "email_audit": {
+      "pass": 28,
+      "of": 28
+     },
+     "email_triage": {
+      "pass": 14,
+      "of": 26
+     },
+     "injection": {
+      "pass": 55,
+      "of": 70
+     },
+     "issue": {
+      "pass": 15,
+      "of": 15
+     },
+     "meeting": {
+      "pass": 9,
+      "of": 10
+     },
+     "notification": {
+      "pass": 33,
+      "of": 35
+     },
+     "title": {
+      "pass": 16,
+      "of": 16
+     }
+    }
+   },
+   "before_training_model": "qwen3.5:4b, the Ollama library build, on the same Mac"
+  }
+ }
+}
