@@ -5,6 +5,7 @@
  "runtime": "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it",
  "task_set": "Grux held-out set: 464 tasks written separately and never used in training, scored by Grux's own parsers",
  "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
+ "chat_percentile": 95,
  "requires": "Apple silicon, Ollama 0.40.8 or later",
  "tags": {
   "2b": {

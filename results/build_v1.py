@@ -10,7 +10,7 @@ def load(p):
 
 def p95(xs):
     xs = sorted(xs)
-    return round(xs[int(0.95 * (len(xs) - 1))], 2)
+    return round(xs[int(0.95 * (len(xs) - 1))], 2)   # the same index rule as factory/gpu/s2's reports
 
 
 def fams(rows):
@@ -48,5 +48,6 @@ print(json.dumps({
     "runtime": "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it",
     "task_set": "Grux held-out set: 464 tasks written separately and never used in training, scored by Grux's own parsers",
     "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
+    "chat_percentile": 95,
     "requires": "Apple silicon, Ollama 0.40.8 or later",
     "tags": tags}, indent=1))
