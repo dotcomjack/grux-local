@@ -51,4 +51,14 @@ To aim it at your own app, replace the prompts and parsers in `suite.py` and the
 training cases, and score a candidate against the same model before training on that held-out set before you
 believe it.
 
+## 3. Ship a new version only if it is not worse
+
+```
+python3 results/gate.py <candidate>-holdout.jsonl --tag 4b
+```
+
+`results/gate.py` blocks a candidate that scores below the shipped tag in `results/v1.json` on the held-out total,
+on hidden instructions ignored, or on any kind of task by more than one case. A new Grux Local never ships below the
+current one.
+
 Licensed Apache-2.0, like the model. Built by DotcomJack.
