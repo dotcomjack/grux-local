@@ -13,15 +13,20 @@ Each surface is a path or a URL. Two checks per surface, both from v1.json:
          "it says so instead of pretending") fails while v1.json shows that family below 100%: no
          tag is perfect at it, so the surface must say "trained to" and let the table carry the rate.
 The registry check ties the numbers to the files: each tag's manifest must hash to v1.json's digest.
+--blobs N fires N ranged GETs at once across every blob of every tag, the way `ollama pull` does, and
+fails if more than 5% do not answer 206: on 2026-10-23 the preview passed every check while production
+dropped about 1 blob request in 10 at the upstream, which only a burst of real ranged GETs showed.
 Exit 0 only when every surface passes; a surface with nothing matched is a FAIL, never a pass.
 """
 import argparse
+import concurrent.futures
 import hashlib
 import html
 import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -156,11 +161,47 @@ def shape(text, allowed, of, hc):
     return n, bad
 
 
+def blob_burst(registry, v1, n):
+    """n ranged GETs at once, spread over every layer of every tag, each at a different offset."""
+    layers = []
+    for tag, d in v1["tags"].items():
+        body, _ = fetch(f"{registry.rstrip('/')}/v2/grux/grux-local/manifests/{tag}",
+                        {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+        layers += [(l["digest"], l["size"]) for l in json.loads(body)["layers"] if l["size"] > 4096]
+    layers = sorted(set(layers), key=lambda x: -x[1])
+    jobs = []
+    for i in range(n):
+        digest, size = layers[i % len(layers)]
+        start = (i * 7919 * 4096) % max(1, size - 4096)
+        jobs.append((digest, start))
+
+    def one(job):
+        digest, start = job
+        url = f"{registry.rstrip('/')}/v2/grux/grux-local/blobs/{digest}"
+        try:
+            req = urllib.request.Request(url, headers={**UA, "Range": f"bytes={start}-{start + 4095}"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status if len(r.read()) == 4096 else -1
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:
+            return 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(n, 40)) as pool:
+        codes = list(pool.map(one, jobs))
+    bad = [c for c in codes if c != 206]
+    ok = len(bad) <= n * 0.05
+    print(f"{'PASS' if ok else 'FAIL'} blobs: {n - len(bad)} of {n} ranged GETs answered 206 across "
+          f"{len(layers)} layers" + (f", failures {sorted(bad)}" if bad else ""))
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     for k, v in LIVE.items():
         ap.add_argument("--" + k, default=v)
     ap.add_argument("--results", default=os.path.join(HERE, "v1.json"))
+    ap.add_argument("--blobs", type=int, default=0, help="ranged blob GETs to fire at once (0 = skip)")
     a = ap.parse_args()
     v1 = json.load(open(a.results))
     rows, headline, allowed, of, hc = expected(v1)
@@ -202,6 +243,8 @@ def main():
             failed += not ok
             print(f"{'PASS' if ok else 'FAIL'} registry {ref}: body {got[:19]}, header {str(served)[:19]}, "
                   f"v1.json {d['manifest_digest'][:19]} ({url})")
+    if a.blobs:
+        failed += not blob_burst(a.registry, v1, a.blobs)
     print("ALL PASS" if not failed else f"{failed} FAILED")
     sys.exit(1 if failed else 0)
 
