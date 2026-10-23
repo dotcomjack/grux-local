@@ -1,6 +1,7 @@
 {
  "version": "v1",
  "machine": "Mac mini, Apple M4, 16 GB",
+ "machine_note": "Every Grux Local number was measured on this machine. Each tag's before-training numbers were measured on its before_training_machine, which for the 9b is a MacBook Pro.",
  "runtime": "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it",
  "task_set": "Grux held-out set: 464 tasks written separately and never used in training, scored by Grux's own parsers",
  "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
@@ -131,7 +132,8 @@
      }
     }
    },
-   "before_training_model": "qwen3.5:2b, the Ollama library build, on the same Mac"
+   "before_training_model": "qwen3.5:2b, the Ollama library build, on the same Mac",
+   "before_training_machine": "Mac mini, Apple M4, 16 GB"
   },
   "4b": {
    "name": "gruxai.com/grux/grux-local:4b",
@@ -259,7 +261,8 @@
      }
     }
    },
-   "before_training_model": "qwen3.5:4b, the Ollama library build, on the same Mac"
+   "before_training_model": "qwen3.5:4b, the Ollama library build, on the same Mac",
+   "before_training_machine": "Mac mini, Apple M4, 16 GB"
   },
   "9b": {
    "name": "gruxai.com/grux/grux-local:9b",
@@ -385,7 +388,8 @@
      }
     }
    },
-   "before_training_model": "qwen3.5:9b, the Ollama library build, on a MacBook Pro (Apple M4 Pro, 48 GB) with Ollama 0.40.8, because the Mac mini had no disk to spare for it"
+   "before_training_model": "qwen3.5:9b, the Ollama library build, on a MacBook Pro (Apple M4 Pro, 48 GB) with Ollama 0.40.8, because the Mac mini had no disk to spare for it",
+   "before_training_machine": "MacBook Pro, Apple M4 Pro, 48 GB"
   }
  }
 }

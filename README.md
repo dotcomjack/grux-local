@@ -19,7 +19,7 @@ Needs a Mac with Apple silicon and Ollama 0.40.8 or later.
 
 None of these is perfect. Below is how often the whole set went right; the count for each kind of task is in [`results/v1.json`](results/v1.json).
 
-## Measured on a Mac mini
+## How it measured
 
 16 GB Mac mini (Apple M4), Ollama 0.40.8, one request at a time, thinking off as Grux sends it. 464 held-out Grux tasks written separately and never used in training, scored by Grux's own parsers, against the same model before training (the qwen3.5 build from the Ollama library):
 
@@ -32,12 +32,12 @@ None of these is perfect. Below is how often the whole set went right; the count
 
 The 9B's Grux Local numbers are from the same Mac mini. Its before-training numbers are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the same 464 tasks, because the Mac mini had no disk to spare for the stock 9B:
 
-| | Before training (MacBook Pro) | Grux Local (Mac mini) |
+| | Before training, on the MacBook Pro | Grux Local |
 |---|---|---|
 | 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
 | 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 1.6 s (2B) and 3.8 s (9B). The 9B ran on the 16 GB Mac mini, but under memory pressure, so it is made for Macs with 24 GB or more.
+Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 1.6 s (2B) and 3.8 s (9B).
 
 Every number here, with the count for each kind of task, is in [`results/v1.json`](results/v1.json). `python3 results/check.py` checks it against this card, the Grux README and gruxai.com, and checks that each tag's manifest hashes to the digest recorded there.
 
