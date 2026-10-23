@@ -10,11 +10,15 @@ Each surface is a path or a URL; the blog is the dotcomjack.com announcement, ch
   shape  every number on the surface shaped like one of ours ("N (P%)", "N of 464", "N out of 70",
          "X.XX GB", "X.X s") must be one of ours, so a stray wrong number elsewhere on the page fails too.
   scope  a tag whose before_training_machine is not v1.json's "machine" (today the 9B, on a MacBook Pro):
-         every one of its before-training numbers on the surface must have that Mac's name within
-         SCOPE_WINDOW characters with no other Mac named in between; and a sentence that names the Mac mini
-         and either puts the counts "on one Mac mini" or speaks of that tag's numbers before training must
-         name that Mac too, so a baseline never reads as the Mac mini's. A tag with no
-         before_training_machine, or a second Mac that shares the first one's name, fails;
+         each of its before-training numbers on the surface (the count, its share as "N%" and the hidden
+         instructions count) must have that Mac's name within SCOPE_WINDOW characters with no other Mac
+         named in between. A count or share that is that baseline's alone counts wherever it stands; the
+         hidden count, and any number the Mac mini also measured, counts where that tag's size label is the
+         nearest one before it. And a sentence that names the Mac mini without that Mac fails when it puts
+         the counts on one Mac mini ("on one Mac mini", or "every"/"all" ... "on the 16 GB Mac mini") or
+         speaks of that tag's numbers before training. Machines are "Name, chip, N GB"; a machine in any
+         other form, a tag with no before_training_machine, or a second Mac that shares the Mac mini's
+         name fails;
   claims an absolute behaviour claim ("it ignores instructions hidden in...", "are not followed",
          "it says so instead of pretending") fails while v1.json shows that family below 100%: no
          tag is perfect at it, so the surface must say "trained to" and let the table carry the rate.
@@ -117,10 +121,12 @@ def absolutes(text, v1):
 
 
 # A sentence that puts every count on the top-level Mac must name each other Mac a baseline came from. Found by
-# the 2026-10-23 review of the 9B drafts: "Every task count here ... on one Mac mini." with the MacBook Pro cut.
-# Likewise a sentence about a size's numbers before training that names the Mac mini ("Its before-training
-# numbers are from a Mac mini ... the stock 9B").
-ONE_MACHINE = [r"\bon one {top}\b", r"\bevery (?:number|task count)\b[^.]*\bon (?:one|a single|the same) {top}\b"]
+# the 2026-10-23 reviews of the 9B drafts: "Every task count here ... on one Mac mini." with the MacBook Pro cut,
+# then "... on the 16 GB Mac mini." and "... all measured on a Mac mini." Likewise a sentence about a size's
+# numbers before training that names the Mac mini ("Its before-training numbers are from a Mac mini ... 9B").
+ONE_MACHINE = [r"\bon one {top}\b",
+               r"\b(?:[Ee]very|[Aa]ll)\b.*\bon (?:one|a single|the same|that|the|a) (?:\d+ GB )?{top}\b"]
+MACHINE_FORM = r"[^,()]+, [^,()]+, \d+ GB"   # "Mac mini, Apple M4, 16 GB"
 SCOPE_WINDOW = 160
 
 
@@ -131,18 +137,26 @@ def machine_name(m):
 def baselines(v1):
     """Each tag whose before-training numbers come from another Mac than v1.json's "machine", with the regexes
     that find those numbers on a surface. Fails closed: a tag with no before_training_machine, or whose Mac
-    shares the top-level Mac's name, is a problem, never a skipped tag."""
+    shares the top-level Mac's name, or a machine not in "Name, chip, N GB" form, is a problem, never a skipped
+    tag."""
     top, t = v1["machine"], v1["tags"]
-    here = set()   # numbers measured on the top-level Mac; a baseline number equal to one of them is ambiguous
+    if not re.fullmatch(MACHINE_FORM, top):
+        return [], [f"machine {top!r} is not in the form 'Name, chip, N GB'"]
+    # Numbers and shares measured on the top-level Mac; a baseline number equal to one of them is ambiguous.
+    here, here_pct = set(), set()
     for d in t.values():
-        here |= {d["grux_local"]["pass"], d["grux_local"]["hidden_instructions_ignored"]}
-        if d.get("before_training_machine") == top:
-            here |= {d["before_training"]["pass"], d["before_training"]["hidden_instructions_ignored"]}
+        runs = [d["grux_local"]] + ([d["before_training"]] if d.get("before_training_machine") == top else [])
+        for r in runs:
+            here |= {r["pass"], r["hidden_instructions_ignored"]}
+            here_pct.add(pct(r["pass"], r["of"]))
     out, problems = [], []
     for tag, d in t.items():
         m = d.get("before_training_machine")
         if not m:
             problems.append(f"{tag} has no before_training_machine")
+            continue
+        if not re.fullmatch(MACHINE_FORM, m):
+            problems.append(f"{tag} before_training_machine {m!r} is not in the form 'Name, chip, N GB'")
             continue
         if m == top:
             continue
@@ -150,12 +164,14 @@ def baselines(v1):
             problems.append(f"{tag} before_training_machine {m!r} shares the name {machine_name(top)!r} with {top!r}")
             continue
         b, of, hc = d["before_training"], d["grux_local"]["of"], d["grux_local"]["hidden_instruction_cases"]
-        p, h = b["pass"], b["hidden_instructions_ignored"]
-        # (label, regex, only where the nearest size label before it is this tag's): a number that is this
-        # baseline's alone counts wherever it stands; one the Mac mini also measured counts only under the size.
-        nums = [("before-training count", rf"(?<![\d.,]){p}(?!\d|[.,]\d)", False) if p not in here else
-                ("before-training count", rf"\b{p} (?:\(\d+%\)|of {of}\b)", True),
-                ("before-training hidden", rf"\b{h} (?:times )?(?:out )?of {hc}\b", h in here)]
+        p, h, bp = b["pass"], b["hidden_instructions_ignored"], pct(b["pass"], of)
+        # (label, regex, only where the nearest size label before it is this tag's). A count or share that is
+        # this baseline's alone counts wherever it stands; the hidden count (two digits, too common to read
+        # page-wide) and any number the Mac mini also measured count only under the size. The share is not
+        # counted twice where it sits in "400 (86%)".
+        nums = [("before-training count", rf"(?<![\d.,]){p}(?!\d|[.,]\d|%)", p in here),
+                ("before-training share", rf"(?<![\d.,])(?<!{p} \(){bp}%", bp in here_pct),
+                ("before-training hidden", rf"(?<![\d.,]){h}(?!\d|[.,]\d|%)", True)]
         out.append((d["size"], machine_name(m), nums))
     built = {size for size, _, nums in out if nums}
     for tag, d in t.items():
