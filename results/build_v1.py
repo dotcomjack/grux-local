@@ -1,5 +1,6 @@
-"""Builds results/v1.json from the raw held-out eval files on the Mac mini (factory/gpu/results/mac-ship and
-mac-base*), so no number in it is typed by hand. Run on the Mini from that results folder."""
+"""Builds results/v1.json from the raw held-out eval files on the Mac mini (factory/gpu/results/mac-ship,
+mac-base*, mac-grux-local-9b-mo and mbp-base9b), so no number in it is typed by hand. Run on the Mini from that
+results folder."""
 import collections
 import datetime
 import json
@@ -45,6 +46,23 @@ for tag, size, made_for, aliases, digest in [
                  "grux_local": summary(f"mac-ship/grux-local_{tag}-holdout.jsonl"),
                  "before_training": summary(f"{base_dir}/qwen3.5_{tag}-holdout.jsonl"),
                  "before_training_model": f"qwen3.5:{tag}, the Ollama library build, on the same Mac"}
+# The 9B: scored on the same Mac mini, but its before-training baseline on a MacBook Pro, because the Mini had no
+# disk to spare for the stock 9B. Its holdout meta reads 0.0 GB (read after the model unloaded), so the loaded size
+# comes from loaded.json, read while it was loaded. The weights are digest-identical to the published grux-local:9b.
+loaded = json.load(open("mac-grux-local-9b-mo/loaded.json"))["models"]
+assert [m["name"] for m in loaded] == ["grux-local-9b-mo:latest"], loaded
+tags["9b"] = {"name": "gruxai.com/grux/grux-local:9b", "aliases": [], "size": "9B", "made_for": "24 GB Macs and up",
+              "base_model": "Qwen/Qwen3.5-9B",
+              "manifest_digest": "sha256:357e4bd45ff0030a6dbfdf5a7650b745418f1dcdb7eeed473b4078987f111837",
+              "loaded_gb": loaded[0]["size_gb"],
+              "grux_local": summary("mac-grux-local-9b-mo/grux-local-9b-mo-holdout.jsonl"),
+              "before_training": summary("mbp-base9b/qwen3.5_9b-holdout.jsonl"),
+              "before_training_model": "qwen3.5:9b, the Ollama library build, on a MacBook Pro (Apple M4 Pro, 48 GB) "
+                                       "with Ollama 0.40.8, because the Mac mini had no disk to spare for it"}
+# The published 9B scored on that same MacBook Pro, once it is there: a same-machine pair for the baseline above.
+pair = "mbp-grux9b/grux-local_9b-holdout.jsonl"
+if os.path.exists(pair):
+    tags["9b"]["grux_local_on_before_training_machine"] = summary(pair)
 print(json.dumps({
     "version": "v1",
     "machine": "Mac mini, Apple M4, 16 GB",

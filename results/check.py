@@ -9,6 +9,8 @@ Each surface is a path or a URL; the blog is the dotcomjack.com announcement, ch
          the wrong row, or a row that went missing, fails;
   shape  every number on the surface shaped like one of ours ("N (P%)", "N of 464", "N out of 70",
          "X.XX GB", "X.X s") must be one of ours, so a stray wrong number elsewhere on the page fails too.
+  scope  a before-training number measured on another Mac (the 9B's, on a MacBook Pro) must name that Mac
+         near the size on every surface, so it never reads as the Mac mini's;
   claims an absolute behaviour claim ("it ignores instructions hidden in...", "are not followed",
          "it says so instead of pretending") fails while v1.json shows that family below 100%: no
          tag is perfect at it, so the surface must say "trained to" and let the table carry the rate.
@@ -97,7 +99,7 @@ def pct(n, of):
 
 def expected(v1):
     t = v1["tags"]
-    rows, allowed = [], {"pairs": set(), "of_tasks": set(), "of_hidden": set(), "gb": set(), "s": set()}
+    rows, scope, allowed = [], [], {"pairs": set(), "of_tasks": set(), "of_hidden": set(), "gb": set(), "s": set()}
     for tag, d in t.items():
         T, a, b = d["size"], d["grux_local"], d["before_training"]
         of, hc = a["of"], a["hidden_instruction_cases"]
@@ -112,12 +114,17 @@ def expected(v1):
             ("chat", f"{T} chat p95 {a['chat_p95_s']:.1f} s",
              rf"{a['chat_p95_s']:.1f} s(?:econds)?(?: on the {T}| \({T}\))"),
         ]
+        other = re.search(r", on an? (.+?) \(", d["before_training_model"])
+        if other:
+            m = re.escape(other.group(1))
+            scope.append(("scope", f"{T} before training named as the {other.group(1)}",
+                          rf"\b{T}\b.{{0,200}}?\b{m}\b|\b{m}\b.{{0,200}}?\b{T}\b"))
         allowed["pairs"] |= {(a["pass"], ap), (b["pass"], bp)}
         allowed["of_tasks"] |= {a["pass"], b["pass"]}
         allowed["of_hidden"] |= {a["hidden_instructions_ignored"], b["hidden_instructions_ignored"]}
         allowed["gb"].add(f"{d['loaded_gb']:.2f}")
         allowed["s"].add(f"{a['chat_p95_s']:.1f}")
-    big, small = t["4b"], t["2b"]
+    big, small, nine = t["4b"], t["2b"], t["9b"]
     of = big["grux_local"]["of"]
     headline = {
         "readme": [
@@ -128,11 +135,13 @@ def expected(v1):
                                                rf"{big['before_training']['hidden_instructions_ignored']}\b"),
             ("headline", "2B headline", rf"2B, made for 8 GB Macs, went from {small['before_training']['pass']} to "
                                         rf"{small['grux_local']['pass']} of {of}\b"),
-        ],
+            ("headline", "9B headline", rf"9B, made for {re.escape(nine['made_for'])}, went from "
+                                        rf"{nine['before_training']['pass']} to {nine['grux_local']['pass']} of {of}\b"),
+        ] + scope,
         "site": [
             ("headline", "4B lead", rf"the 4B got {big['grux_local']['pass']} right, against "
                                     rf"{big['before_training']['pass']} for the same model before training"),
-        ],
+        ] + scope,
         # The dotcomjack.com announcement (2026-10-23) carries prose, not the tables.
         "blog": [
             ("headline", "blog task count", rf"across {of} held-out Grux tasks"),
@@ -140,7 +149,10 @@ def expected(v1):
                                     rf"{big['before_training']['pass']} for the same model before training"),
             ("headline", "blog 2B", rf"2B version, made for 8 GB Macs, went from {small['before_training']['pass']} "
                                     rf"to {small['grux_local']['pass']}\b"),
-        ],
+            ("headline", "blog 9B", rf"9B version, made for {re.escape(nine['made_for'])}, went from "
+                                    rf"{nine['before_training']['pass']} to {nine['grux_local']['pass']}\b"),
+        ] + scope,
+        "card": scope,
     }
     return rows, headline, allowed, of, big["grux_local"]["hidden_instruction_cases"]
 

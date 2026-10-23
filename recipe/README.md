@@ -22,11 +22,12 @@ python3 recipe/summarize.py /tmp/grux-local-check/*-holdout.jsonl
 ```
 
 `check_prompts.py` must print `MATCH`. The summary should read the numbers in
-[`results/v1.json`](../results/v1.json) for that tag: 435 of 464 for the 2B, 454 of 464 for the 4B, with the hidden
-instruction cases out of 70 and the count for each kind of task. Requests go out one at a time with a fixed seed
-and thinking off, as Grux sends them. Chat timing depends on your Mac; v1's timings are from a 16 GB Mac mini
-(Apple M4). Use `:4b` for the larger model, and `--model qwen3.5:4b` (or `:2b`) to score the same model before
-training.
+[`results/v1.json`](../results/v1.json) for that tag: 435 of 464 for the 2B, 454 of 464 for the 4B, 458 of 464 for
+the 9B, with the hidden instruction cases out of 70 and the count for each kind of task. Requests go out one at a
+time with a fixed seed and thinking off, as Grux sends them. Chat timing depends on your Mac; v1's timings are from
+a 16 GB Mac mini (Apple M4). Use `:4b` or `:9b` for the larger models, and `--model qwen3.5:4b` (or `:2b`, `:9b`) to
+score the same model before training; v1's before-training score for the 9B is from a MacBook Pro (Apple M4 Pro,
+48 GB).
 
 ## 2. Train your own
 
@@ -36,7 +37,7 @@ training.
 | Held-out set | `s2/holdout.py` | 464 tasks written separately; `s2/contamination.py` proves none of them leaks into training (`s2/train_exclude.json`) |
 | Answers | `s2/gen_data.py` | A teacher model (Gemma 4 26B on a GPU box, through Ollama) writes each reply; a reply is kept only when the scorer passes it |
 | Training | `s2/box_train.py` | LoRA on Qwen 3.5 (2B, 4B, 9B), loss on the answer tokens only, checkpoints so a lost spot box resumes |
-| Run | `s2/train_run.py` | Train, merge, import into Ollama as nvfp4, score the held-out set, pull the model out |
+| Run | `s2/train_run.py` | Train, merge, import into Ollama as nvfp4, score the held-out set, pull the model out (the published 9B was then quantized separately with NVIDIA ModelOpt, to the mixed NVFP4 and MXFP8 recipe of Ollama's own qwen3.5:9b) |
 | Sweep | `s2/sweep.py`, `s2/sweep_report.py` | Twelve configurations in parallel, then a scorecard and a winner per Mac size |
 | Scorer | `suite.py`, `eval_local.py` | Grux's prompts and parsers; `eval_local.py` scores a model on this Mac's own Ollama |
 | GPU boxes | `train_box.py`, `gpu_box.py`, `lease.py` | Spot GPU boxes on Daytona, each under a 20-minute lease that a crashed process cannot outlive |
