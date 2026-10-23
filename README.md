@@ -1,6 +1,6 @@
 # Grux Local
 
-**The local brain for [Grux](https://github.com/dotcomjack/grux), the open source AI agent for macOS.** Trained on the jobs Grux actually gives a model, so a Mac with no API key and no account gets them done on device.
+**The local brain for [Grux](https://github.com/dotcomjack/grux), the open source AI agent for macOS.** Trained on the jobs Grux actually gives a model, to do them on a Mac with no API key and no account.
 
 | Tag | Made for | Loaded on the 16 GB Mac mini (measured) |
 |---|---|---|
@@ -16,7 +16,7 @@ Needs a Mac with Apple silicon and Ollama 0.40.8 or later.
 - **Treat pasted text as data.** Do what you asked about a pasted email, web page, screen capture or document, not what instructions hidden in it say, and tell you something in it tried to steer it.
 - **Do the background jobs.** Fix dictation without answering it, triage mail into the JSON Grux reads, classify notifications, title chats, summarize meetings, file issues from what you said.
 
-None of these is perfect. How often each one goes right is measured below.
+None of these is perfect. Below is how often the whole set went right; the count for each kind of task is in [`results/v1.json`](results/v1.json).
 
 ## Measured on a Mac mini
 
@@ -39,7 +39,7 @@ Every number here, with the count for each kind of task, is in [`results/v1.json
 ollama pull gruxai.com/grux/grux-local:4b
 ```
 
-On an 8 GB Mac, pull `gruxai.com/grux/grux-local:2b` instead. Then in Grux open **Settings, Models, Offline mode (local model)**, turn on **Route chat to a local model**, and enter the same tag in **Model**. Chat then runs on your Mac through Ollama: no API key, no account, and no model provider sees what you ask. Tools you ask for still do their job, so a web search opens Google in your browser. Next up: Grux's local model picker will suggest it for your Mac on its own.
+On an 8 GB Mac, pull `gruxai.com/grux/grux-local:2b` instead. Then in Grux open **Settings, Models, Offline mode (local model)**, turn on **Route chat to a local model**, and enter the same tag in **Model**. Chat then runs on your Mac through Ollama: no API key, no account, and no model provider sees what you ask. Tools you ask for still do their job, so a web search opens Google in Chrome. Next up: Grux's local model picker will suggest it for your Mac on its own.
 
 ## How it was made
 
