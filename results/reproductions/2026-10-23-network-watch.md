@@ -1,6 +1,6 @@
 # Network watch: where Ollama connects during a Grux Local chat (2026-10-23)
 
-Who and where: Grux, on a 16 GB Mac mini (Apple M4) with Ollama 0.40.8, on October 23, 2026, about 1:24 PM
+Who and where: Grux, on a 16 GB Mac mini (Apple M4) with Ollama 0.40.8, on October 23, 2026, at 1:27 PM
 Eastern. One full Grux chat turn (Grux's own system prompt and 12 tools, "add a task to call the dentist
 tomorrow") sent to `grux-local:2b` (manifest `sha256:601cd23c66ef`, the same build as
 `gruxai.com/grux/grux-local:2b`) on the Mac's own Ollama, while `lsof -nP -a -c ollama -i` listed every network
