@@ -87,8 +87,8 @@ python3 results/gate.py <candidate>-holdout.jsonl --tag 4b
 `results/gate.py` blocks a candidate that would replace a tag if it scores below that tag in `results/v1.json` on
 the held-out total, on hidden instructions ignored, or on any kind of task by more than one case. A new Grux Local
 never replaces a tag it scores below. A version that trails the current one anywhere can still be published beside
-it, as an opt-in tag that says where it trails: `:4b-v2` passed this gate against the 4B's published numbers (455
-against 454 of 464), is one task behind v1's 4B when both are scored on the same MacBook Pro (455 against 456), and
-its model card says so, while `:4b` and `latest` stay on v1.
+it, as an opt-in tag that says where it trails: `:4b-v2` passed this gate against the 4B's published numbers (455 on
+the MacBook Pro against the published 454 from the Mac mini, of 464), is one task behind v1's 4B when both are
+scored on the same MacBook Pro (455 against 456), and its model card says so, while `:4b` and `latest` stay on v1.
 
 Licensed Apache-2.0, like the model. Built by DotcomJack.

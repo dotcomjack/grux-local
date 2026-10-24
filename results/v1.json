@@ -7,7 +7,7 @@
  "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
  "chat_percentile": 95,
  "requires": "Apple silicon, Ollama 0.40.8 or later",
- "loaded_note": "loaded_gb is what Ollama reports for a fresh load at num_ctx 16384, what Grux 3.1 asks for on a 16 GB Mac; Grux 3.1 asks for 32768 on Macs with 24 GB or more (LocalTurn.swift:21-27 at v3.1.0), so a model loads more there. Ollama's runner can hold more as it works: loaded_after_use.",
+ "loaded_note": "loaded_gb is what Ollama reports for a fresh load at num_ctx 16384, what Grux 3.1 asks for on a 16 GB Mac; Grux 3.1 asks for 32768 on Macs with 24 GB or more (LocalTurn.swift:21-27 at v3.1.0), so a model loads more there. Ollama can report more memory for the model as it works (its /api/ps size; the runner's resident memory did not grow): loaded_after_use.",
  "loaded_after_use": [
   {
    "tag": "2b",
@@ -15,6 +15,14 @@
    "num_ctx": 16384,
    "fresh_gb": 2.65,
    "after_gb": 11.37,
+   "after_tasks": 464
+  },
+  {
+   "tag": "4b",
+   "machine": "Mac mini, Apple M4, 16 GB",
+   "num_ctx": 16384,
+   "fresh_gb": 4.44,
+   "after_gb": 13.11,
    "after_tasks": 464
   },
   {
