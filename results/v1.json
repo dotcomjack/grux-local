@@ -454,7 +454,7 @@
    "aliases": [],
    "size": "4B",
    "label": "4B v2",
-   "made_for": "16 GB Macs and up",
+   "made_for": "16 GB Macs and up, by size; not yet run on a 16 GB Mac",
    "base_model": "Qwen/Qwen3.5-4B",
    "manifest_digest": "sha256:05cb28d6c35ecba2e8bdccb095fd8fc00f4694db65131d5ad0b3f9b5eaa871c5",
    "loaded_gb": 4.44,

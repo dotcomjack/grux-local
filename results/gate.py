@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Regression gate: a new Grux Local never ships below the current one on the held-out set.
+"""Regression gate: a new Grux Local never replaces a tag it scores below on the held-out set. (A version that
+trails somewhere can still be published beside the tag as an opt-in tag that says where it trails, as 4b-v2 is.)
 
   python3 results/gate.py <candidate>-holdout.jsonl --tag 4b [--results results/v1.json]
 

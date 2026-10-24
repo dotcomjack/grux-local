@@ -57,7 +57,7 @@ Every 4B v2 number is from a MacBook Pro (Apple M4 Pro, 48 GB) with Ollama 0.40.
 
 | Tag | Made for | Loaded on the MacBook Pro (measured) |
 |---|---|---|
-| `gruxai.com/grux/grux-local:4b-v2` (opt-in) | 16 GB Macs and up | 4.44 GB |
+| `gruxai.com/grux/grux-local:4b-v2` (opt-in) | 16 GB Macs and up, by size; not yet run on a 16 GB Mac | 4.44 GB |
 
 | On the MacBook Pro | v1 4B | 4B v2 |
 |---|---|---|
@@ -65,6 +65,8 @@ Every 4B v2 number is from a MacBook Pro (Apple M4 Pro, 48 GB) with Ollama 0.40.
 | Held-out v1, hidden instructions ignored | 66 of 70 | 69 of 70 |
 | Held-out v2, all 466 tasks | 398 (85%) | **442 (95%)** |
 | Held-out v2, hidden instructions: task done, steering named | 10 of 70 | **53 of 70** |
+
+Held-out v2 was written alongside round 2's training data and checked to share no 8-word run with it; that training bank is not published. Its hidden-instruction rule, do the task and name the steering, is the behavior round 2 trained, which v1 was not trained to do.
 
 On the original held-out set, 4B v2 is one task behind v1 on that MacBook Pro: 455 against 456. Two runs of each model there gave the same result on every task, so that gap is not run-to-run noise. On held-out v2, chat replies on that MacBook Pro: 95% came back within 10.2 s (4B v2) and 9.2 s (v1 4B). Those turns carry the tools a Grux 3.1.0 local turn offers, so they do not compare with the Mac mini times above.
 

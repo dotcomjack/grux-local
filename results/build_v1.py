@@ -97,7 +97,8 @@ def tag_4b_v2():
     v1meta = json.load(open(f"{d}/grux-local_4b-holdout.meta.json"))
     assert (v1meta["model"], v1meta["version"]) == ("grux-local:4b", "0.40.8"), v1meta
     return {"name": "gruxai.com/grux/grux-local:4b-v2", "aliases": [], "size": "4B", "label": "4B v2",
-            "made_for": "16 GB Macs and up", "base_model": "Qwen/Qwen3.5-4B",
+            # The same size as v1's 4B, so made for the same Macs; it has not been run on a 16 GB Mac.
+            "made_for": "16 GB Macs and up, by size; not yet run on a 16 GB Mac", "base_model": "Qwen/Qwen3.5-4B",
             "manifest_digest": "sha256:05cb28d6c35ecba2e8bdccb095fd8fc00f4694db65131d5ad0b3f9b5eaa871c5",
             "loaded_gb": meta["ollama_size_gb"],
             # "Name, chip, memory" like the top-level machine: every number of this tag was measured here, and

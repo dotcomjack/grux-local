@@ -18,10 +18,12 @@ export GRUX_SRC="$(sh recipe/get_grux_source.sh)"
 python3 recipe/check_prompts.py
 ollama pull gruxai.com/grux/grux-local:2b
 python3 recipe/eval_local.py --model gruxai.com/grux/grux-local:2b --set holdout --run /tmp/grux-local-check
-python3 recipe/summarize.py /tmp/grux-local-check/*-holdout.jsonl
+python3 recipe/summarize.py /tmp/grux-local-check/gruxai.com_grux_grux-local_2b-holdout.jsonl
 ```
 
-`check_prompts.py` must print `MATCH` for both held-out sets. The summary should read the numbers in
+`check_prompts.py` must print `MATCH` for both held-out sets. Each run writes one file per model, named for the
+model with `:` and `/` as `_`, so name the file you mean: a glob would pick whichever model sorts first. The summary
+should read the numbers in
 [`results/v1.json`](../results/v1.json) for that tag: 435 of 464 for the 2B, 454 of 464 for the 4B, 458 of 464 for
 the 9B, with the hidden instruction cases out of 70 and the count for each kind of task. Requests go out one at a
 time with a fixed seed and thinking off, as Grux sends them. Chat timing depends on your Mac; v1's timings are from
@@ -34,7 +36,7 @@ score the same model before training; v1's before-training score for the 9B is f
 ```
 ollama pull gruxai.com/grux/grux-local:4b-v2
 python3 recipe/eval_local.py --model gruxai.com/grux/grux-local:4b-v2 --set holdout2 --run /tmp/grux-local-check
-python3 recipe/summarize.py /tmp/grux-local-check/*-holdout2.jsonl
+python3 recipe/summarize.py /tmp/grux-local-check/gruxai.com_grux_grux-local_4b-v2-holdout2.jsonl
 ```
 
 Held-out v2 is 466 tasks (`s2/holdout_v2.py`, byte-identical to the file that scored 4b-v2, sha256 `c531f238...`).
@@ -76,14 +78,17 @@ To aim it at your own app, replace the prompts and parsers in `suite.py` and the
 training cases, and score a candidate against the same model before training on that held-out set before you
 believe it.
 
-## 3. Ship a new version only if it is not worse
+## 3. Replace a tag only with a version that is not worse
 
 ```
 python3 results/gate.py <candidate>-holdout.jsonl --tag 4b
 ```
 
-`results/gate.py` blocks a candidate that scores below the shipped tag in `results/v1.json` on the held-out total,
-on hidden instructions ignored, or on any kind of task by more than one case. A new Grux Local never ships below the
-current one.
+`results/gate.py` blocks a candidate that would replace a tag if it scores below that tag in `results/v1.json` on
+the held-out total, on hidden instructions ignored, or on any kind of task by more than one case. A new Grux Local
+never replaces a tag it scores below. A version that trails the current one anywhere can still be published beside
+it, as an opt-in tag that says where it trails: `:4b-v2` passed this gate against the 4B's published numbers (455
+against 454 of 464), is one task behind v1's 4B when both are scored on the same MacBook Pro (455 against 456), and
+its model card says so, while `:4b` and `latest` stay on v1.
 
 Licensed Apache-2.0, like the model. Built by DotcomJack.
