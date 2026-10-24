@@ -130,6 +130,28 @@ if sys.argv[1:2] == ["--v1-tags-from"]:
 else:
     tags = v1_tags()
 tags["4b-v2"] = tag_4b_v2()
+
+
+def after_use():
+    """What Ollama reports a model holding after it has worked, beside the fresh load each tag's loaded_gb records:
+    the 2B after a full held-out run on the Mac mini (mac-m5-2b, the realism-gap run: the second run's start reads
+    the size the first left), and the 4B v2 after 72 held-out tasks on the MacBook Pro (mbp-4b-v2/after-use: those
+    tasks, then the Ollama /api/ps reading taken after them). Both at num_ctx 16384."""
+    fresh2 = json.load(open("mac-m5-2b/grux-local_2b-holdout.meta.json"))
+    then2 = json.load(open("mac-m5-2b/grux-local_2b-holdout-realistic.meta.json"))
+    assert fresh2["model"] == then2["model"] == "grux-local:2b" and fresh2["load_s"] > 1 > then2["load_s"], (fresh2, then2)
+    assert fresh2["num_ctx"] == then2["num_ctx"] == 16384
+    ran2 = len(load("mac-m5-2b/grux-local_2b-holdout.jsonl"))
+    ps = [m for m in json.load(open("mbp-4b-v2/after-use/ps.json"))["models"]
+          if m["digest"] == tags["4b-v2"]["manifest_digest"].split(":")[1]]
+    assert len(ps) == 1 and ps[0]["context_length"] == 16384, ps
+    ran4 = len(load("mbp-4b-v2/after-use/grux-local_4b-v2-holdout.jsonl"))
+    return [{"tag": "2b", "machine": MAC_MINI, "num_ctx": 16384, "fresh_gb": fresh2["ollama_size_gb"],
+             "after_gb": then2["ollama_size_gb"], "after_tasks": ran2},
+            {"tag": "4b-v2", "machine": MACBOOK_PRO, "num_ctx": 16384, "fresh_gb": tags["4b-v2"]["loaded_gb"],
+             "after_gb": round(ps[0]["size"] / 1e9, 2), "after_tasks": ran4}]
+
+
 print(json.dumps({
     "version": "v1",
     "machine": MAC_MINI,
@@ -142,4 +164,8 @@ print(json.dumps({
     "chat_latency": "95th percentile, seconds, over the chat and hidden-instruction tasks",
     "chat_percentile": 95,
     "requires": "Apple silicon, Ollama 0.40.8 or later",
+    "loaded_note": "loaded_gb is what Ollama reports for a fresh load at num_ctx 16384, what Grux 3.1 asks for on a "
+                   "16 GB Mac; Grux 3.1 asks for 32768 on Macs with 24 GB or more (LocalTurn.swift:21-27 at v3.1.0), "
+                   "so a model loads more there. Ollama's runner can hold more as it works: loaded_after_use.",
+    "loaded_after_use": after_use(),
     "tags": tags}, indent=1))

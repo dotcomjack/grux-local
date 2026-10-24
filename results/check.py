@@ -12,7 +12,7 @@ Each surface is a path or a URL; the blog is the dotcomjack.com announcement, ch
   scope  numbers measured on another Mac than v1.json's "machine": a tag's before-training numbers when its
          before_training_machine differs (today the 9B's, on a MacBook Pro), and every number of a tag with
          its own "machine" (today the 4b-v2, all on that MacBook Pro: counts, shares, hidden counts, chat
-         p95 and loaded size). Each must sit in a table whose header names that Mac and no other, or have
+         p95, loaded size, and the size Ollama reported after use, from loaded_after_use). Each must sit in a table whose header names that Mac and no other, or have
          that Mac's name within SCOPE_WINDOW characters with no other Mac named in between. A number no
          other Mac measured counts wherever it stands; a hidden count, and any number another Mac also
          measured, counts where that tag's label is the nearest one before it. A sentence that names the
@@ -179,6 +179,11 @@ def baselines(v1):
                 problems.append(f"{tag} {key} {m!r} is not in the form 'Name, chip, N GB'")
             elif m != top and machine_name(m) == machine_name(top):
                 problems.append(f"{tag} {key} {m!r} shares the name {machine_name(top)!r} with {top!r}")
+    for e in v1.get("loaded_after_use", []):
+        if not re.fullmatch(MACHINE_FORM, e["machine"]):
+            problems.append(f"loaded_after_use {e['tag']} machine {e['machine']!r} is not in the form 'Name, chip, N GB'")
+        elif e["machine"] != top and machine_name(e["machine"]) == machine_name(top):
+            problems.append(f"loaded_after_use {e['tag']} machine {e['machine']!r} shares the name {machine_name(top)!r}")
     if problems:
         return [], problems
     # What each Mac measured, by kind; a number another Mac also measured is ambiguous. The chat percentile
@@ -192,6 +197,8 @@ def baselines(v1):
             k["pct"].add(pct(r["pass"], r["of"]))
             k["s"].add(f"{r['chat_p95_s']:.1f}")
         seen[machine_name(d.get("machine", top))]["gb"].add(f"{d['loaded_gb']:.2f}")
+    for e in v1.get("loaded_after_use", []):
+        seen[machine_name(e["machine"])]["gb"] |= {f"{e['fresh_gb']:.2f}", f"{e['after_gb']:.2f}"}
 
     def other(mac, kind, v):
         return any(v in k[kind] for name, k in seen.items() if name != mac)
@@ -222,6 +229,17 @@ def baselines(v1):
             nums.append(("loaded size", rf"(?<![\d.]){re.escape(g)} GB\b", other(mac, "gb", g)))
         nums = list(dict.fromkeys(nums))
         out.append({"tag": tag, "labels": labels_of(tag, d), "mac": mac, "kind": kind, "nums": nums})
+    # A size read after use on another Mac is that tag's number too, scoped like the rest of it.
+    for u in v1.get("loaded_after_use", []):
+        if u["machine"] == top:
+            continue
+        mac, g = machine_name(u["machine"]), f"{u['after_gb']:.2f}"
+        entry = next((e for e in out if e["tag"] == u["tag"] and e["mac"] == mac), None)
+        if entry is None:
+            problems.append(f"loaded_after_use {u['tag']} was measured on {u['machine']!r}, not {top!r}, and no scope "
+                            "check was built for it")
+            continue
+        entry["nums"].append(("loaded size after use", rf"(?<![\d.]){re.escape(g)} GB\b", other(mac, "gb", g)))
     built = {e["tag"] for e in out if e["nums"]}
     for tag, d in t.items():
         for key in ("machine", "before_training_machine"):
@@ -392,6 +410,8 @@ def expected(v1):
         allowed["of_hidden"] |= {a["hidden_instructions_ignored"], b["hidden_instructions_ignored"]}
         allowed["gb"].add(f"{d['loaded_gb']:.2f}")
         allowed["s"].add(f"{a['chat_p95_s']:.1f}")
+    for u in v1.get("loaded_after_use", []):
+        allowed["gb"] |= {f"{u['fresh_gb']:.2f}", f"{u['after_gb']:.2f}"}
     big, small, nine = t["4b"], t["2b"], t["9b"]
     of = big["grux_local"]["of"]
     v2 = t.get("4b-v2")
