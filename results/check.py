@@ -455,10 +455,14 @@ def shape(text, allowed, of, hc):
 
 def blob_burst(registry, v1, n):
     """n ranged GETs at once, spread over every layer of every tag, each at a different offset."""
-    layers = []
+    layers, missing = [], []
     for tag, d in v1["tags"].items():
-        body, _ = fetch(f"{registry.rstrip('/')}/v2/grux/grux-local/manifests/{tag}",
-                        {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+        try:   # a tag the registry does not serve yet is a FAIL line, not a traceback that hides the rest
+            body, _ = fetch(f"{registry.rstrip('/')}/v2/grux/grux-local/manifests/{tag}",
+                            {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+        except Exception as e:
+            missing.append(f"{tag} ({e})")
+            continue
         layers += [(l["digest"], l["size"]) for l in json.loads(body)["layers"] if l["size"] > 4096]
     layers = sorted(set(layers), key=lambda x: -x[1])
     jobs = []
@@ -482,9 +486,10 @@ def blob_burst(registry, v1, n):
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(n, 40)) as pool:
         codes = list(pool.map(one, jobs))
     bad = [c for c in codes if c != 206]
-    ok = len(bad) <= n * 0.05
+    ok = len(bad) <= n * 0.05 and not missing
     print(f"{'PASS' if ok else 'FAIL'} blobs: {n - len(bad)} of {n} ranged GETs answered 206 across "
-          f"{len(layers)} layers" + (f", failures {sorted(bad)}" if bad else ""))
+          f"{len(layers)} layers" + (f", failures {sorted(bad)}" if bad else "")
+          + (f", no manifest for {', '.join(missing)}" if missing else ""))
     return ok
 
 
