@@ -10,7 +10,7 @@
 
 Needs a Mac with Apple silicon and Ollama 0.40.8 or later. A second version of the 4B, `gruxai.com/grux/grux-local:4b-v2`, is opt-in: see [4B v2, opt-in](#4b-v2-opt-in).
 
-Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama's runner also holds more memory as it works: the 2B read 2.65 GB freshly loaded and 11.37 GB after a full held-out run (464 tasks) on the 16 GB Mac mini, and the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB), both at num_ctx 16,384. How far it grows on an 8 GB Mac, or with the 4B v2 on a 16 GB Mac, is not yet measured.
+Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama's runner can also hold more memory as it works: the 2B read 2.65 GB freshly loaded and 11.37 GB after a full held-out run (464 tasks) on the 16 GB Mac mini, and the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB), both at num_ctx 16,384. How far it grows on an 8 GB Mac, or with the 4B v2 on a 16 GB Mac, is not yet measured.
 
 ## What it is trained to do
 
