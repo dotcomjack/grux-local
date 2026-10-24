@@ -170,7 +170,7 @@ def baselines(v1):
     problems = []
     for tag, d in t.items():
         if "machine" not in d and "before_training_machine" not in d:
-            problems.append(f"{tag} has no before_training_machine")
+            problems.append(f"{tag} names no machine (machine or before_training_machine)")
         for key in ("machine", "before_training_machine"):
             m = d.get(key)
             if m is None:
@@ -363,7 +363,7 @@ def expected(v1):
     rows, own, allowed = [], [], {"pairs": set(), "of_tasks": collections.defaultdict(set), "of_hidden": set(),
                                   "gb": set(), "s": set()}
     for tag, d in t.items():
-        if "machine" in d:
+        if "v1_4b_same_machine" in d:   # a tag measured on its own Mac (its machine is checked in baselines)
             own += own_machine_rows(tag, d)
             for r in [r for _, r in runs_of(d, v1["machine"])]:
                 allowed["pairs"].add((r["pass"], pct(r["pass"], r["of"])))
@@ -371,6 +371,8 @@ def expected(v1):
                 allowed["of_hidden"].add(r["hidden_instructions_ignored"])
                 allowed["s"].add(f"{r['chat_p95_s']:.1f}")
             allowed["gb"].add(f"{d['loaded_gb']:.2f}")
+            continue
+        if "before_training" not in d:
             continue
         T, a, b = d["size"], d["grux_local"], d["before_training"]
         of, hc = a["of"], a["hidden_instruction_cases"]
