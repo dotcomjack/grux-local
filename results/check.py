@@ -485,6 +485,9 @@ def blob_burst(registry, v1, n):
             continue
         layers += [(l["digest"], l["size"]) for l in json.loads(body)["layers"] if l["size"] > 4096]
     layers = sorted(set(layers), key=lambda x: -x[1])
+    if not layers:   # every manifest failed: still a FAIL line and the summary, never a ZeroDivisionError
+        print(f"FAIL blobs: no layers to fetch, no manifest for {', '.join(missing)}")
+        return False
     jobs = []
     for i in range(n):
         digest, size = layers[i % len(layers)]
@@ -567,7 +570,7 @@ def main():
             except Exception as e:
                 got, served, ok = f"error {e}", None, False
             failed += not ok
-            print(f"{'PASS' if ok else 'FAIL'} registry {ref}: body {got[:19]}, header {str(served)[:19]}, "
+            print(f"{'PASS' if ok else 'FAIL'} registry {ref}: body {got if got.startswith('error') else got[:19]}, header {str(served)[:19]}, "
                   f"v1.json {d['manifest_digest'][:19]} ({url})")
     if a.blobs:
         failed += not blob_burst(a.registry, v1, a.blobs)
