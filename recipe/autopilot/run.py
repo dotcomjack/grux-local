@@ -66,11 +66,9 @@ def _base_row_current(tier):
     except Exception as e:  # noqa: BLE001 (a registry blip: unknown, never crash the week)
         print(f"registry read for {tag} failed ({str(e)[:120]}); base row unknown this run", flush=True)
         return None
-    for p in glob.glob(os.path.join(common.RESULTS, f"*-{common.stem(tag)}.json")):
-        r = json.load(open(p))
-        if r.get("complete") and r.get("digest") == digest:
-            return True
-    return False
+    import decide                                        # the row decide.py will compare against must be today's build
+    _, row = decide.baseline_result(tier)
+    return bool(row) and row.get("digest") == digest
 
 
 def main():
@@ -123,7 +121,7 @@ def main():
         if len(runs) >= MAX_INCOMPLETE_RUNS:
             r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res, "--unscoreable", str(len(runs)),
                                 "--digest", c["digest"]], capture_output=True, text=True)
-            week["decisions"].append({"candidate": c["id"], "verdict": "lose", "line": r.stdout.strip().splitlines()[0]})
+            week["decisions"].append({"candidate": c["id"], "verdict": "lose", "line": (r.stdout.strip().splitlines() or [r.stderr.strip()[-300:]])[0]})
         else:
             week["decisions"].append({"candidate": c["id"], "verdict": None,
                                       "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
