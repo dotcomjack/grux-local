@@ -47,7 +47,11 @@ def base_row_current(tier):
     """True when a complete stock row exists for the digest the registry serves for the tier's base today."""
     tag = common.base_config()["tiers"][tier]["ollama_tag"]
     name, size = tag.split(":")
-    digest = watch.registry_build(name, size)["digest"]
+    try:
+        digest = watch.registry_build(name, size)["digest"]
+    except Exception as e:  # noqa: BLE001 (a registry blip: treat the base row as stale, never crash the week)
+        print(f"registry read for {tag} failed ({str(e)[:120]}); base row treated as stale", flush=True)
+        return False
     for p in glob.glob(os.path.join(common.RESULTS, f"*-{common.stem(tag)}.json")):
         r = json.load(open(p))
         if r.get("complete") and r.get("digest") == digest:
@@ -95,10 +99,13 @@ def main():
         if done:
             to_decide.append((c, done))
             continue
+        if not os.path.exists(res):                      # refused or crashed before a box ran: not an attempt
+            week["decisions"].append({"candidate": c["id"], "verdict": None, "why": "no box ran this week; next week retries"})
+            continue
         runs = attempts.setdefault(c["digest"], [])
         if date not in runs:
             runs.append(date)
-        if len(runs) >= MAX_INCOMPLETE_RUNS and os.path.exists(res):
+        if len(runs) >= MAX_INCOMPLETE_RUNS:
             r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res, "--unscoreable", str(len(runs)),
                                 "--digest", c["digest"]], capture_output=True, text=True)
             week["decisions"].append({"candidate": c["id"], "verdict": "lose", "line": r.stdout.strip().splitlines()[0]})
@@ -107,6 +114,10 @@ def main():
                                       "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
     common.write_json(watch.STATE_PATH, state)
     for c, res in to_decide:
+        if not base_row_current(c["tier"]):              # never a permanent verdict against a stale base build
+            week["decisions"].append({"candidate": c["id"], "verdict": None,
+                                      "why": f"the {c['tier']} base row is not for today's registry build; next run"})
+            continue
         r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res], capture_output=True, text=True)
         print(r.stdout, r.stderr, flush=True)
         dpath = os.path.join(common.RESULTS, f"{json.load(open(res))['date']}-decide-{common.stem(c['id'])}.json")

@@ -198,7 +198,7 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
                     continue
                 tags = box.get("/api/tags").get("models", [])
                 m = next((x for x in tags if x.get("name") == model or x.get("model") == model), {})
-                meta["digest"] = "sha256:" + (m.get("digest") or "")
+                meta["digest"] = "sha256:" + m["digest"] if m.get("digest") else None
                 meta["details"] = m.get("details")
                 meta["size_bytes"] = m.get("size")
                 w0 = time.time()
