@@ -55,7 +55,7 @@ def wait_for_run(date, poll=300):
             run = json.load(open(common.HEARTBEAT)).get("running") or {}
         except (OSError, ValueError):
             return None
-        if (run.get("started_at") or "")[:10] != date or not alive(run.get("pid")):
+        if common.local_date(run.get("started_at") or "") != date or not alive(run.get("pid")):
             return None if time.time() - t0 < 1 else f"waited {round((time.time() - t0) / 60)} minutes for the run"
         print(f"run pid {run.get('pid')} started {run.get('started_at')} is still going; waiting", flush=True)
         time.sleep(poll)
@@ -74,7 +74,7 @@ def send(text):
         return json.loads(r.read()).get("ok")
 
 
-def problems(date):
+def problems(date, hung=False):
     out = []
     watch = os.path.join(common.RESULTS, f"watch-{date}.json")
     if not os.path.exists(watch):
@@ -83,9 +83,11 @@ def problems(date):
         beat = json.load(open(common.HEARTBEAT))
     except (OSError, ValueError) as e:
         return out + [f"no readable heartbeat ({type(e).__name__})"]
-    if beat.get("running"):
+    if beat.get("running") and not hung:     # a run still alive past the wait is reported as hung, not as killed
         return out + [f"run.py started {beat['running'].get('started_at')} and never finished (killed or crashed hard)"]
-    when = (beat.get("last_run_at") or "")[:10]
+    if hung:
+        return out
+    when = common.local_date(beat.get("last_run_at") or "")
     if when < date:                                       # a late run that ended after midnight still counts
         out.append(f"heartbeat last ran {when or 'never'}, not {date}")
     elif not beat.get("ok"):
@@ -105,8 +107,9 @@ def main():
         return
     date = a.date or dt.date.today().isoformat()
     waited = None if a.dry_run else wait_for_run(date)
-    bad = problems(date)
-    if waited and waited.startswith("still running"):
+    hung = bool(waited and waited.startswith("still running"))
+    bad = problems(date, hung)
+    if hung:
         bad.append(f"the run is {waited}")
     if not bad:
         print(f"OK: the Grux Local weekly run reported for {date}")

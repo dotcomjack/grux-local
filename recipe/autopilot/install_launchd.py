@@ -29,6 +29,45 @@ HOME = os.path.expanduser("~/.grux/autopilot/grux-local")
 LANE = os.path.join(HOME, "lane")
 RESULTS = os.path.join(HOME, "results")
 TRAIN = os.path.join(HOME, "train-data", "train.jsonl")
+VOCAB = os.path.join(HOME, "vocab")
+GRUX_VOCAB = "~/Code/AI/.worktrees/grux-main/Grux-Mac/Tests/GruxTests/banned-vocabulary.json"
+
+
+def install_vocab(src):
+    """Grux's banned vocabulary, copied beside the lane (it never enters this public repo). A local extra.txt in the
+    same folder, if present, adds terms; it is never written by this installer."""
+    os.makedirs(VOCAB, exist_ok=True)
+    src = os.path.expanduser(src)
+    if os.path.exists(src):
+        shutil.copy2(src, os.path.join(VOCAB, "banned-vocabulary.json"))
+    if not os.path.exists(os.path.join(VOCAB, "banned-vocabulary.json")):
+        raise SystemExit(f"no identity vocabulary at {src} or {VOCAB}; the training data scan cannot run")
+    return ":".join(os.path.join(VOCAB, f) for f in ("banned-vocabulary.json", "extra.txt")
+                    if os.path.exists(os.path.join(VOCAB, f)))
+
+
+def install_train_data(src, vocab):
+    """Copy the training file to its pinned path WITHOUT the rows that carry an identity term; refuse a secret shape.
+    s2/train_run.py scans again before any box and refuses on any hit."""
+    sys.path.insert(0, os.path.join(REPO, "recipe", "s2"))
+    import data_scan
+    terms = data_scan.load_terms(vocab)
+    hits = dict(data_scan.scan(src, terms))
+    if any(k != "identity term" for k in hits.values()):
+        raise SystemExit(f"training data {src} carries a secret shape; not installed: "
+                         f"{sorted({r for r, k in hits.items() if k != 'identity term'})[:5]}")
+    os.makedirs(os.path.dirname(TRAIN), exist_ok=True)
+    import json
+    kept = dropped = 0
+    with open(src, encoding="utf-8") as fin, open(TRAIN + ".part", "w", encoding="utf-8") as fout:
+        for line in fin:
+            if json.loads(line).get("id") in hits:
+                dropped += 1
+                continue
+            fout.write(line)
+            kept += 1
+    os.replace(TRAIN + ".part", TRAIN)
+    return kept, dropped
 
 
 def running():
@@ -88,17 +127,18 @@ def main():
     ap.add_argument("--python", default=os.path.join(HOME, "venv", "bin", "python"))
     ap.add_argument("--secret-tool", default=os.path.expanduser("~/.local/bin/dcj-secret"))
     ap.add_argument("--train-data", default="", help="round 2 train.jsonl to copy to a stable path")
+    ap.add_argument("--vocab", default=GRUX_VOCAB, help="Grux's banned-vocabulary.json")
     ap.add_argument("--load", action="store_true")
     a = ap.parse_args()
     if running():
         raise SystemExit(f"a lane run is in progress ({' '.join(running())}); install after it ends")
     sha = copy_lane()
     seeded = seed_results()
+    vocab = install_vocab(a.vocab)
     if a.train_data:
-        os.makedirs(os.path.dirname(TRAIN), exist_ok=True)
-        shutil.copy2(os.path.expanduser(a.train_data), TRAIN + ".part")
-        os.replace(TRAIN + ".part", TRAIN)
-    env = {"GRUX_LOCAL_AUTOPILOT_RESULTS": RESULTS}
+        kept, dropped = install_train_data(os.path.expanduser(a.train_data), vocab)
+        print(f"training data pinned at {TRAIN}: {kept} rows kept, {dropped} dropped for an identity term")
+    env = {"GRUX_LOCAL_AUTOPILOT_RESULTS": RESULTS, "GRUX_DATA_SCAN_VOCAB": vocab}
     if os.path.exists(TRAIN):
         env["GRUX_LOCAL_TRAIN_DATA"] = TRAIN
     lane_py = os.path.join(LANE, "recipe", "autopilot")

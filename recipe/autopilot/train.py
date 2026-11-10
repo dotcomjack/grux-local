@@ -72,8 +72,8 @@ def contamination(data_path):
 
 
 def home(path):
-    """An absolute path in ~ form: evidence must resolve from anywhere, never relative to the lane copy."""
-    return os.path.abspath(path).replace(os.path.expanduser("~"), "~", 1)
+    """An absolute path: evidence the board opens must resolve from anywhere, never relative to the lane copy."""
+    return os.path.abspath(os.path.expanduser(path))
 
 
 def main():
@@ -107,9 +107,15 @@ def main():
     if fam.replace(".", "") != cfg["train"]["modelfile_family"].replace(".", ""):
         refuse(f"the stock build's family is {fam!r}; s2/train_run.py's Modelfile renders {cfg['train']['modelfile_family']}"
                " only, so a person extends MODELFILE for this family first")
-    data = os.path.expanduser(os.environ.get(cfg["train"]["data_env"], ""))
-    if not data or not os.path.exists(data):
-        refuse(f"no training data: set {cfg['train']['data_env']} to the round 2 train.jsonl")
+    data = os.path.expanduser(os.environ.get(cfg["train"]["data_env"]) or cfg["train"]["data_path"])
+    if not os.path.exists(data):
+        refuse(f"no training data at {data} (install_launchd.py --train-data pins it there)")
+    vocab = os.environ.get("GRUX_DATA_SCAN_VOCAB") or cfg["train"]["data_scan_vocab"]
+    import data_scan
+    ok, msg = data_scan.check(data, vocab, require_vocab=True)
+    print(msg)
+    if not ok:
+        refuse(msg)
     hits, near = contamination(data)
     print(f"contamination: {len(hits)} training rows equal a held-out ask or share an 8-word run with held-out v1 or v2"
           f"; {len(near)} more contain a short held-out ask inside a longer one (reported, not blocked)")
@@ -125,7 +131,7 @@ def main():
     cmd = [sys.executable, os.path.join(common.RECIPE, "s2", "train_run.py"), "--run", run_dir, "--model", hf,
            "--data", data, "--rank", str(cfg["train"]["rank"]), "--epochs", str(cfg["train"]["epochs"]),
            "--cap", str(TRAIN_CAP_USD), "--tag", tag, "--skip-base", "--gpu", a.gpu,
-           "--meter", common.SPEND_TOOL, "--meter-lane", common.LANE, "--owner", common.OWNER]
+           "--meter", common.SPEND_TOOL, "--meter-lane", common.LANE, "--owner", common.OWNER, "--data-scan-vocab", vocab]
     print("train command:", " ".join(cmd))
     if a.dry_run:
         print("DRY RUN: every check passed; no box created, nothing written")

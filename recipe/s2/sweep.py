@@ -59,6 +59,7 @@ def main():
     ap.add_argument("--width", type=int, default=8)
     ap.add_argument("--tries", type=int, default=4)
     ap.add_argument("--only", default="", help="comma list of config names")
+    ap.add_argument("--meter", default="", help="spend meter CLI; every box needs a reservation (or GRUX_METER_RID)")
     a = ap.parse_args()
     root = os.path.abspath(a.sweep)
     os.makedirs(root, exist_ok=True)
@@ -81,6 +82,8 @@ def main():
                    "--data", a.data, "--rank", str(rank), "--epochs", str(ep), "--cap", str(cap),
                    "--tag", f"grux-{n}", "--no-pull", "--max-minutes", "600", "--micro", str(micro),
                    "--micro-tokens", str(mtok), "--accum", str(32 // micro), "--save-every", str(every)]
+            if a.meter:
+                cmd += ["--meter", a.meter]
             if not (rank == 16 and ep == 1):
                 cmd.append("--skip-base")       # the r16-e1 run of each size scores its base once
             os.makedirs(run, exist_ok=True)

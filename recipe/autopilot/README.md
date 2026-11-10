@@ -9,11 +9,12 @@ Keeps Grux Local on the best open base a Mac can run, on its own, once a week.
 | Decide | `decide.py` | Win, tie or lose against the stock row of the base for the same tier (`base.json`), on the 95% interval of the difference. `--reproduce` checks a box score of a published stock row against that row's interval. |
 | Train | `train.py` | On a win only: the weights must be public and allowlisted, the contamination check runs first, then `s2/train_run.py` (the 4b-v2 recipe) trains, packs and scores, and the lane writes a Mini gate request (`results/autopilot/gate-requests/<id>.json`, with the exact `eval_local.py --set holdout` command) and a ready item. It never pushes a tag, never touches gruxai.com and never runs anything on the Mini. |
 | Week | `run.py`, `install_launchd.py`, `deadman.py` | The weekly run (Mondays 3:00 AM). `install_launchd.py` copies the lane to `~/.grux/autopilot/grux-local/lane` (so the job outlives any checkout), writes results to `~/.grux/autopilot/grux-local/results`, and loads it beside a dead-man check at 6:00 AM that pages red unless the run left today's watch report and an ok heartbeat (`~/.grux/autopilot/heartbeat/grux-local.json`, written at the end of every run). |
-| Tests | `tests/` | Fake-box tests, no spend: a start that fails after the Lease leaves no box and no beating Lease; a box that lists no digest still scores in one box. |
+| Tests | `tests/` | Fake-box tests, no spend: a start that fails after the Lease leaves no box and no beating Lease; no box exists without a spend reservation; a box that lists no digest still scores in one box. |
 | Boxes | `boxes.py` | Lists the lane's boxes (`dcj.owner=grux-local`), or deletes one model's box (the kill-resume proof). |
 
 Spend: every box create is preceded by a reservation on a shared weekly meter (`DAYTONA_SPEND_TOOL`); a refusal
-creates no box. A swing estimated over $150 refuses in code before any reservation. Spot boxes only; each is
+creates no box, the box constructors refuse to run without the reservation id, and a scoring box stops at the hours
+it reserved. Training data passes `s2/data_scan.py` (no secret shape, no identity term) before any box. A swing estimated over $150 refuses in code before any reservation. Spot boxes only; each is
 ephemeral, labelled `dcj.owner=grux-local` and held by a `Lease` (`../lease.py`).
 
 Raw outboxes and logs stay on the machine that ran them (`~/.grux/autopilot/grux-local/`); the repo keeps only the

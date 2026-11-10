@@ -54,7 +54,16 @@ def today():
 
 
 def now_iso():
-    return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+    """UTC with a Z, the one timestamp form every autopilot lane writes."""
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def local_date(ts):
+    """The local calendar date of an ISO timestamp (Z or an offset); '' when unreadable."""
+    try:
+        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+    except (AttributeError, ValueError):
+        return ""
 
 
 def stem(model):
@@ -174,5 +183,11 @@ def ready_item(item_id, kind, title, what, evidence, ship_command, surfaces):
     item = {"id": item_id, "lane": LANE, "kind": kind, "title": title, "what": what, "evidence": evidence,
             "ship_command": ship_command, "surfaces": surfaces, "safety_touch": False, "created_at": now_iso()}
     path = os.path.join(READY, item_id + ".json")
+    try:   # an unchanged item keeps its first created_at, so the board's press fingerprint does not reset
+        prior = json.load(open(path))
+        if {k: v for k, v in prior.items() if k != "created_at"} == {k: v for k, v in item.items() if k != "created_at"}:
+            item["created_at"] = prior.get("created_at", item["created_at"])
+    except (OSError, ValueError):
+        pass
     write_json(path, item)
     return path

@@ -85,20 +85,46 @@ def main():
                                          "running": {"pid": os.getpid(), "started_at": common.now_iso()}})
     try:
         week = week_run()
-        alerts = week.get("alerts") or []
-        bad = [s for s in week["steps"] if s.get("score_exit") not in (None, 0) or s.get("exit") not in (None, 0)]
-        verdicts = ", ".join(f"{d['candidate']} {d.get('verdict') or 'pending'}" for d in week["decisions"]) or "none"
-        beat.update(ok=not alerts and not bad,
-                    summary=(f"watch: {week['watch'].get('candidates', 0)} candidates, {week['watch'].get('new_candidates', 0)}"
-                             f" new, {week['watch'].get('filtered', 0)} filtered; scored {len(week['scored'])}; "
-                             f"verdicts: {verdicts}" + (f"; ALERTS: {' | '.join(alerts)}" if alerts else "")
-                             + (f"; failed steps: {bad}" if bad else "")))
+        alerts = list(week.get("alerts") or [])
+        for st in week["steps"]:
+            if st.get("score_exit") == 3:
+                alerts.append("scoring refused by the spend meter (exit 3): no box was created, next week retries")
+            elif st.get("score_exit") == 4:
+                alerts.append("scoring refused over the $150 swing line (exit 4): no box was created")
+            elif st.get("score_exit") not in (None, 0):
+                alerts.append(f"score.py exited {st['score_exit']}")
+            if st.get("train") and st.get("exit") not in (None, 0):
+                alerts.append(f"train.py for {st['train']} exited {st['exit']} (see its TRAIN REFUSED line in the log)")
+        standing = standing_verdicts()
+        cands = ", ".join(f"{m} {v}" for m, v in standing.items()) or "none"
+        beat.update(ok=not alerts,
+                    summary=(f"{week['watch'].get('candidates', 0)} candidate(s): {cands}; "
+                             f"{week['watch'].get('new_candidates', 0)} without a verdict, "
+                             f"{week['watch'].get('filtered', 0)} filtered; scored {len(week['scored'])} this run"
+                             + (f"; ALERTS: {' | '.join(alerts)}" if alerts else "")))
     except BaseException as e:
         beat["summary"] = f"run.py failed: {type(e).__name__}: {str(e)[:300]}"
         raise
     finally:
         beat["last_run_at"] = common.now_iso()
         common.write_json(common.HEARTBEAT, beat)        # no "running" key: the run is over
+
+
+def standing_verdicts():
+    """Each current candidate (today's watch report) with its latest verdict, or 'pending'."""
+    import glob as g
+    reports = sorted(g.glob(os.path.join(common.RESULTS, f"watch-{common.today()}*.json")), key=os.path.getmtime)
+    if not reports:
+        return {}
+    out = {}
+    for c in json.load(open(reports[-1])).get("candidates", []):
+        v = "pending"
+        for p in sorted(g.glob(os.path.join(common.RESULTS, f"*-decide-{common.stem(c['id'])}.json"))):
+            d = json.load(open(p))
+            if d.get("candidate_digest") == c["digest"] and d.get("verdict"):
+                v = d["verdict"]
+        out[c["id"]] = v
+    return out
 
 
 def week_run():

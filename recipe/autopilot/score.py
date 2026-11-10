@@ -122,7 +122,7 @@ def one_case(box, name, c, request, score, model):
 
 def score_on_box(box, model, run_dir, logp, deadline):
     """Every remaining task of both sets on this box. Returns 'done' (every task sent once), 'lost' (the box is
-    gone) or 'deadline' (the box has used the hours reserved for it, plus a quarter)."""
+    gone) or 'deadline' (the box has used the hours reserved for it)."""
     for name in SETS:
         cases_fn, request, score = set_fns(name)
         cases = cases_fn()
@@ -197,7 +197,7 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
         meta["boxes"].append(rec)
         try:
             with OllamaBox(gpus, "gl-" + common.stem(model), ttl_minutes=ttl, owner=common.OWNER, num_parallel=1,
-                           log=lambda m: common.log(m, logp)) as box:
+                           log=lambda m: common.log(m, logp), reservation=rid) as box:
                 rec.update({k: str(v) for k, v in box.info.items() if k in ("id", "gpu_type", "spot", "nvidia_smi")})
                 meta["ollama_version"] = box.get("/api/version").get("version")
                 status, pull_s = box.pull(model)
@@ -218,7 +218,7 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
                                        "messages": [{"role": "user", "content": "ok"}],
                                        "options": {"num_ctx": NUM_CTX, "num_predict": 4}}, timeout=900)
                 common.log(f"{model}: warm in {time.time() - w0:.1f}s; digest {(meta['digest'] or 'none listed')[:19]}", logp)
-                how = score_on_box(box, model, run_dir, logp, t0 + hours * 3600 * 1.25)
+                how = score_on_box(box, model, run_dir, logp, t0 + hours * 3600)   # never past what was reserved
                 complete = outbox_complete(run_dir)
                 rec["outcome"] = "complete" if complete else {"done": "tasks skipped", "lost": "box lost"}.get(how, how)
         except common.Refused:

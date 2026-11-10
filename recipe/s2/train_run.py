@@ -153,9 +153,9 @@ def pull_model(box, name, run_dir):
     log(f"pulled {name}: {os.path.getsize(dest) / 1e9:.2f} GB in {time.time() - t0:.0f} s", run_dir)
 
 
-def one_box(a, run_dir, tag, base_tag):
+def one_box(a, run_dir, tag, base_tag, reservation=None):
     with TrainBox(a.gpu.split(","), "s2-train-" + os.path.basename(run_dir), max_minutes=a.max_minutes,
-                  log=lambda m: log(m, run_dir), owner=a.owner) as box:
+                  log=lambda m: log(m, run_dir), owner=a.owner, reservation=reservation) as box:
         gpu = box.info["gpu_type"].split(".")[-1].replace("_", "-")
         price = PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA
         log(f"box {box.info['id'][:8]} {gpu} at ${price:.2f}/h", run_dir)
@@ -229,6 +229,7 @@ def main():
     ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
     ap.add_argument("--meter-lane", default="grux-local")
     ap.add_argument("--owner", default="grux", help="dcj.owner label on every box")
+    ap.add_argument("--data-scan-vocab", default="", help="identity vocabulary files for s2/data_scan.py (colon list)")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
@@ -237,6 +238,15 @@ def main():
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7",
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
+    if not (a.meter or os.environ.get("GRUX_METER_RID")):
+        sys.exit("no spend meter (--meter) and no GRUX_METER_RID: every box needs a reservation; nothing created")
+    import data_scan   # no secret shape or identity term goes into a box (s2/data_scan.py), checked before any create
+    ok, msg = data_scan.check(a.data, a.data_scan_vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB", ""),
+                              require_vocab=bool(a.data_scan_vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB")))
+    log(msg, run_dir)
+    if not ok:
+        json.dump({"status": "data scan refused: " + msg}, open(os.path.join(run_dir, "status.json"), "w"))
+        sys.exit(3)
     spent = float(json.load(open(os.path.join(run_dir, "spent.json")))["spent"]) if os.path.exists(
         os.path.join(run_dir, "spent.json")) else 0.0
     status = "not started"
@@ -256,7 +266,7 @@ def main():
                 break
             rid = r.stdout.strip()
         try:
-            status, cost = one_box(a, run_dir, tag, base_tag)
+            status, cost = one_box(a, run_dir, tag, base_tag, rid)
         except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
             log(f"box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
             status, cost = "evicted", 0.0

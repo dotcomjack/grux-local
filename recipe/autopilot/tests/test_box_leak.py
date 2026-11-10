@@ -30,8 +30,8 @@ cases = [(f"{cls} {why}", cls, d) for why, d in (("start fails after the Lease",
                                                     ("create fails", NoCreateD))
          for cls in ("OllamaBox", "TrainBox")]
 for name, cls, dcls in cases:
-    make = (lambda: gpu_box.OllamaBox(["H200"], "t", 10, owner="grux-local")) if cls == "OllamaBox" else \
-        (lambda: train_box.TrainBox(["H200"], "t", 10, owner="grux-local"))
+    make = (lambda: gpu_box.OllamaBox(["H200"], "t", 10, owner="grux-local", reservation="test-rid")) if cls == "OllamaBox" else \
+        (lambda: train_box.TrainBox(["H200"], "t", 10, owner="grux-local", reservation="test-rid"))
     gpu_box.Daytona = train_box.Daytona = dcls
     box = make()
     d = box.d
@@ -49,4 +49,20 @@ for name, cls, dcls in cases:
     print(f"{'PASS' if ok else 'FAIL'} {name}: boxes left {sorted(d.live)}, leases still beating {live_leases}")
     fails += not ok
     lease._live.clear()
+# No reservation, no box: the constructor raises before any create.
+os.environ.pop("GRUX_METER_RID", None)
+for cls, make in (("OllamaBox", lambda: gpu_box.OllamaBox(["H200"], "t", 10, owner="grux-local")),
+                  ("TrainBox", lambda: train_box.TrainBox(["H200"], "t", 10, owner="grux-local"))):
+    created = []
+    class CountD(FakeD):
+        def create(self, params, timeout=0): created.append(1); return super().create(params, timeout)
+    gpu_box.Daytona = train_box.Daytona = CountD
+    try:
+        with make():
+            pass
+        ok = False
+    except RuntimeError as e:
+        ok = "no spend reservation" in str(e) and not created
+    print(f"{'PASS' if ok else 'FAIL'} {cls} without a reservation: creates {len(created)}, refused {ok}")
+    fails += not ok
 sys.exit(1 if fails else 0)
