@@ -16,6 +16,7 @@ import concurrent.futures as cf
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -154,7 +155,7 @@ def pull_model(box, name, run_dir):
 
 def one_box(a, run_dir, tag, base_tag):
     with TrainBox(a.gpu.split(","), "s2-train-" + os.path.basename(run_dir), max_minutes=a.max_minutes,
-                  log=lambda m: log(m, run_dir)) as box:
+                  log=lambda m: log(m, run_dir), owner=a.owner) as box:
         gpu = box.info["gpu_type"].split(".")[-1].replace("_", "-")
         price = PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA
         log(f"box {box.info['id'][:8]} {gpu} at ${price:.2f}/h", run_dir)
@@ -225,6 +226,9 @@ def main():
                     help="keep only the adapter; a winner is rebuilt later (bounded space)")
     ap.add_argument("--micro", type=int, default=8, help="examples per forward pass")
     ap.add_argument("--micro-tokens", type=int, default=48000, help="token ceiling per forward pass")
+    ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
+    ap.add_argument("--meter-lane", default="grux-local")
+    ap.add_argument("--owner", default="grux", help="dcj.owner label on every box")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
@@ -240,12 +244,26 @@ def main():
         if spent >= a.cap:
             log(f"STOP: cap ${a.cap} reached (${spent:.2f})", run_dir)
             break
+        rid, t_box = None, time.time()
+        if a.meter:   # a shared spend meter, reserved before every box create; exit 3 refuses the box
+            gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
+            hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
+            r = subprocess.run([sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
+                                "--gpu", gpu.replace("-", "")], capture_output=True, text=True)
+            if r.returncode != 0:
+                log(f"STOP: the spend meter refused the box (exit {r.returncode}): {r.stderr.strip()[:200]}", run_dir)
+                status = "meter refused"
+                break
+            rid = r.stdout.strip()
         try:
             status, cost = one_box(a, run_dir, tag, base_tag)
         except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
             log(f"box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
             status, cost = "evicted", 0.0
             time.sleep(30)
+        if rid:
+            subprocess.run([sys.executable, a.meter, "settle", rid, "--hours", f"{(time.time() - t_box) / 3600:.4f}"],
+                           capture_output=True, text=True)
         spent += cost
         json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))
         log(f"box {attempt + 1}: {status}, spent about ${spent:.2f}", run_dir)

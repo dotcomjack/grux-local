@@ -18,7 +18,8 @@ PORT = 11434
 
 
 class OllamaBox:
-    def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False):
+    def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False,
+                 owner="grux", image="ollama/ollama:latest"):
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
         self.label = {"grux.factory": label}
         self.ttl = ttl_minutes
@@ -31,6 +32,7 @@ class OllamaBox:
         self.sb = None
         self.url = self.token = None
         self.num_parallel = num_parallel
+        self.owner, self.image = owner, image
         self.info = {}
 
     def __enter__(self):
@@ -49,12 +51,12 @@ class OllamaBox:
         for spot in attempts:
             try:
                 self.sb = self.d.create(CreateSandboxFromImageParams(
-                    image=Image.base("ollama/ollama:latest"),
+                    image=Image.base(self.image),
                     resources=Resources(gpu=1, gpu_type=self.gpu_types),
                     env_vars={"OLLAMA_HOST": f"0.0.0.0:{PORT}", "OLLAMA_KEEP_ALIVE": "30m",
                               "OLLAMA_NUM_PARALLEL": str(self.num_parallel), "OLLAMA_MAX_LOADED_MODELS": "1"},
                     ephemeral=True, spot=spot, ttl_minutes=LEASE_MINUTES, auto_stop_interval=30,
-                    labels={**self.label, "dcj.owner": "grux", "dcj.max-minutes": str(self.ttl)}),
+                    labels={**self.label, "dcj.owner": self.owner, "dcj.max-minutes": str(self.ttl)}),
                     timeout=900)
                 break
             except Exception as e:  # spot fails at once when there is no spare capacity

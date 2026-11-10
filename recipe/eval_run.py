@@ -18,7 +18,6 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import catalog  # noqa: E402
 import suite  # noqa: E402
 from gpu_box import OllamaBox  # noqa: E402
 
@@ -138,6 +137,7 @@ def main():
     if a.limit:
         seen = {}
         cases = [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= a.limit]
+    import catalog  # S1 only (the Grux tree); train_run imports this module for BOX_EXTRA, PRICE, log
     pool = catalog.candidates() if a.candidates else catalog.catalog()
     models = [m["id"] for m in pool]
     if a.models:

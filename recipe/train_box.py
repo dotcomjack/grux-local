@@ -42,9 +42,9 @@ BOOT = ("apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl zstd 
 
 
 class TrainBox:
-    def __init__(self, gpu_types, label, max_minutes, log=print, image=TORCH_IMAGE):
+    def __init__(self, gpu_types, label, max_minutes, log=print, image=TORCH_IMAGE, owner="grux"):
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
-        self.label = {"grux.factory": label, "dcj.owner": "grux", "dcj.max-minutes": str(max_minutes)}
+        self.label = {"grux.factory": label, "dcj.owner": owner, "dcj.max-minutes": str(max_minutes)}
         self.image, self.log = image, log
         self.d = Daytona()
         self.sb = self.lease = None
