@@ -60,6 +60,17 @@ def set_fns(name):
     return holdout_v2.cases, holdout_v2.request_v2, holdout_v2.score_v2
 
 
+def registry_digest(model):
+    """The digest any client without a key is served for this tag (equal to the box's /api/tags digest on the three
+    models scored 2026-11-10); None when the registry cannot be read."""
+    import watch
+    try:
+        name, size = model.split(":")
+        return watch.registry_build(name, size)["digest"]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def done_ids(path):
     out = set()
     if os.path.exists(path):
@@ -198,14 +209,15 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
                     continue
                 tags = box.get("/api/tags").get("models", [])
                 m = next((x for x in tags if x.get("name") == model or x.get("model") == model), {})
-                meta["digest"] = "sha256:" + m["digest"] if m.get("digest") else None
+                meta["digest"] = "sha256:" + m["digest"] if m.get("digest") else registry_digest(model)
+                meta["digest_source"] = "the box's /api/tags" if m.get("digest") else "the registry (the box listed none)"
                 meta["details"] = m.get("details")
                 meta["size_bytes"] = m.get("size")
                 w0 = time.time()
                 box.post("/api/chat", {"model": model, "stream": False, "think": False,
                                        "messages": [{"role": "user", "content": "ok"}],
                                        "options": {"num_ctx": NUM_CTX, "num_predict": 4}}, timeout=900)
-                common.log(f"{model}: warm in {time.time() - w0:.1f}s; digest {meta['digest'][:19]}", logp)
+                common.log(f"{model}: warm in {time.time() - w0:.1f}s; digest {(meta['digest'] or 'none listed')[:19]}", logp)
                 how = score_on_box(box, model, run_dir, logp, t0 + hours * 3600 * 1.25)
                 complete = outbox_complete(run_dir)
                 rec["outcome"] = "complete" if complete else {"done": "tasks skipped", "lost": "box lost"}.get(how, how)
@@ -223,7 +235,7 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
     rows = {s: outbox_rows(os.path.join(run_dir, f"{s}.jsonl")) for s in SETS}
     complete = outbox_complete(run_dir)
     result = {"model": model, "date": os.path.basename(run_dir)[:10], "source": "Ollama library build, pulled by the box",
-              "digest": meta.get("digest"), "details": meta.get("details"), "size_bytes": meta.get("size_bytes"),
+              "digest": meta.get("digest"), "digest_source": meta.get("digest_source"), "details": meta.get("details"), "size_bytes": meta.get("size_bytes"),
               "ollama_version": meta.get("ollama_version"), "think": False, "num_ctx": NUM_CTX, "num_parallel": 1,
               "complete": complete,
               "check_prompts": meta["check_prompts"],

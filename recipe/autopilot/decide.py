@@ -48,7 +48,8 @@ def diff(c, b):
             "ci95": common.newcombe(c["pass"], c["of"], b["pass"], b["of"])}
 
 
-def decide(cand_path):
+def decide(cand_path, digest=None):
+    """`digest` is the registry digest the watch saw; it stands in when the box listed none for the build."""
     cand = json.load(open(cand_path))
     tier = tier_of(cand["model"])
     if tier is None:
@@ -60,7 +61,7 @@ def decide(cand_path):
         raise SystemExit(f"no complete stock row for the {tier} base yet; score.py scores it beside the candidate")
     if base["model"] == cand["model"]:
         raise SystemExit("the candidate is the base")
-    out = {"candidate": cand["model"], "candidate_digest": cand.get("digest"), "candidate_result": os.path.relpath(os.path.abspath(cand_path), common.REPO),
+    out = {"candidate": cand["model"], "candidate_digest": cand.get("digest") or digest, "candidate_result": os.path.relpath(os.path.abspath(cand_path), common.REPO),
            "tier": tier, "made_for": common.base_config()["tiers"][tier]["made_for"],
            "base": base["model"], "base_digest": base.get("digest"), "base_result": os.path.relpath(base_path, common.REPO), "sets": {}}
     ck = cb = nk = nb = 0
@@ -132,7 +133,7 @@ def main():
     ap.add_argument("result")
     ap.add_argument("--reproduce", action="store_true")
     ap.add_argument("--unscoreable", type=int, default=0, help="write a lose for a build incomplete after N runs")
-    ap.add_argument("--digest", default="", help="with --unscoreable: the registry digest the watch saw")
+    ap.add_argument("--digest", default="", help="the registry digest the watch saw (used when the box listed none)")
     a = ap.parse_args()
     if a.unscoreable:
         out, path = unscoreable(a.result, a.unscoreable, a.digest or None)
@@ -143,7 +144,7 @@ def main():
         ok, line = reproduce(a.result)
         print(line)
         sys.exit(0 if ok else 1)
-    out, path = decide(a.result)
+    out, path = decide(a.result, a.digest or None)
     print(out["line"])
     for s in SETS:
         print(f"  {s}: total {out['sets'][s]['total']}, hidden {out['sets'][s]['hidden_instructions']}")

@@ -31,27 +31,41 @@ MAX_PER_RUN = 15           # new candidates scored per run (under the $150 swing
 MAX_INCOMPLETE_RUNS = 2    # a build still not scored completely after this many runs is a lose, and stops retrying
 
 
-def complete_result(digest):
-    """The newest complete, fully scored result for this build, or None."""
+def complete_result(digest, model):
+    """The newest complete, fully scored result for this build, or None. A result whose box listed no digest is
+    matched by model name, and only from today's run (the watch's digest for today's build is then the only one
+    known; an older undigested result could be another build)."""
     best = None
     for p in sorted(glob.glob(os.path.join(common.RESULTS, "20*.json"))):
         if "-decide-" in p:
             continue
         r = json.load(open(p))
-        if r.get("digest") == digest and r.get("complete") and not any(v.get("unscored") for v in r["sets"].values()):
+        if (r.get("digest") == digest or (r.get("digest") is None and r.get("model") == model
+                                         and r.get("date") == common.today())) and r.get("complete") and not any(v.get("unscored") for v in r["sets"].values()):
             best = p
     return best
 
 
+_BASE_CURRENT = {}
+
+
 def base_row_current(tier):
-    """True when a complete stock row exists for the digest the registry serves for the tier's base today."""
+    """True when a complete stock row exists for the digest the registry serves for the tier's base today, False when
+    none does, None when the registry could not be read (unknown: never rescore on a blip, never decide either).
+    One registry read per tier per run."""
+    if tier not in _BASE_CURRENT:
+        _BASE_CURRENT[tier] = _base_row_current(tier)
+    return _BASE_CURRENT[tier]
+
+
+def _base_row_current(tier):
     tag = common.base_config()["tiers"][tier]["ollama_tag"]
     name, size = tag.split(":")
     try:
         digest = watch.registry_build(name, size)["digest"]
-    except Exception as e:  # noqa: BLE001 (a registry blip: treat the base row as stale, never crash the week)
-        print(f"registry read for {tag} failed ({str(e)[:120]}); base row treated as stale", flush=True)
-        return False
+    except Exception as e:  # noqa: BLE001 (a registry blip: unknown, never crash the week)
+        print(f"registry read for {tag} failed ({str(e)[:120]}); base row unknown this run", flush=True)
+        return None
     for p in glob.glob(os.path.join(common.RESULTS, f"*-{common.stem(tag)}.json")):
         r = json.load(open(p))
         if r.get("complete") and r.get("digest") == digest:
@@ -76,7 +90,7 @@ def main():
     attempts = state.setdefault("incomplete_runs", {})
     to_decide, to_score = [], []
     for c in pending:
-        res = complete_result(c["digest"])
+        res = complete_result(c["digest"], c["id"])
         if res:
             to_decide.append((c, res))                           # scored earlier, never decided (killed, base failed)
         else:
@@ -87,15 +101,16 @@ def main():
     to_score = to_score[:MAX_PER_RUN]
     models = [c["id"] for c in to_score]
     for tier in sorted({c["tier"] for c in pending}):
-        if not base_row_current(tier):
+        if base_row_current(tier) is False:
             models.append(common.base_config()["tiers"][tier]["ollama_tag"])
     week["scored"] = models
     if models:
         r = subprocess.run([sys.executable, os.path.join(HERE, "score.py"), "--models", ",".join(models), "--date", date])
         week["steps"].append({"score_exit": r.returncode})
+        _BASE_CURRENT.clear()                             # a base rescored just now may be current
     for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")
-        done = complete_result(c["digest"])
+        done = complete_result(c["digest"], c["id"])
         if done:
             to_decide.append((c, done))
             continue
@@ -114,11 +129,13 @@ def main():
                                       "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
     common.write_json(watch.STATE_PATH, state)
     for c, res in to_decide:
-        if not base_row_current(c["tier"]):              # never a permanent verdict against a stale base build
+        if base_row_current(c["tier"]) is not True:      # never a permanent verdict against a stale or unknown base
             week["decisions"].append({"candidate": c["id"], "verdict": None,
-                                      "why": f"the {c['tier']} base row is not for today's registry build; next run"})
+                                      "why": f"the {c['tier']} base row is not proven current for today's registry "
+                                             "build; next run"})
             continue
-        r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res, "--digest", c["digest"]],
+                           capture_output=True, text=True)
         print(r.stdout, r.stderr, flush=True)
         dpath = os.path.join(common.RESULTS, f"{json.load(open(res))['date']}-decide-{common.stem(c['id'])}.json")
         d = json.load(open(dpath)) if os.path.exists(dpath) else {}
