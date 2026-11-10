@@ -10,9 +10,10 @@ Hard filters, each logged with its reason when it drops a model:
     quantized copy, a pretrain-only base or another kind of model.
 A candidate is scored as the Mac runs it: the default Ollama library build of that size. A Hugging Face base with
 no Ollama library build yet waits (rechecked every week). The seen state is keyed by (source, id, digest) and
-records when each build was first seen; a build stays new until a complete, fully scored result for its digest
-exists in results/autopilot/, so a base re-published under the same name is new again and a failed or refused
-week is retried the next.
+records when each build was first seen; a build stays new until a verdict for its digest exists in
+results/autopilot/ (run.py decides a complete result it finds, and calls a build that could not be scored
+completely in two runs a lose), so a re-published base is new again and a failed, refused or killed week is
+picked up the next.
 
   python3 recipe/autopilot/watch.py [--out results/autopilot/watch-<date>.json]   live watch
   python3 recipe/autopilot/watch.py --self-test                                   planted red cases
@@ -40,17 +41,17 @@ STATE_PATH = os.path.join(common.STATE, "watch-state.json")
 HF_LIMIT = 500      # newest first; the run reports an error when the oldest of a full page is still inside the window
 
 
-def scored_digests():
-    """Builds with a complete, fully scored result in results/autopilot/: the only thing that makes a build not new,
-    so a week whose scoring failed or was refused comes back next week."""
+def decided_digests():
+    """Builds that already have a verdict (a results/autopilot/*-decide-*.json naming their digest): the only thing
+    that makes a build not new, so a week whose scoring or deciding failed, was refused or was killed comes back."""
     out = set()
-    for p in glob.glob(os.path.join(common.RESULTS, "20*.json")):
+    for p in glob.glob(os.path.join(common.RESULTS, "*-decide-*.json")):
         try:
-            r = json.load(open(p))
+            d = json.load(open(p))
         except ValueError:
             continue
-        if r.get("complete") and r.get("digest") and not any(v.get("unscored") for v in r.get("sets", {}).values()):
-            out.add(r["digest"])
+        if d.get("candidate_digest") and d.get("verdict"):
+            out.add(d["candidate_digest"])
     return out
 
 
@@ -217,6 +218,9 @@ def judge_ollama_build(name, size, build, cfg):
            "license_first_line": first, "params_b": common.params_from_tag(size)}
     if not build["license_text"]:
         return "filtered", "no license file in the build", rec
+    if lic is None and re.search(r"Apache License", build["license_text"][:4000]) and \
+            re.search(r"Version 2\.0", build["license_text"][:4000]):
+        rec["apache_short_form"] = True    # names Apache 2.0 without its terms: filtered, counted in the report
     if lic is None:
         # Some builds ship a pointer, not the text: "MIT (declared by X in the pinned source model card)" and the
         # Hugging Face URL. Read that card; the HF filters (gated, license) then decide, never the pointer itself.
@@ -322,7 +326,7 @@ def run(out_path, use_state=True):
         else:
             report["waiting"].append({**rec, "reason": rec["reason"] + "; no Ollama library build yet (rechecked weekly)"})
 
-    done = scored_digests()
+    done = decided_digests()
     for key, rec in list(ollama_by_key.items()):
         if key in gated_keys:     # the same base's weights are HF-gated: the recipe could never train it
             rec["reason"] = f"its Hugging Face weights {gated_keys[key]} are HF-gated: no token goes in a box"
@@ -333,11 +337,12 @@ def run(out_path, use_state=True):
         rec["scorable"] = True
         report["candidates"].append(rec)
     report["pick"] = pick([c for c in report["candidates"] if c["new"]], cfg["headline_tier"])
-    report["pick_rule"] = "headline tier (4b) first, then newest update, then pulls; only builds not yet scored"
+    report["pick_rule"] = "headline tier (4b) first, then newest update, then pulls; only builds with no verdict yet"
     report["counts"] = {"candidates": len(report["candidates"]),
                         "new_candidates": sum(c["new"] for c in report["candidates"]),
                         "waiting": len(report["waiting"]), "filtered": len(report["filtered"]),
-                        "baseline": len(report["baseline"]), "errors": len(report["errors"])}
+                        "baseline": len(report["baseline"]), "errors": len(report["errors"]),
+                        "apache_short_form_filtered": sum(bool(f.get("apache_short_form")) for f in report["filtered"])}
     common.write_json(out_path, report)
     if use_state:
         for c in report["candidates"]:

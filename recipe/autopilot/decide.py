@@ -97,6 +97,21 @@ def decide(cand_path):
     return out, path
 
 
+def unscoreable(path, runs, digest=None):
+    """A build that could not be scored completely in `runs` runs: a lose, with the reason, so it stops being retried.
+    `digest` is the registry digest the watch saw (a box that never pulled the build recorded none)."""
+    cand = json.load(open(path))
+    sets = ", ".join(f"{s} {v.get('rows')} rows, {v.get('unscored')} unscored" for s, v in cand.get("sets", {}).items())
+    out = {"candidate": cand["model"], "candidate_digest": digest or cand.get("digest"),
+           "candidate_result": os.path.relpath(os.path.abspath(path), common.REPO), "tier": tier_of(cand["model"]),
+           "verdict": "lose", "unscoreable": True,
+           "line": f"LOSE: {cand['model']} could not be scored completely in {runs} runs ({sets or 'no rows'}); "
+                   "a base that cannot answer every held-out task is not a candidate"}
+    p = os.path.join(common.RESULTS, f"{cand['date']}-decide-{common.stem(cand['model'])}.json")
+    common.write_json(p, out)
+    return out, p
+
+
 def reproduce(path):
     """A box score of a published stock row must land inside that row's 95% interval (results/v1.json)."""
     r = json.load(open(path))
@@ -116,7 +131,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("result")
     ap.add_argument("--reproduce", action="store_true")
+    ap.add_argument("--unscoreable", type=int, default=0, help="write a lose for a build incomplete after N runs")
+    ap.add_argument("--digest", default="", help="with --unscoreable: the registry digest the watch saw")
     a = ap.parse_args()
+    if a.unscoreable:
+        out, path = unscoreable(a.result, a.unscoreable, a.digest or None)
+        print(out["line"])
+        print(f"wrote {path}")
+        sys.exit(11)
     if a.reproduce:
         ok, line = reproduce(a.result)
         print(line)

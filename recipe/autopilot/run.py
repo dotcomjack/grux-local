@@ -2,9 +2,11 @@
 """The weekly Grux Local autopilot run: watch, score, decide, and on a win train and hand to the Mini gate.
 
   1. watch.py finds new bases (the seen-state keeps a build from being scored twice);
-  2. score.py scores every new candidate stock, one spot box each, in parallel, beside each involved tier's base
-     when that base has no complete row for the digest the registry serves today;
-  3. decide.py gives win, tie or lose per candidate, with the numbers;
+  2. score.py scores every candidate with no verdict and no complete result (at most 15 a run, the rest carry
+     over), one spot box each, in parallel, beside each involved tier's base when that base has no complete row
+     for the digest the registry serves today;
+  3. decide.py gives win, tie or lose per candidate with a complete result, including one scored in an earlier
+     run that never got a verdict; a build still incomplete after two runs is a lose;
   4. train.py runs only on a win (and not with --no-train).
 Writes results/autopilot/week-<date>.json. The launchd job (install_launchd.py) runs this on Mondays at 3:00 AM.
 
@@ -25,6 +27,22 @@ import watch  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+MAX_PER_RUN = 15           # new candidates scored per run (under the $150 swing line); the rest carry to next week
+MAX_INCOMPLETE_RUNS = 2    # a build still not scored completely after this many runs is a lose, and stops retrying
+
+
+def complete_result(digest):
+    """The newest complete, fully scored result for this build, or None."""
+    best = None
+    for p in sorted(glob.glob(os.path.join(common.RESULTS, "20*.json"))):
+        if "-decide-" in p:
+            continue
+        r = json.load(open(p))
+        if r.get("digest") == digest and r.get("complete") and not any(v.get("unscored") for v in r["sets"].values()):
+            best = p
+    return best
+
+
 def base_row_current(tier):
     """True when a complete stock row exists for the digest the registry serves for the tier's base today."""
     tag = common.base_config()["tiers"][tier]["ollama_tag"]
@@ -42,33 +60,61 @@ def main():
     ap.add_argument("--no-train", action="store_true")
     a = ap.parse_args()
     date = common.today()
-    week = {"date": date, "steps": []}
+    week = {"date": date, "steps": [], "decisions": []}
     wpath = os.path.join(common.RESULTS, f"watch-{date}.json")
     if os.path.exists(wpath):                           # a second run the same day keeps the first report
         wpath = os.path.join(common.RESULTS, f"watch-{date}-{dt.datetime.now():%H%M}.json")
     rep = watch.run(wpath)
     week["watch_report"] = os.path.relpath(wpath, common.REPO)
     week["watch"] = rep["counts"]
-    new = [c for c in rep["candidates"] if c["new"]]
-    models = [c["id"] for c in new]
-    for tier in sorted({c["tier"] for c in new}):
+    pending = [c for c in rep["candidates"] if c["new"]]        # every build with no verdict yet
+    state = json.load(open(watch.STATE_PATH)) if os.path.exists(watch.STATE_PATH) else {"seen": {}}
+    attempts = state.setdefault("incomplete_runs", {})
+    to_decide, to_score = [], []
+    for c in pending:
+        res = complete_result(c["digest"])
+        if res:
+            to_decide.append((c, res))                           # scored earlier, never decided (killed, base failed)
+        else:
+            to_score.append(c)
+    to_score.sort(key=lambda c: c.get("updated") or "", reverse=True)             # newest first ...
+    to_score.sort(key=lambda c: c["tier"] != common.base_config()["headline_tier"])  # ... headline tier ahead (stable)
+    week["carried_over"] = [c["id"] for c in to_score[MAX_PER_RUN:]]
+    to_score = to_score[:MAX_PER_RUN]
+    models = [c["id"] for c in to_score]
+    for tier in sorted({c["tier"] for c in pending}):
         if not base_row_current(tier):
             models.append(common.base_config()["tiers"][tier]["ollama_tag"])
     week["scored"] = models
     if models:
         r = subprocess.run([sys.executable, os.path.join(HERE, "score.py"), "--models", ",".join(models), "--date", date])
         week["steps"].append({"score_exit": r.returncode})
-    week["decisions"] = []
-    for c in new:
+    for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")
-        if not os.path.exists(res):
-            week["decisions"].append({"candidate": c["id"], "verdict": None, "why": "no result written"})
+        done = complete_result(c["digest"])
+        if done:
+            to_decide.append((c, done))
             continue
+        runs = attempts.setdefault(c["digest"], [])
+        if date not in runs:
+            runs.append(date)
+        if len(runs) >= MAX_INCOMPLETE_RUNS and os.path.exists(res):
+            r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res, "--unscoreable", str(len(runs)),
+                                "--digest", c["digest"]], capture_output=True, text=True)
+            week["decisions"].append({"candidate": c["id"], "verdict": "lose", "line": r.stdout.strip().splitlines()[0]})
+        else:
+            week["decisions"].append({"candidate": c["id"], "verdict": None,
+                                      "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
+    common.write_json(watch.STATE_PATH, state)
+    for c, res in to_decide:
         r = subprocess.run([sys.executable, os.path.join(HERE, "decide.py"), res], capture_output=True, text=True)
         print(r.stdout, r.stderr, flush=True)
-        dpath = os.path.join(common.RESULTS, f"{date}-decide-{common.stem(c['id'])}.json")
+        dpath = os.path.join(common.RESULTS, f"{json.load(open(res))['date']}-decide-{common.stem(c['id'])}.json")
         d = json.load(open(dpath)) if os.path.exists(dpath) else {}
-        week["decisions"].append({"candidate": c["id"], "verdict": d.get("verdict"), "line": d.get("line") or r.stdout.strip()})
+        if d.get("candidate_digest") != c["digest"]:
+            d = {}
+        week["decisions"].append({"candidate": c["id"], "verdict": d.get("verdict"),
+                                  "line": d.get("line") or (r.stdout + r.stderr).strip()[-300:]})
         if d.get("verdict") == "win" and not a.no_train:
             t = subprocess.run([sys.executable, os.path.join(HERE, "train.py"), dpath])
             week["steps"].append({"train": c["id"], "exit": t.returncode})
