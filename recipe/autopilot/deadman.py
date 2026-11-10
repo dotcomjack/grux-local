@@ -38,11 +38,13 @@ def page(text, tries=10, gap=30):
 
 
 def alive(pid):
+    """The pid is running AND is a run.py (a reused pid belongs to something else)."""
+    import subprocess
     try:
-        os.kill(int(pid), 0)
-        return True
-    except (OSError, ValueError, TypeError):
+        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True).stdout
+    except (ValueError, TypeError, OSError):
         return False
+    return "autopilot/run.py" in out
 
 
 def wait_for_run(date, poll=300):
@@ -81,8 +83,10 @@ def problems(date):
         beat = json.load(open(common.HEARTBEAT))
     except (OSError, ValueError) as e:
         return out + [f"no readable heartbeat ({type(e).__name__})"]
+    if beat.get("running"):
+        return out + [f"run.py started {beat['running'].get('started_at')} and never finished (killed or crashed hard)"]
     when = (beat.get("last_run_at") or "")[:10]
-    if when != date:
+    if when < date:                                       # a late run that ended after midnight still counts
         out.append(f"heartbeat last ran {when or 'never'}, not {date}")
     elif not beat.get("ok"):
         out.append(f"the run finished but not ok: {beat.get('summary', '')[:300]}")
