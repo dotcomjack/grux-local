@@ -43,11 +43,11 @@ BOOT = ("apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl zstd 
 
 class TrainBox:
     def __init__(self, gpu_types, label, max_minutes, log=print, image=TORCH_IMAGE, owner="grux", reservation=None):
-        # Every box is paid for before it exists: the id a spend meter returned for it, or GRUX_METER_RID.
-        self.reservation = reservation or os.environ.get("GRUX_METER_RID")
+        # Every box is paid for before it exists, each with its own reservation (recipe/meter.py).
+        self.reservation = reservation
         if not self.reservation:
-            raise RuntimeError("no spend reservation for this box: reserve first and pass reservation= "
-                               "(or set GRUX_METER_RID); no box is created without one")
+            raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
+                               "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
         self.label = {"grux.factory": label, "dcj.owner": owner, "dcj.max-minutes": str(max_minutes)}
         self.image, self.log = image, log

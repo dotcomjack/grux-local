@@ -40,7 +40,10 @@ def load_terms(spec):
             continue
         text = open(path, encoding="utf-8-sig").read()
         if path.endswith(".json"):
-            terms += [t for t in json.loads(text)["banned"] if t.strip()]
+            banned = json.loads(text)["banned"]
+            if not isinstance(banned, list) or not all(isinstance(t, str) for t in banned):
+                raise ValueError(f"{path}: 'banned' must be a list of strings")
+            terms += [t for t in banned if t.strip()]
         else:
             terms += [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#")]
     return terms
@@ -82,7 +85,12 @@ def scan(path, terms):
     what cannot be read cannot be cleared."""
     word = matcher(terms)
     hits = []
-    for n, line in enumerate(open(path, encoding="utf-8"), 1):
+    for n, raw in enumerate(open(path, "rb"), 1):
+        try:
+            line = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            hits.append((f"line {n}", "unreadable row", n))
+            continue
         if not line.strip():
             continue
         try:
@@ -101,16 +109,22 @@ def check(path, vocab_spec, require_vocab=True):
     """(ok, message). Fails closed: no readable vocabulary when one is required is a refusal, never a pass."""
     try:
         terms = load_terms(vocab_spec)
-    except (OSError, ValueError, KeyError) as e:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         return False, f"cannot read the identity vocabulary ({type(e).__name__}); refusing to upload unscanned data"
     if require_vocab and not terms:
         return False, "no identity vocabulary configured (GRUX_DATA_SCAN_VOCAB); refusing to upload unscanned data"
-    hits = scan(path, terms)
+    try:
+        hits = scan(path, terms)
+        rows = sum(1 for l in open(path, "rb") if l.strip())
+    except OSError as e:
+        return False, f"cannot read the training data ({type(e).__name__}); nothing to upload"
+    if rows == 0:
+        return False, "the training data has no rows; refusing to train on nothing"
     if hits:
         kinds = sorted({k for _, k, _ in hits})
         return False, (f"{len(hits)} training rows carry a secret shape or an identity term ({', '.join(kinds)}); "
                        f"first ids {[r for r, _, _ in hits[:5]]}")
-    return True, f"data scan clean: {sum(1 for _ in open(path))} rows, {len(terms)} identity terms, {len(KEY_SHAPES)} key shapes"
+    return True, f"data scan clean: {rows} rows, {len(terms)} identity terms, {len(KEY_SHAPES)} key shapes"
 
 
 if __name__ == "__main__":

@@ -21,11 +21,11 @@ PORT = 11434
 class OllamaBox:
     def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False,
                  owner="grux", image="ollama/ollama:latest", reservation=None):
-        # Every box is paid for before it exists: the id a spend meter returned for it, or GRUX_METER_RID.
-        self.reservation = reservation or os.environ.get("GRUX_METER_RID")
+        # Every box is paid for before it exists, each with its own reservation (recipe/meter.py).
+        self.reservation = reservation
         if not self.reservation:
-            raise RuntimeError("no spend reservation for this box: reserve first and pass reservation= "
-                               "(or set GRUX_METER_RID); no box is created without one")
+            raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
+                               "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
         self.label = {"grux.factory": label}
         self.ttl = ttl_minutes

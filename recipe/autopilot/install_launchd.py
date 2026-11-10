@@ -30,7 +30,7 @@ LANE = os.path.join(HOME, "lane")
 RESULTS = os.path.join(HOME, "results")
 TRAIN = os.path.join(HOME, "train-data", "train.jsonl")
 VOCAB = os.path.join(HOME, "vocab")
-GRUX_VOCAB = "~/Code/AI/.worktrees/grux-main/Grux-Mac/Tests/GruxTests/banned-vocabulary.json"
+GRUX_VOCAB = os.environ.get("GRUX_BANNED_VOCAB", "")   # Grux's own Tests/GruxTests/banned-vocabulary.json
 
 
 def install_vocab(src):
@@ -38,7 +38,7 @@ def install_vocab(src):
     same folder, if present, adds terms; it is never written by this installer."""
     os.makedirs(VOCAB, exist_ok=True)
     src = os.path.expanduser(src)
-    if os.path.exists(src):
+    if src and os.path.exists(src):
         shutil.copy2(src, os.path.join(VOCAB, "banned-vocabulary.json"))
     if not os.path.exists(os.path.join(VOCAB, "banned-vocabulary.json")):
         raise SystemExit(f"no identity vocabulary at {src} or {VOCAB}; the training data scan cannot run")
@@ -66,6 +66,9 @@ def install_train_data(src, vocab):
                 continue
             fout.write(line)
             kept += 1
+    if kept == 0:
+        os.remove(TRAIN + ".part")
+        raise SystemExit(f"every row of {src} was dropped ({dropped}); nothing pinned, the old data is untouched")
     os.replace(TRAIN + ".part", TRAIN)
     return kept, dropped
 
@@ -127,7 +130,8 @@ def main():
     ap.add_argument("--python", default=os.path.join(HOME, "venv", "bin", "python"))
     ap.add_argument("--secret-tool", default=os.path.expanduser("~/.local/bin/dcj-secret"))
     ap.add_argument("--train-data", default="", help="round 2 train.jsonl to copy to a stable path")
-    ap.add_argument("--vocab", default=GRUX_VOCAB, help="Grux's banned-vocabulary.json")
+    ap.add_argument("--vocab", default=GRUX_VOCAB, help="Grux's banned-vocabulary.json (or GRUX_BANNED_VOCAB); "
+                    "kept from the last install when omitted")
     ap.add_argument("--load", action="store_true")
     a = ap.parse_args()
     if running():

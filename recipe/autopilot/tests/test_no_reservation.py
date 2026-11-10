@@ -1,5 +1,6 @@
-"""No reservation, no box: OllamaBox and TrainBox raise before any create without a reservation id (argument or
-GRUX_METER_RID). Pass another recipe folder as argv[1] to run it against an older copy (it fails there)."""
+"""No reservation, no box: OllamaBox and TrainBox raise before any create without a reservation id from the meter
+(an argument; there is no environment fallback). Pass another recipe folder as argv[1] to run it against an older
+copy (it fails there)."""
 import os, sys, types
 R = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, R)

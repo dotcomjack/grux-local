@@ -238,8 +238,8 @@ def main():
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7",
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
-    if not (a.meter or os.environ.get("GRUX_METER_RID")):
-        sys.exit("no spend meter (--meter) and no GRUX_METER_RID: every box needs a reservation; nothing created")
+    if not a.meter:
+        sys.exit("no spend meter (--meter): every box needs its own reservation; nothing created")
     import data_scan   # no secret shape or identity term goes into a box (s2/data_scan.py), checked before any create
     ok, msg = data_scan.check(a.data, a.data_scan_vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB", ""),
                               require_vocab=True)   # name your identity terms, or nothing is uploaded

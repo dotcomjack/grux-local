@@ -67,6 +67,92 @@ check("missing required vocabulary: refused", not data_scan.check(jsonl(clean), 
 check("missing optional vocabulary is skipped",
       data_scan.check(jsonl(clean), vocab + ":?" + os.path.join(TMP, "none.txt"))[0])
 
+check("empty file: refused", not data_scan.check(jsonl([]), vocab)[0])
+check("only blank lines: refused", not data_scan.check(jsonl(["", ""]), vocab)[0])
+bad_utf8 = os.path.join(TMP, "bad-utf8.jsonl")
+open(bad_utf8, "wb").write(json.dumps(clean[0]).encode() + b"\n" + b'{"id": "x", "c": "\xff\xfe"}\n')
+ok, msg = data_scan.check(bad_utf8, vocab)
+check("invalid UTF-8: a clean refusal", not ok and "unreadable" in msg, msg)
+bad_vocab = os.path.join(TMP, "bad-vocab.json")
+json.dump({"banned": ["ok", 7, None]}, open(bad_vocab, "w"))
+ok, msg = data_scan.check(jsonl(clean), bad_vocab)
+check("vocabulary with non-strings: a clean refusal", not ok and "vocabulary" in msg, msg)
+
+# --- the installer's filter: the thing that keeps personal data out of a box
+import importlib.util  # noqa: E402
+spec = importlib.util.spec_from_file_location("installer", os.path.join(os.path.dirname(HERE), "install_launchd.py"))
+installer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(installer)
+installer.TRAIN = os.path.join(TMP, "pinned", "train.jsonl")
+src = jsonl(clean + [{"id": "drop-me", "content": "call PlantedCo"},
+                     {"content": "no id, still names planted person"},     # a row with no id
+                     ["plantedco in a list row"],
+                     {"id": "keep", "content": "water the plants"}])
+kept, dropped = installer.install_train_data(src, vocab)
+pinned = [json.loads(l) for l in open(installer.TRAIN)]
+check("installer drops identity rows by line, ids or not", (kept, dropped) == (3, 3)
+      and [r["id"] for r in pinned] == ["c1", "c2", "keep"], f"{kept} kept, {dropped} dropped, {pinned}")
+check("installed file scans clean", data_scan.check(installer.TRAIN, vocab)[0])
+before = open(installer.TRAIN).read()
+for name, rows in {"a secret row": clean + [{"id": "s", "content": "AKIA" + "Z" * 16}],
+                   "an unreadable row": clean + ["{broken"],
+                   "every row dropped": [{"id": "d", "content": "plantedco"}]}.items():
+    try:
+        installer.install_train_data(jsonl(rows), vocab)
+        check(f"installer refuses {name}", False, "it installed")
+    except SystemExit as e:
+        check(f"installer refuses {name}, pinned file untouched", open(installer.TRAIN).read() == before, str(e))
+
+# --- callers that make boxes refuse with no meter, and an empty reservation id
+import subprocess  # noqa: E402
+RECIPE = os.path.dirname(os.path.dirname(HERE))
+try:
+    r = subprocess.run([sys.executable, os.path.join(RECIPE, "s2", "sweep.py"), "--sweep", os.path.join(TMP, "sw"),
+                        "--data", jsonl(clean)], capture_output=True, text=True, timeout=20)
+    check("sweep.py without --meter: refuses, launches nothing",
+          r.returncode != 0 and "meter" in r.stderr and not os.path.exists(os.path.join(TMP, "sw", "4b-r16-e1")), r.stderr)
+except subprocess.TimeoutExpired:
+    check("sweep.py without --meter: refuses, launches nothing", False, "it kept launching runs for 20 s")
+fake = os.path.join(TMP, "empty-meter.py")
+open(fake, "w").write("import sys\nsys.exit(0)\n")                    # exits 0 and prints no id
+import meter  # noqa: E402
+try:
+    meter.reserve(fake, "grux-local", 1, "H200")
+    check("an empty reservation id is refused", False, "it returned an id")
+except meter.Refused as e:
+    check("an empty reservation id is refused", "no id" in str(e), str(e))
+
+# every box made anywhere in the recipe is made with its own reservation (a sweep over the source)
+import re as _re  # noqa: E402
+calls = []
+for root, _, files in os.walk(RECIPE):
+    for f in files:
+        if f.endswith(".py") and "tests" not in root:
+            src_text = open(os.path.join(root, f)).read()
+            for m in _re.finditer(r"\b(OllamaBox|TrainBox)\(", src_text):
+                if src_text[max(0, m.start() - 6):m.start()] == "class ":
+                    continue
+                depth, j = 1, m.end()
+                while depth and j < len(src_text):
+                    depth += {"(": 1, ")": -1}.get(src_text[j], 0)
+                    j += 1
+                calls.append((f, "reservation=" in src_text[m.end():j]))
+check(f"every box constructor call passes a reservation ({len(calls)} calls)",
+      len(calls) >= 5 and all(ok for _, ok in calls), [c for c in calls if not c[1]])
+log = os.path.join(TMP, "meter-log.txt")
+open(fake, "w").write("import sys\nopen(%r, 'a').write(' '.join(sys.argv[1:3]) + '\\n')\n"
+                      "print('rid-%%d' %% len(open(%r).read().splitlines()))\n" % (log, log))
+for attempt in range(3):           # three boxes, the middle one dies: three reservations, three settles
+    try:
+        with meter.Reserved(fake, "grux-local", 1, "H200") as rid:
+            if attempt == 1:
+                raise RuntimeError("planted eviction")
+    except RuntimeError:
+        pass
+lines = open(log).read().split("\n")
+check("each box its own reservation, settled even when the box dies",
+      sum(l.startswith("reserve") for l in lines) == 3 and sum(l.startswith("settle") for l in lines) == 3, lines)
+
 # --- ready item keeps its first created_at; stamps are UTC Z
 p = common.ready_item("t", "k", "T", "w", ["/a"], None, [])
 first = json.load(open(p))["created_at"]
