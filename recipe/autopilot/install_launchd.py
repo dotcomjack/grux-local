@@ -42,8 +42,7 @@ def install_vocab(src):
         shutil.copy2(src, os.path.join(VOCAB, "banned-vocabulary.json"))
     if not os.path.exists(os.path.join(VOCAB, "banned-vocabulary.json")):
         raise SystemExit(f"no identity vocabulary at {src} or {VOCAB}; the training data scan cannot run")
-    return ":".join(os.path.join(VOCAB, f) for f in ("banned-vocabulary.json", "extra.txt")
-                    if os.path.exists(os.path.join(VOCAB, f)))
+    return os.path.join(VOCAB, "banned-vocabulary.json") + ":?" + os.path.join(VOCAB, "extra.txt")
 
 
 def install_train_data(src, vocab):
@@ -52,16 +51,17 @@ def install_train_data(src, vocab):
     sys.path.insert(0, os.path.join(REPO, "recipe", "s2"))
     import data_scan
     terms = data_scan.load_terms(vocab)
-    hits = dict(data_scan.scan(src, terms))
-    if any(k != "identity term" for k in hits.values()):
-        raise SystemExit(f"training data {src} carries a secret shape; not installed: "
-                         f"{sorted({r for r, k in hits.items() if k != 'identity term'})[:5]}")
+    hits = data_scan.scan(src, terms)
+    bad = [(r, k) for r, k, _ in hits if k != "identity term"]
+    if bad:
+        raise SystemExit(f"training data {src} carries a secret shape or an unreadable row; not installed: {bad[:5]}")
+    drop = {n for _, _, n in hits}
     os.makedirs(os.path.dirname(TRAIN), exist_ok=True)
     import json
     kept = dropped = 0
     with open(src, encoding="utf-8") as fin, open(TRAIN + ".part", "w", encoding="utf-8") as fout:
-        for line in fin:
-            if json.loads(line).get("id") in hits:
+        for n, line in enumerate(fin, 1):
+            if n in drop or not line.strip():
                 dropped += 1
                 continue
             fout.write(line)

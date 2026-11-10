@@ -242,7 +242,7 @@ def main():
         sys.exit("no spend meter (--meter) and no GRUX_METER_RID: every box needs a reservation; nothing created")
     import data_scan   # no secret shape or identity term goes into a box (s2/data_scan.py), checked before any create
     ok, msg = data_scan.check(a.data, a.data_scan_vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB", ""),
-                              require_vocab=bool(a.data_scan_vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB")))
+                              require_vocab=True)   # name your identity terms, or nothing is uploaded
     log(msg, run_dir)
     if not ok:
         json.dump({"status": "data scan refused: " + msg}, open(os.path.join(run_dir, "status.json"), "w"))
@@ -265,6 +265,10 @@ def main():
                 status = "meter refused"
                 break
             rid = r.stdout.strip()
+            if not rid:
+                log("STOP: the spend meter returned no reservation id", run_dir)
+                status = "meter refused"
+                break
         try:
             status, cost = one_box(a, run_dir, tag, base_tag, rid)
         except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)

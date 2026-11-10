@@ -88,7 +88,7 @@ def main():
         alerts = list(week.get("alerts") or [])
         for st in week["steps"]:
             if st.get("score_exit") == 3:
-                alerts.append("scoring refused by the spend meter (exit 3): no box was created, next week retries")
+                alerts.append("the spend meter refused at least one scoring box (exit 3); a refused model retries next week")
             elif st.get("score_exit") == 4:
                 alerts.append("scoring refused over the $150 swing line (exit 4): no box was created")
             elif st.get("score_exit") not in (None, 0):

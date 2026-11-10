@@ -23,7 +23,7 @@
   "data_env": "GRUX_LOCAL_TRAIN_DATA",
   "data_path": "~/.grux/autopilot/grux-local/train-data/train.jsonl",
   "data_path_why": "Pinned by install_launchd.py --train-data, which scans the source and drops rows with an identity term (and refuses a secret shape) on the way in; GRUX_LOCAL_TRAIN_DATA overrides it.",
-  "data_scan_vocab": "~/.grux/autopilot/grux-local/vocab/banned-vocabulary.json:~/.grux/autopilot/grux-local/vocab/extra.txt",
+  "data_scan_vocab": "~/.grux/autopilot/grux-local/vocab/banned-vocabulary.json:?~/.grux/autopilot/grux-local/vocab/extra.txt",
   "data_scan_vocab_why": "Identity terms for s2/data_scan.py, kept outside this public repo: Grux's own banned vocabulary plus a local list.",
   "modelfile_family": "qwen3.5"
  }

@@ -5,7 +5,8 @@ Two scans, over every string in every row:
   - key shapes: sk-..., ghp_/gho_/github_pat_, AKIA..., xox?-..., -----BEGIN ... KEY-----, and long hex (40+) or
     base64 (48+, mixed case and digits) runs;
   - identity terms: whole-word, case-insensitive, read from the vocabulary files named in GRUX_DATA_SCAN_VOCAB
-    (colon-separated; JSON with a "banned" list, or one term per line). The terms live outside this public repo.
+    (colon-separated; JSON with a "banned" list, or one term per line; a path starting with ? is optional). The terms
+    live outside this public repo.
 A finding names the row id and the kind, never the matched text, so the log itself leaks nothing.
 
   GRUX_DATA_SCAN_VOCAB=<file>[:<file>] python3 recipe/s2/data_scan.py <train.jsonl>     exit 0 clean, 1 hits, 2 cannot scan
@@ -17,6 +18,8 @@ import sys
 
 KEY_SHAPES = [
     ("openai-style key", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}")),
+    ("stripe key", re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
+    ("google api key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}")),
     ("github token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{40,}")),
     ("aws access key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
     ("slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}")),
@@ -31,8 +34,11 @@ def load_terms(spec):
     """Terms from each file in the colon-separated spec. Raises when a named file cannot be read (fail closed)."""
     terms = []
     for path in [p for p in (spec or "").split(":") if p.strip()]:
-        path = os.path.expanduser(path)
-        text = open(path, encoding="utf-8").read()
+        optional = path.startswith("?")
+        path = os.path.expanduser(path.lstrip("?"))
+        if optional and not os.path.exists(path):
+            continue
+        text = open(path, encoding="utf-8-sig").read()
         if path.endswith(".json"):
             terms += [t for t in json.loads(text)["banned"] if t.strip()]
         else:
@@ -44,28 +50,50 @@ def strings(x):
     if isinstance(x, str):
         yield x
     elif isinstance(x, dict):
-        for v in x.values():
+        for k, v in x.items():
+            yield str(k)
             yield from strings(v)
     elif isinstance(x, list):
         for v in x:
             yield from strings(v)
 
 
+def matcher(terms):
+    """Whole-word, case-insensitive; any run of whitespace matches a space inside a term."""
+    if not terms:
+        return None
+    alts = "|".join(r"\s+".join(re.escape(w) for w in t.split()) for t in terms)
+    return re.compile(r"(?<![A-Za-z0-9])(?:" + alts + r")(?![A-Za-z0-9])", re.I)
+
+
+def row_hit(row, word):
+    """The kind of the first hit in one row (keys and values), or None. Never the matched text."""
+    for s in strings(row):
+        kind = next((k for k, rx in KEY_SHAPES if rx.search(s)), None)
+        if kind is None and word is not None and word.search(s):
+            kind = "identity term"
+        if kind:
+            return kind
+    return None
+
+
 def scan(path, terms):
-    """[(row id, kind)] for every row with a hit; kind never contains the matched text."""
-    word = re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(t) for t in terms) + r")(?![A-Za-z0-9])", re.I) \
-        if terms else None
+    """[(row id, kind, line number)] for every row with a hit. A line that is not JSON is a hit ("unreadable row"):
+    what cannot be read cannot be cleared."""
+    word = matcher(terms)
     hits = []
     for n, line in enumerate(open(path, encoding="utf-8"), 1):
-        row = json.loads(line)
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            hits.append((f"line {n}", "unreadable row", n))
+            continue
         rid = row.get("id", f"line {n}") if isinstance(row, dict) else f"line {n}"
-        for s in strings(row):
-            kind = next((k for k, rx in KEY_SHAPES if rx.search(s)), None)
-            if kind is None and word is not None and word.search(s):
-                kind = "identity term"
-            if kind:
-                hits.append((rid, kind))
-                break
+        kind = row_hit(row, word)
+        if kind:
+            hits.append((rid, kind, n))
     return hits
 
 
@@ -79,9 +107,9 @@ def check(path, vocab_spec, require_vocab=True):
         return False, "no identity vocabulary configured (GRUX_DATA_SCAN_VOCAB); refusing to upload unscanned data"
     hits = scan(path, terms)
     if hits:
-        kinds = sorted({k for _, k in hits})
+        kinds = sorted({k for _, k, _ in hits})
         return False, (f"{len(hits)} training rows carry a secret shape or an identity term ({', '.join(kinds)}); "
-                       f"first ids {[r for r, _ in hits[:5]]}")
+                       f"first ids {[r for r, _, _ in hits[:5]]}")
     return True, f"data scan clean: {sum(1 for _ in open(path))} rows, {len(terms)} identity terms, {len(KEY_SHAPES)} key shapes"
 
 

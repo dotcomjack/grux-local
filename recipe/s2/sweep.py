@@ -61,6 +61,8 @@ def main():
     ap.add_argument("--only", default="", help="comma list of config names")
     ap.add_argument("--meter", default="", help="spend meter CLI; every box needs a reservation (or GRUX_METER_RID)")
     a = ap.parse_args()
+    if not (a.meter or os.environ.get("GRUX_METER_RID")):
+        sys.exit("give --meter (or GRUX_METER_RID): every training box needs a spend reservation")
     root = os.path.abspath(a.sweep)
     os.makedirs(root, exist_ok=True)
     todo = [c for c in CONFIGS if not a.only or name(*c) in a.only.split(",")]
