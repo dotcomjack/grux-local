@@ -29,6 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 MAX_PER_RUN = 15           # new candidates scored per run (under the $150 swing line); the rest carry to next week
 MAX_INCOMPLETE_RUNS = 2    # a build still not scored completely after this many runs is a lose, and stops retrying
+MAX_BASE_RESCORES = 2      # base rescores per registry build; past it the lane says so loudly and stops paying
 
 
 def complete_result(digest, model):
@@ -47,6 +48,7 @@ def complete_result(digest, model):
 
 
 _BASE_CURRENT = {}
+_BASE_DIGEST = {}
 
 
 def base_row_current(tier):
@@ -63,6 +65,7 @@ def _base_row_current(tier):
     name, size = tag.split(":")
     try:
         digest = watch.registry_build(name, size)["digest"]
+        _BASE_DIGEST[tier] = digest
     except Exception as e:  # noqa: BLE001 (a registry blip: unknown, never crash the week)
         print(f"registry read for {tag} failed ({str(e)[:120]}); base row unknown this run", flush=True)
         return None
@@ -98,8 +101,18 @@ def main():
     week["carried_over"] = [c["id"] for c in to_score[MAX_PER_RUN:]]
     to_score = to_score[:MAX_PER_RUN]
     models = [c["id"] for c in to_score]
+    rescores = state.setdefault("base_rescores", {})
     for tier in sorted({c["tier"] for c in pending}):
         if base_row_current(tier) is False:
+            key = f"{tier}|{_BASE_DIGEST.get(tier)}"
+            if len(rescores.get(key, [])) >= MAX_BASE_RESCORES:
+                msg = (f"BASE ROW STUCK: the {tier} base was scored {MAX_BASE_RESCORES} times for registry build "
+                       f"{_BASE_DIGEST.get(tier)} and its newest complete row still does not carry that digest; "
+                       "not rescoring again, its candidates wait for a person")
+                print(msg, flush=True)
+                week.setdefault("alerts", []).append(msg)
+                continue
+            rescores.setdefault(key, []).append(date)
             models.append(common.base_config()["tiers"][tier]["ollama_tag"])
     week["scored"] = models
     if models:
