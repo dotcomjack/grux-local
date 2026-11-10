@@ -34,7 +34,7 @@ def baseline_result(tier):
     rows = []
     for p in sorted(glob.glob(os.path.join(common.RESULTS, f"*-{common.stem(tag)}.json"))):
         r = json.load(open(p))
-        if r.get("complete") and r.get("model") == tag:
+        if r.get("complete") and r.get("model") == tag and not any(v.get("unscored") for v in r["sets"].values()):
             rows.append((r["date"], p, r))
     if not rows:
         return None, None
@@ -53,7 +53,7 @@ def decide(cand_path):
     tier = tier_of(cand["model"])
     if tier is None:
         raise SystemExit(f"{cand['model']}: no Mac tier for its size")
-    if not cand.get("complete"):
+    if not cand.get("complete") or any(v.get("unscored") for v in cand["sets"].values()):
         raise SystemExit(f"{cand['model']}: the candidate's score is not complete; no verdict")
     base_path, base = baseline_result(tier)
     if base is None:

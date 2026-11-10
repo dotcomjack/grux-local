@@ -130,6 +130,8 @@ def main():
     if r.returncode != 0 or status != "done":
         refuse(f"train_run.py ended {status} (exit {r.returncode}); log {run_dir}/run.log")
     rows = [json.loads(l) for l in open(os.path.join(run_dir, f"eval-{tag}-holdout.jsonl"))]
+    if len({x["case"] for x in rows if x.get("status") == "scored"}) != 464:
+        refuse(f"the trained model scored {len(rows)} of 464 held-out v1 tasks on the box; no gate request for a partial score")
     box_score = f"{sum(bool(x.get('pass')) for x in rows)}/{len(rows)}"
     tar = os.path.join(run_dir, f"ollama-{tag}.tar")
     gid = f"{common.today()}-{common.stem(model)}"

@@ -9,14 +9,17 @@ Hard filters, each logged with its reason when it drops a model:
   - Hugging Face repos must be a chat model (text-generation or image-text-to-text with a chat template), not a
     quantized copy, a pretrain-only base or another kind of model.
 A candidate is scored as the Mac runs it: the default Ollama library build of that size. A Hugging Face base with
-no Ollama library build yet waits (rechecked every week). Seen state is keyed by (source, id, digest), so a base
-re-published under the same name is new again.
+no Ollama library build yet waits (rechecked every week). The seen state is keyed by (source, id, digest) and
+records when each build was first seen; a build stays new until a complete, fully scored result for its digest
+exists in results/autopilot/, so a base re-published under the same name is new again and a failed or refused
+week is retried the next.
 
   python3 recipe/autopilot/watch.py [--out results/autopilot/watch-<date>.json]   live watch
   python3 recipe/autopilot/watch.py --self-test                                   planted red cases
 """
 import argparse
 import datetime as dt
+import glob
 import html
 import json
 import os
@@ -34,6 +37,21 @@ REGISTRY = "https://registry.ollama.ai/v2/library"
 CHAT_PIPELINES = {"text-generation", "image-text-to-text"}
 QUANT_NAME = re.compile(r"(?i)(gguf|awq|gptq|fp8|nvfp4|mxfp|int4|int8|bnb|mlx|onnx|exl2|-q\d)")
 STATE_PATH = os.path.join(common.STATE, "watch-state.json")
+HF_LIMIT = 500      # newest first; the run reports an error when the oldest of a full page is still inside the window
+
+
+def scored_digests():
+    """Builds with a complete, fully scored result in results/autopilot/: the only thing that makes a build not new,
+    so a week whose scoring failed or was refused comes back next week."""
+    out = set()
+    for p in glob.glob(os.path.join(common.RESULTS, "20*.json")):
+        try:
+            r = json.load(open(p))
+        except ValueError:
+            continue
+        if r.get("complete") and r.get("digest") and not any(v.get("unscored") for v in r.get("sets", {}).values()):
+            out.add(r["digest"])
+    return out
 
 
 def fetch(url, timeout=30, accept=None):
@@ -51,9 +69,10 @@ def classify_license_text(text):
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")[:120]
     if re.search(r"(?i)acceptable use policy|use restrictions|responsible ai license|\bRAIL\b|community license", head):
         return None, first
-    if re.search(r"Apache License", head) and re.search(r"Version 2\.0", head):
+    if re.search(r"Apache License", head) and re.search(r"Version 2\.0", head) and \
+            re.search(r"TERMS AND CONDITIONS FOR USE, REPRODUCTION", head):
         return "apache-2.0", first
-    if re.search(r"(?i)\bMIT License\b", head) or "Permission is hereby granted, free of charge" in head:
+    if "Permission is hereby granted, free of charge" in head:     # the MIT grant itself, not a mention of MIT
         return "mit", first
     return None, first
 
@@ -84,7 +103,7 @@ def hf_size_key(name):
 
 
 def hf_models(org):
-    q = (f"{HF_API}?author={org}&sort=createdAt&direction=-1&limit=100&expand[]=gated&expand[]=safetensors"
+    q = (f"{HF_API}?author={org}&sort=createdAt&direction=-1&limit={HF_LIMIT}&expand[]=gated&expand[]=safetensors"
          "&expand[]=cardData&expand[]=tags&expand[]=createdAt&expand[]=pipeline_tag&expand[]=sha&expand[]=config")
     return json.loads(fetch(q, timeout=60))
 
@@ -242,7 +261,7 @@ def run(out_path, use_state=True):
     since = cfg["since"]
     state = load_state() if use_state else {"seen": {}}
     report = {"date": common.today(), "since": since, "rule": __doc__.strip().splitlines()[0],
-              "candidates": [], "waiting": [], "filtered": [], "baseline_count": 0, "errors": []}
+              "candidates": [], "waiting": [], "filtered": [], "baseline": [], "errors": []}
 
     # Ollama library: the builds a Mac can pull.
     page = fetch(OLLAMA_LIB, timeout=60).decode("utf-8", "replace")
@@ -254,7 +273,7 @@ def run(out_path, use_state=True):
     for e in entries:
         verdict, reason, sizes = judge_ollama_entry(e, cfg, since, cfg["family"])
         if verdict == "baseline":
-            report["baseline_count"] += 1
+            report["baseline"].append(["ollama", e["name"], reason])
             continue
         if verdict == "filtered":
             report["filtered"].append({"source": "ollama", "id": e["name"], "reason": reason,
@@ -275,18 +294,22 @@ def run(out_path, use_state=True):
             ollama_by_key[(family_key(e["name"]), size.lower())] = rec
 
     # Hugging Face: new bases from the watched orgs; linked to an Ollama build when one exists.
-    hf_cands = []
+    hf_cands, gated_keys = [], {}
     for org in cfg["hf_orgs"]:
         try:
             models = hf_models(org)
         except (urllib.error.URLError, OSError, ValueError) as ex:
             report["errors"].append(f"HF {org}: {str(ex)[:160]}")
             continue
+        if len(models) >= HF_LIMIT and (models[-1].get("createdAt") or "")[:10] >= since:
+            report["errors"].append(f"HF {org}: {HF_LIMIT} repos all inside the window; older new bases may be unread")
         for m in models:
+            if m.get("gated"):
+                gated_keys[(family_key(m["id"]), hf_size_key(m["id"]))] = m["id"]
             v, why, rec = judge_hf(m, cfg, since)
             rec["reason"] = why
             if v == "baseline":
-                report["baseline_count"] += 1
+                report["baseline"].append(["hf", m["id"], why])
             elif v == "filtered":
                 report["filtered"].append(rec)
             else:
@@ -299,18 +322,22 @@ def run(out_path, use_state=True):
         else:
             report["waiting"].append({**rec, "reason": rec["reason"] + "; no Ollama library build yet (rechecked weekly)"})
 
-    for rec in ollama_by_key.values():
-        key = f"ollama|{rec['id']}|{rec['digest']}"
-        seen = state["seen"].get(key)
-        rec["new"] = seen is None
+    done = scored_digests()
+    for key, rec in list(ollama_by_key.items()):
+        if key in gated_keys:     # the same base's weights are HF-gated: the recipe could never train it
+            rec["reason"] = f"its Hugging Face weights {gated_keys[key]} are HF-gated: no token goes in a box"
+            report["filtered"].append(rec)
+            continue
+        rec["first_seen"] = state["seen"].get(f"ollama|{rec['id']}|{rec['digest']}", {}).get("first_seen", report["date"])
+        rec["new"] = rec["digest"] not in done
         rec["scorable"] = True
         report["candidates"].append(rec)
     report["pick"] = pick([c for c in report["candidates"] if c["new"]], cfg["headline_tier"])
-    report["pick_rule"] = "headline tier (4b) first, then newest update, then pulls; only builds not seen before"
+    report["pick_rule"] = "headline tier (4b) first, then newest update, then pulls; only builds not yet scored"
     report["counts"] = {"candidates": len(report["candidates"]),
                         "new_candidates": sum(c["new"] for c in report["candidates"]),
                         "waiting": len(report["waiting"]), "filtered": len(report["filtered"]),
-                        "baseline": report["baseline_count"], "errors": len(report["errors"])}
+                        "baseline": len(report["baseline"]), "errors": len(report["errors"])}
     common.write_json(out_path, report)
     if use_state:
         for c in report["candidates"]:
@@ -334,13 +361,17 @@ def self_test():
     gated = {**clean, "id": "planted/Gated-4B-Instruct", "gated": "manual"}
     other = {**clean, "id": "planted/OtherLicense-4B-Instruct", "cardData": {"license": "other"}}
     results = {m["id"]: judge_hf(m, cfg, since)[:2] for m in (clean, gated, other)}
-    ollama_clean = {"license_text": "Apache License\nVersion 2.0, January 2004\n...", "digest": "sha256:x",
+    ollama_clean = {"license_text": "Apache License\nVersion 2.0, January 2004\n\nTERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n...", "digest": "sha256:x",
                     "model_bytes": 3_300_000_000, "format": "gguf", "runner": "llamacpp"}
     ollama_llama = {**ollama_clean, "license_text": "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT\nLlama 3.2 Version..."}
     ollama_custom = {**ollama_clean, "license_text": "Planted Model License\nYou may use these weights only..."}
+    ollama_mentions_mit = {**ollama_clean, "license_text": "Planted Terms\nThe tokenizer is under the MIT License; "
+                                                          "the weights may not be redistributed."}
     results["ollama planted-clean:4b"] = judge_ollama_build("planted-clean", "4b", ollama_clean, cfg)[:2]
     results["ollama planted-llama:3b"] = judge_ollama_build("planted-llama", "3b", ollama_llama, cfg)[:2]
     results["ollama planted-custom:4b"] = judge_ollama_build("planted-custom", "4b", ollama_custom, cfg)[:2]
+    results["ollama planted-mentions-mit:4b"] = judge_ollama_build("planted-mentions-mit", "4b", ollama_mentions_mit,
+                                                                   cfg)[:2]
     pointer = "MIT (declared in the pinned source model card)\nhttps://huggingface.co/planted/Pointer-4B/tree/abc\n"
     results["ollama planted-pointer-gated:4b"] = judge_ollama_build("planted-pointer-gated", "4b", {
         **ollama_clean, "license_text": pointer, "hf_card": {"gated": "auto", "cardData": {"license": "mit"}}}, cfg)[:2]
@@ -351,7 +382,7 @@ def self_test():
     want = {"planted/Clean-4B-Instruct": "candidate", "planted/Gated-4B-Instruct": "filtered",
             "planted/OtherLicense-4B-Instruct": "filtered", "ollama planted-clean:4b": "candidate",
             "ollama planted-llama:3b": "filtered", "ollama planted-custom:4b": "filtered",
-            "ollama planted-pointer-gated:4b": "filtered", "ollama planted-pointer-mit:4b": "candidate"}
+            "ollama planted-pointer-gated:4b": "filtered", "ollama planted-mentions-mit:4b": "filtered", "ollama planted-pointer-mit:4b": "candidate"}
     bad = [k for k, v in want.items() if results[k][0] != v]
     if "gated" not in results["planted/Gated-4B-Instruct"][1].lower():
         bad.append("gated model filtered for the wrong reason")

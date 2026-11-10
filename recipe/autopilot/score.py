@@ -68,9 +68,31 @@ def done_ids(path):
                 r = json.loads(line)
             except ValueError:
                 continue
-            if r.get("status") in ("scored", "skipped"):
+            if r.get("status") == "scored":         # a skipped task is sent again on the next box
                 out.add(r["case"])
     return out
+
+
+def outbox_rows(path):
+    """The last row per case (a skipped row is superseded when a later box scores it). Two SCORED rows for one
+    case would mean a resume bug, so that refuses."""
+    rows, scored = {}, set()
+    if os.path.exists(path):
+        for line in open(path):
+            r = json.loads(line)
+            if r.get("status") == "scored":
+                if r["case"] in scored:
+                    raise SystemExit(f"{path}: case {r['case']} scored twice (a resume bug)")
+                scored.add(r["case"])
+            elif r["case"] in scored:
+                continue
+            rows[r["case"]] = r
+    return list(rows.values())
+
+
+def outbox_complete(run_dir):
+    return all(sum(r.get("status") == "scored" for r in outbox_rows(os.path.join(run_dir, f"{s}.jsonl"))) == SET_SIZE[s]
+               for s in SETS)
 
 
 def one_case(box, name, c, request, score, model):
@@ -87,8 +109,9 @@ def one_case(box, name, c, request, score, model):
     return row
 
 
-def score_on_box(box, model, run_dir, logp):
-    """Every remaining task of both sets on this box. Returns True when both sets are complete."""
+def score_on_box(box, model, run_dir, logp, deadline):
+    """Every remaining task of both sets on this box. Returns 'done' (every task sent once), 'lost' (the box is
+    gone) or 'deadline' (the box has used the hours reserved for it, plus a quarter)."""
     for name in SETS:
         cases_fn, request, score = set_fns(name)
         cases = cases_fn()
@@ -98,6 +121,9 @@ def score_on_box(box, model, run_dir, logp):
         common.log(f"{model} {name}: {len(have)} of {len(cases)} already out, {len(todo)} to send", logp)
         with open(path, "a") as out:
             for i, c in enumerate(todo):
+                if time.time() > deadline:
+                    common.log(f"{model}: past the reserved hours at {name} {c['id']}; stopping this box", logp)
+                    return "deadline"
                 row = None
                 for attempt in (1, 2):
                     try:
@@ -107,7 +133,7 @@ def score_on_box(box, model, run_dir, logp):
                         err = f"{type(e).__name__}: {str(e)[:200]}"
                         if box.evicted():
                             common.log(f"{model}: box gone at {name} {c['id']} ({err})", logp)
-                            return False
+                            return "lost"
                         time.sleep(5)
                 if row is None:
                     row = {"case": c["id"], "family": c["family"], "status": "skipped", "error": err}
@@ -115,7 +141,7 @@ def score_on_box(box, model, run_dir, logp):
                 out.flush()
                 if (i + 1) % 50 == 0:
                     common.log(f"{model} {name}: {len(have) + i + 1} of {len(cases)} out", logp)
-    return True
+    return "done"
 
 
 def summarize(rows):
@@ -180,8 +206,9 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
                                        "messages": [{"role": "user", "content": "ok"}],
                                        "options": {"num_ctx": NUM_CTX, "num_predict": 4}}, timeout=900)
                 common.log(f"{model}: warm in {time.time() - w0:.1f}s; digest {meta['digest'][:19]}", logp)
-                complete = score_on_box(box, model, run_dir, logp)
-                rec["outcome"] = "complete" if complete else "box lost"
+                how = score_on_box(box, model, run_dir, logp, t0 + hours * 3600 * 1.25)
+                complete = outbox_complete(run_dir)
+                rec["outcome"] = "complete" if complete else {"done": "tasks skipped", "lost": "box lost"}.get(how, how)
         except common.Refused:
             raise
         except Exception as e:  # noqa: BLE001 (a box reclaimed while it starts raises from create: an eviction)
@@ -193,16 +220,12 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
             rec["settled_usd"] = common.settle(rid, real)
             common.write_json(meta_p, meta)
             common.log(f"{model}: box {len(meta['boxes'])} {rec.get('outcome')}, {real} h, settled ${rec['settled_usd']}", logp)
-    rows = {s: [json.loads(l) for l in open(os.path.join(run_dir, f"{s}.jsonl"))]
-            if os.path.exists(os.path.join(run_dir, f"{s}.jsonl")) else [] for s in SETS}
-    for s in SETS:
-        ids = [r["case"] for r in rows[s]]
-        if len(ids) != len(set(ids)):
-            raise SystemExit(f"{model} {s}: duplicate case ids in the outbox ({len(ids)} rows, {len(set(ids))} ids)")
+    rows = {s: outbox_rows(os.path.join(run_dir, f"{s}.jsonl")) for s in SETS}
+    complete = outbox_complete(run_dir)
     result = {"model": model, "date": os.path.basename(run_dir)[:10], "source": "Ollama library build, pulled by the box",
               "digest": meta.get("digest"), "details": meta.get("details"), "size_bytes": meta.get("size_bytes"),
               "ollama_version": meta.get("ollama_version"), "think": False, "num_ctx": NUM_CTX, "num_parallel": 1,
-              "complete": complete and all(len(rows[s]) == SET_SIZE[s] for s in SETS),
+              "complete": complete,
               "check_prompts": meta["check_prompts"],
               "sets": {s: {"set_hash": SET_HASH[s], "rows": len(rows[s]), **summarize(rows[s])} for s in SETS if rows[s]},
               "boxes": [{k: b.get(k) for k in ("id", "gpu_type", "spot", "hours", "settled_usd", "outcome",
