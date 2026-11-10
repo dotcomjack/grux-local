@@ -58,7 +58,7 @@ def copy_lane():
 def seed_results():
     os.makedirs(os.path.join(RESULTS, "gate-requests"), exist_ok=True)
     n = 0
-    for p in glob.glob(os.path.join(REPO, "results", "autopilot", "*.json")):
+    for p in glob.glob(os.path.join(REPO, "results", "autopilot", "20*.json")):   # results and verdicts, never a watch report
         dest = os.path.join(RESULTS, os.path.basename(p))
         if not os.path.exists(dest):
             shutil.copy2(p, dest)

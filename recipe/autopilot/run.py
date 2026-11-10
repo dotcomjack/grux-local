@@ -78,6 +78,12 @@ def main():
     """The week, with a heartbeat written at the end whatever happens (the board and the dead-man check read it)."""
     beat = {"lane": common.LANE, "last_run_at": None, "ok": False, "summary": "run.py started but did not finish"}
     try:
+        prior = json.load(open(common.HEARTBEAT))
+    except (OSError, ValueError):
+        prior = {}
+    common.write_json(common.HEARTBEAT, {**prior, "lane": common.LANE,
+                                         "running": {"pid": os.getpid(), "started_at": common.now_iso()}})
+    try:
         week = week_run()
         alerts = week.get("alerts") or []
         bad = [s for s in week["steps"] if s.get("score_exit") not in (None, 0) or s.get("exit") not in (None, 0)]
@@ -92,7 +98,7 @@ def main():
         raise
     finally:
         beat["last_run_at"] = common.now_iso()
-        common.write_json(common.HEARTBEAT, beat)
+        common.write_json(common.HEARTBEAT, beat)        # no "running" key: the run is over
 
 
 def week_run():

@@ -71,6 +71,11 @@ def contamination(data_path):
     return hits, near
 
 
+def home(path):
+    """An absolute path in ~ form: evidence must resolve from anywhere, never relative to the lane copy."""
+    return os.path.abspath(path).replace(os.path.expanduser("~"), "~", 1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("decision")
@@ -96,7 +101,8 @@ def main():
     ok, why = __import__("watch").license_ok("hf:" + hf, lic, cfg)
     if not ok:
         refuse(f"{hf}: {why}")
-    cand = json.load(open(os.path.join(common.REPO, d["candidate_result"])))
+    cand_path = os.path.normpath(os.path.join(common.REPO, d["candidate_result"]))
+    cand = json.load(open(cand_path))
     fam = (cand.get("details") or {}).get("family", "")
     if fam.replace(".", "") != cfg["train"]["modelfile_family"].replace(".", ""):
         refuse(f"the stock build's family is {fam!r}; s2/train_run.py's Modelfile renders {cfg['train']['modelfile_family']}"
@@ -137,7 +143,7 @@ def main():
     gid = f"{common.today()}-{common.stem(model)}"
     mac_run = f"/tmp/grux-local-gate-{gid}"
     gate = {"id": gid, "candidate": model, "hf_id": hf, "tier": tier, "made_for": d["made_for"],
-            "trained_tag": tag, "model_tar": tar, "box_score_holdout_v1": box_score, "decision": a.decision,
+            "trained_tag": tag, "model_tar": tar, "box_score_holdout_v1": box_score, "decision": home(a.decision),
             "recipe": cfg["train"]["recipe"],
             "steps": [f"tar xf {os.path.basename(tar)} -C ~/.ollama/models",
                       "export GRUX_SRC=\"$(sh recipe/get_grux_source.sh)\" && python3 recipe/check_prompts.py",
@@ -150,7 +156,7 @@ def main():
     item = common.ready_item(
         f"grux-local-{gid}", "mini-gate", f"Grux Local: gate {tag} on the Mini",
         f"A new open base ({model}) beat today's {tier} base and was trained; the Mini checks it before anyone ships it.",
-        [a.decision, d["candidate_result"], gpath], gate["eval_command"], [])
+        [home(a.decision), home(cand_path), home(gpath)], gate["eval_command"], [])
     print(f"wrote {gpath} and {item}")
 
 

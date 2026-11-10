@@ -159,5 +159,8 @@ class OllamaBox:
                 self.log(f"delete error: {e} (the {LEASE_MINUTES} minute TTL still ends it)")
             self.sb = None
         time.sleep(5)
-        self.info["boxes_left"] = [s.id for s in self.d.list(ListSandboxesQuery(labels=self.label))]
+        try:   # a failed list must never replace the error that brought us here
+            self.info["boxes_left"] = [s.id for s in self.d.list(ListSandboxesQuery(labels=self.label))]
+        except Exception as e:
+            self.info["boxes_left"] = f"list failed: {str(e)[:120]}"
         self.log(f"box down: seconds {self.info.get('box_seconds')}, left {self.info['boxes_left']}")
