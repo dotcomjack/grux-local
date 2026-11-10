@@ -10,7 +10,7 @@
   4. train.py runs only on a win (and not with --no-train).
 Writes results/autopilot/week-<date>.json. The launchd job (install_launchd.py) runs this on Mondays at 3:00 AM.
 
-  dcj-secret run dcj/daytona/grux-api-key DAYTONA_API_KEY -- <venv>/bin/python recipe/autopilot/run.py [--no-train]
+  DAYTONA_API_KEY=<your key> <venv>/bin/python recipe/autopilot/run.py [--no-train]
 """
 import argparse
 import datetime as dt

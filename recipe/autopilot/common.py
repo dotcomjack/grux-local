@@ -26,7 +26,7 @@ READY = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_READY", "~/.grux/autop
 HEARTBEAT = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_HEARTBEAT", "~/.grux/autopilot/heartbeat/grux-local.json"))
 SPEND_TOOL = os.path.expanduser(os.environ.get("DAYTONA_SPEND_TOOL", "~/.claude/tools/daytona_spend.py"))
 LANE = "grux-local"
-OWNER = "grux-local"          # the dcj.owner label on every box this lane makes
+OWNER = "grux-local"          # the grux.factory owner label on every box this lane makes
 SWING_LIMIT_USD = 150.0       # one swing estimated over this stops and asks the owner; never a silent create
 # Listed spot rate per hour for the GPU, plus the 16 vCPU and 192 GiB every GPU box also bills ($3.92 an hour,
 # the same formula as the meter). Not a settled charge.

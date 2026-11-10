@@ -22,7 +22,9 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
-ENV_FILE = os.path.expanduser(os.environ.get("DCJ_TELEGRAM_ENV", "~/.claude/telegram/.env"))
+LOCAL = os.path.expanduser("~/.grux/autopilot/grux-local/local.json")   # this machine's settings, never in the repo
+ENV_FILE = os.path.expanduser(os.environ.get("GRUX_TELEGRAM_ENV") or
+                              (json.load(open(LOCAL)).get("telegram_env", "") if os.path.exists(LOCAL) else ""))
 RED, OK = "\U0001F6A8", "\u2705"
 WAIT_HOURS = 8
 

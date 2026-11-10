@@ -5,15 +5,19 @@ Copies the recipe (and results/v1.json, the published rows the reproduction read
 lane, seeds the stable results home ~/.grux/autopilot/grux-local/results with the repo's results/autopilot/*.json
 (never overwriting), copies the training data named by --train-data to a stable path, self-tests the installed copy,
 and writes:
-  com.dcj.grux-local-autopilot           Mondays 3:00 AM, run.py
-  com.dcj.grux-local-autopilot-deadman   Mondays 6:00 AM, deadman.py (red page if the run did not report)
-Paths are this machine's own, filled in when it runs; the Daytona key is read at run time from the Keychain by name.
+  <label>            Mondays 3:00 AM, run.py
+  <label>-deadman    Mondays 6:00 AM, deadman.py (red page if the run did not report)
+This machine's own settings live in ~/.grux/autopilot/grux-local/local.json, never in the repo:
+  {"label": "<launchd label>", "key_command": [argv that puts DAYTONA_API_KEY in the environment, then runs the
+   rest, ending in "--"], "telegram_env": "<file with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID>"}
+The Daytona key is read at run time by key_command; no key is written into a plist.
 Re-run after any change to the lane. Refuses while a weekly run is in progress.
 
   python3 recipe/autopilot/install_launchd.py [--train-data <train.jsonl>] [--load]
 """
 import argparse
 import glob
+import json
 import os
 import plistlib
 import shutil
@@ -21,8 +25,6 @@ import subprocess
 import sys
 import time
 
-LABEL = "com.dcj.grux-local-autopilot"
-DEADMAN = LABEL + "-deadman"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 HOME = os.path.expanduser("~/.grux/autopilot/grux-local")
@@ -128,12 +130,17 @@ def load(label, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--python", default=os.path.join(HOME, "venv", "bin", "python"))
-    ap.add_argument("--secret-tool", default=os.path.expanduser("~/.local/bin/dcj-secret"))
     ap.add_argument("--train-data", default="", help="round 2 train.jsonl to copy to a stable path")
     ap.add_argument("--vocab", default=GRUX_VOCAB, help="Grux's banned-vocabulary.json (or GRUX_BANNED_VOCAB); "
                     "kept from the last install when omitted")
     ap.add_argument("--load", action="store_true")
     a = ap.parse_args()
+    local_p = os.path.join(HOME, "local.json")
+    if not os.path.exists(local_p):
+        raise SystemExit(f"write {local_p} first (label, key_command, telegram_env); see this file's docstring")
+    local = json.load(open(local_p))
+    LABEL, key_command = local["label"], local["key_command"]
+    DEADMAN = LABEL + "-deadman"
     if running():
         raise SystemExit(f"a lane run is in progress ({' '.join(running())}); install after it ends")
     sha = copy_lane()
@@ -151,8 +158,7 @@ def main():
     if r.returncode != 0:
         raise SystemExit("the installed lane failed its self-test; nothing loaded:\n" + r.stdout + r.stderr)
     jobs = {
-        LABEL: plist(LABEL, [a.secret_tool, "run", "dcj/daytona/grux-api-key", "DAYTONA_API_KEY", "--", a.python,
-                             os.path.join(lane_py, "run.py")], {"Weekday": 1, "Hour": 3, "Minute": 0}, env),
+        LABEL: plist(LABEL, [*key_command, a.python, os.path.join(lane_py, "run.py")], {"Weekday": 1, "Hour": 3, "Minute": 0}, env),
         DEADMAN: plist(DEADMAN, ["/usr/bin/python3", os.path.join(lane_py, "deadman.py")],
                        {"Weekday": 1, "Hour": 6, "Minute": 0}, env),
     }

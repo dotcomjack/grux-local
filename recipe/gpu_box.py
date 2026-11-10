@@ -27,7 +27,7 @@ class OllamaBox:
             raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
                                "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
-        self.label = {"grux.factory": label}
+        self.label = {"grux.factory": owner, "grux.run": label}   # owner for the sweeper, run name for people
         self.ttl = ttl_minutes
         self.spot = spot
         # The free credit applies to "GPU Spot Sandbox" only (wallet breakdown, 2026-10-22); an
@@ -68,7 +68,7 @@ class OllamaBox:
                     env_vars={"OLLAMA_HOST": f"0.0.0.0:{PORT}", "OLLAMA_KEEP_ALIVE": "30m",
                               "OLLAMA_NUM_PARALLEL": str(self.num_parallel), "OLLAMA_MAX_LOADED_MODELS": "1"},
                     ephemeral=True, spot=spot, ttl_minutes=LEASE_MINUTES, auto_stop_interval=30,
-                    labels={**self.label, "dcj.owner": self.owner, "dcj.max-minutes": str(self.ttl)}),
+                    labels={**self.label, "grux.max-minutes": str(self.ttl)}),
                     timeout=900)
                 break
             except Exception as e:  # spot fails at once when there is no spare capacity

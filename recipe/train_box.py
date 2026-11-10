@@ -49,7 +49,7 @@ class TrainBox:
             raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
                                "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
-        self.label = {"grux.factory": label, "dcj.owner": owner, "dcj.max-minutes": str(max_minutes)}
+        self.label = {"grux.factory": owner, "grux.run": label, "grux.max-minutes": str(max_minutes)}
         self.image, self.log = image, log
         self.d = Daytona()
         self.sb = self.lease = None

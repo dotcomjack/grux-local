@@ -228,7 +228,7 @@ def main():
     ap.add_argument("--micro-tokens", type=int, default=48000, help="token ceiling per forward pass")
     ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
     ap.add_argument("--meter-lane", default="grux-local")
-    ap.add_argument("--owner", default="grux", help="dcj.owner label on every box")
+    ap.add_argument("--owner", default="grux", help="grux.factory owner label on every box")
     ap.add_argument("--data-scan-vocab", default="", help="identity vocabulary files for s2/data_scan.py (colon list)")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run)

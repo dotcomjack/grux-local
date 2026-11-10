@@ -14,17 +14,17 @@ from daytona import Daytona, ListSandboxesQuery  # noqa: E402
 
 def main():
     d = Daytona()
-    mine = d.list(ListSandboxesQuery(labels={"dcj.owner": common.OWNER}))
+    mine = d.list(ListSandboxesQuery(labels={"grux.factory": common.OWNER}))
     items = list(getattr(mine, "items", mine))
     if sys.argv[1:2] == ["list"]:
-        print(f"dcj.owner={common.OWNER} boxes: {len(items)}")
+        print(f"grux.factory={common.OWNER} boxes: {len(items)}")
         for sb in items:
             m = sb.model_dump()
-            print(f"  {m.get('id')} {m.get('state')} {m.get('labels', {}).get('grux.factory')} {m.get('gpu_type')}")
+            print(f"  {m.get('id')} {m.get('state')} {m.get('labels', {}).get('grux.run')} {m.get('gpu_type')}")
         return
     if sys.argv[1:2] == ["kill"] and len(sys.argv) == 3:
         want = "gl-" + common.stem(sys.argv[2])
-        hit = [sb for sb in items if sb.model_dump().get("labels", {}).get("grux.factory") == want]
+        hit = [sb for sb in items if sb.model_dump().get("labels", {}).get("grux.run") == want]
         for sb in hit:
             d.delete(sb, wait=False, timeout=60)
             print(f"deleted {sb.id} ({want})")

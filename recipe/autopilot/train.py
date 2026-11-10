@@ -8,7 +8,7 @@ model for Ollama as nvfp4 and scores it on held-out v1 on the box; the Ollama mo
 Last, it writes a Mini gate request (results/autopilot/gate-requests/<id>.json, carrying the exact eval_local.py
 command) and a ready item. It never pushes a tag, never touches gruxai.com and never runs anything on the Mini.
 
-  dcj-secret run dcj/daytona/grux-api-key DAYTONA_API_KEY -- <venv>/bin/python recipe/autopilot/train.py \\
+  DAYTONA_API_KEY=<your key> <venv>/bin/python recipe/autopilot/train.py \\
       results/autopilot/<date>-decide-<model>.json [--dry-run]
 --dry-run runs every check and writes nothing that ships; it creates no box.
 """

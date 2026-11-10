@@ -15,7 +15,7 @@ recorded as skipped.
 Spend: before EVERY box create, the shared weekly meter is reserved (exit 3 refuses: no box); after, it is
 settled with the real hours. A swing estimated over $150 refuses before any reservation or box.
 
-  dcj-secret run dcj/daytona/grux-api-key DAYTONA_API_KEY -- <venv>/bin/python recipe/autopilot/score.py \\
+  DAYTONA_API_KEY=<your key> <venv>/bin/python recipe/autopilot/score.py \\
       --models mimo-v2.6:9b,qwen3.5:9b [--gpu H200,H100] [--est-hours 1.2]
 Writes results/autopilot/<date>-<model>.json per model.
 """
@@ -257,7 +257,7 @@ def main():
     ap.add_argument("--run-dir", default="", help=argparse.SUPPRESS)
     ap.add_argument("--gpu", default="H200,H100", help="first type with spot capacity wins")
     ap.add_argument("--est-hours", type=float, default=1.2, help="box hours per model for the swing estimate")
-    ap.add_argument("--ttl", type=int, default=240, help="dcj.max-minutes label for the sweeper")
+    ap.add_argument("--ttl", type=int, default=240, help="grux.max-minutes label for the sweeper")
     ap.add_argument("--date", default="", help="run date to resume (default today)")
     a = ap.parse_args()
     gpus = [g.strip() for g in a.gpu.split(",") if g.strip()]
