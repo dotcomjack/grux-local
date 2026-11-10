@@ -75,6 +75,27 @@ def _base_row_current(tier):
 
 
 def main():
+    """The week, with a heartbeat written at the end whatever happens (the board and the dead-man check read it)."""
+    beat = {"lane": common.LANE, "last_run_at": None, "ok": False, "summary": "run.py started but did not finish"}
+    try:
+        week = week_run()
+        alerts = week.get("alerts") or []
+        bad = [s for s in week["steps"] if s.get("score_exit") not in (None, 0) or s.get("exit") not in (None, 0)]
+        verdicts = ", ".join(f"{d['candidate']} {d.get('verdict') or 'pending'}" for d in week["decisions"]) or "none"
+        beat.update(ok=not alerts and not bad,
+                    summary=(f"watch: {week['watch'].get('candidates', 0)} candidates, {week['watch'].get('new_candidates', 0)}"
+                             f" new, {week['watch'].get('filtered', 0)} filtered; scored {len(week['scored'])}; "
+                             f"verdicts: {verdicts}" + (f"; ALERTS: {' | '.join(alerts)}" if alerts else "")
+                             + (f"; failed steps: {bad}" if bad else "")))
+    except BaseException as e:
+        beat["summary"] = f"run.py failed: {type(e).__name__}: {str(e)[:300]}"
+        raise
+    finally:
+        beat["last_run_at"] = common.now_iso()
+        common.write_json(common.HEARTBEAT, beat)
+
+
+def week_run():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-train", action="store_true")
     a = ap.parse_args()
@@ -84,7 +105,7 @@ def main():
     if os.path.exists(wpath):                           # a second run the same day keeps the first report
         wpath = os.path.join(common.RESULTS, f"watch-{date}-{dt.datetime.now():%H%M}.json")
     rep = watch.run(wpath)
-    week["watch_report"] = os.path.relpath(wpath, common.REPO)
+    week["watch_report"] = wpath.replace(os.path.expanduser("~"), "~", 1)
     week["watch"] = rep["counts"]
     pending = [c for c in rep["candidates"] if c["new"]]        # every build with no verdict yet
     state = json.load(open(watch.STATE_PATH)) if os.path.exists(watch.STATE_PATH) else {"seen": {}}
@@ -159,6 +180,7 @@ def main():
             week["steps"].append({"train": c["id"], "exit": t.returncode})
     common.write_json(os.path.join(common.RESULTS, f"week-{date}.json"), week)
     print(json.dumps(week, indent=1))
+    return week
 
 
 if __name__ == "__main__":

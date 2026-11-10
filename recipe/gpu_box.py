@@ -36,7 +36,13 @@ class OllamaBox:
         self.info = {}
 
     def __enter__(self):
-        self.start()
+        try:
+            self.start()
+        except BaseException:
+            # `with` never calls __exit__ when __enter__ raises, and a live Lease keeps re-arming the TTL, so a
+            # start that fails after the create would bill until this process ends. Delete it here.
+            self.stop()
+            raise
         return self
 
     def __exit__(self, *exc):
@@ -145,7 +151,10 @@ class OllamaBox:
         if self.sb is not None:
             self.info["box_seconds"] = round(time.time() - self.info.get("started_at", time.time()), 1)
             try:
-                self.lease.release()
+                if getattr(self, "lease", None) is None:   # the create returned but the Lease never formed
+                    self.d.delete(self.sb, wait=True, timeout=180)
+                else:
+                    self.lease.release()
             except Exception as e:
                 self.log(f"delete error: {e} (the {LEASE_MINUTES} minute TTL still ends it)")
             self.sb = None

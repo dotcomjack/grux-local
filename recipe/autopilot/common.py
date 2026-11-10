@@ -14,10 +14,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RECIPE = os.path.dirname(HERE)
 REPO = os.path.dirname(RECIPE)
-RESULTS = os.path.join(REPO, "results", "autopilot")
+# The scheduled job runs from an installed copy of the lane (install_launchd.py) and writes its results to a stable
+# home outside any checkout; run by hand from the repo, results land in the repo's results/autopilot/.
+RESULTS = os.path.expanduser(os.environ.get("GRUX_LOCAL_AUTOPILOT_RESULTS", os.path.join(REPO, "results", "autopilot")))
 GATE_REQUESTS = os.path.join(RESULTS, "gate-requests")
 STATE = os.path.expanduser(os.environ.get("GRUX_LOCAL_AUTOPILOT_STATE", "~/.grux/autopilot/grux-local"))
 READY = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_READY", "~/.grux/autopilot/ready"))
+HEARTBEAT = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_HEARTBEAT", "~/.grux/autopilot/heartbeat/grux-local.json"))
 SPEND_TOOL = os.path.expanduser(os.environ.get("DAYTONA_SPEND_TOOL", "~/.claude/tools/daytona_spend.py"))
 LANE = "grux-local"
 OWNER = "grux-local"          # the dcj.owner label on every box this lane makes
