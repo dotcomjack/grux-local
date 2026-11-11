@@ -42,9 +42,14 @@ BOOT = ("apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl zstd 
 
 
 class TrainBox:
-    def __init__(self, gpu_types, label, max_minutes, log=print, image=TORCH_IMAGE):
+    def __init__(self, gpu_types, label, max_minutes, log=print, image=TORCH_IMAGE, owner="grux", reservation=None):
+        # Every box is paid for before it exists, each with its own reservation (recipe/meter.py).
+        self.reservation = reservation
+        if not self.reservation:
+            raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
+                               "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
-        self.label = {"grux.factory": label, "dcj.owner": "grux", "dcj.max-minutes": str(max_minutes)}
+        self.label = {"grux.factory": owner, "grux.run": label, "grux.max-minutes": str(max_minutes)}
         self.image, self.log = image, log
         self.d = Daytona()
         self.sb = self.lease = None
@@ -57,11 +62,17 @@ class TrainBox:
             image=Image.base(self.image), resources=Resources(gpu=1, gpu_type=self.gpu_types),
             ephemeral=True, spot=True, ttl_minutes=LEASE_MINUTES, auto_stop_interval=30,
             labels=self.label), timeout=1500)
-        self.lease = Lease(self.d, self.sb)
-        m = self.sb.model_dump()
-        self.info = {"id": m.get("id"), "gpu_type": str(m.get("gpu_type")), "spot": m.get("spot"),
-                     "created_s": round(time.time() - t0, 1), "started_at": time.time()}
-        self.info["nvidia_smi"] = self.sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")[1]
+        try:
+            self.lease = Lease(self.d, self.sb)
+            m = self.sb.model_dump()
+            self.info = {"id": m.get("id"), "gpu_type": str(m.get("gpu_type")), "spot": m.get("spot"),
+                         "created_s": round(time.time() - t0, 1), "started_at": time.time()}
+            self.info["nvidia_smi"] = self.sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")[1]
+        except BaseException:
+            # `with` never calls __exit__ when __enter__ raises; a live Lease would keep the box billing.
+            self.info.setdefault("started_at", time.time())
+            self.__exit__(None, None, None)
+            raise
         self.log(f"train box up: {self.info}")
         return self
 
@@ -69,7 +80,10 @@ class TrainBox:
         if self.sb is not None:
             self.info["box_seconds"] = round(time.time() - self.info["started_at"], 1)
             try:
-                self.lease.release()
+                if self.lease is None:                     # the create returned but the Lease never formed
+                    self.d.delete(self.sb, wait=True, timeout=180)
+                else:
+                    self.lease.release()
             except Exception as e:
                 self.log(f"delete error: {e} (the {LEASE_MINUTES} minute TTL still ends it)")
             self.log(f"train box down after {self.info['box_seconds']} s")

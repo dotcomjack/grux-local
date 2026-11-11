@@ -1,0 +1,321 @@
+{
+ "model": "mimo-v2.6:9b",
+ "date": "2026-11-10",
+ "source": "Ollama library build, pulled by the box",
+ "digest": "sha256:cc58eacf0e3e4a96556657fe6f29c80ca38401bf242eec83f4eee074dd02bc86",
+ "details": {
+  "parent_model": "model-q4_K_M.gguf",
+  "format": "gguf",
+  "family": "qwen35",
+  "families": [
+   "qwen35"
+  ],
+  "parameter_size": "9.0B",
+  "quantization_level": "Q4_K_M",
+  "context_length": 262144,
+  "embedding_length": 4096,
+  "runner": "llamacpp"
+ },
+ "size_bytes": 6550811033,
+ "ollama_version": "0.40.16",
+ "think": false,
+ "num_ctx": 16384,
+ "num_parallel": 1,
+ "complete": true,
+ "check_prompts": [
+  "held-out v1: 464 requests, hash 7c3f2a9ff3316ecc, expected 7c3f2a9ff3316ecc: MATCH",
+  "held-out v2: 466 requests, hash da6577c7178a0963, expected da6577c7178a0963: MATCH"
+ ],
+ "sets": {
+  "holdout": {
+   "set_hash": "7c3f2a9ff3316ecc",
+   "rows": 464,
+   "total": {
+    "pass": 367,
+    "of": 464,
+    "rate": 0.7909,
+    "ci95": [
+     0.7516,
+     0.8255
+    ]
+   },
+   "hidden_instructions": {
+    "pass": 59,
+    "of": 70,
+    "rate": 0.8429,
+    "ci95": [
+     0.7401,
+     0.9099
+    ]
+   },
+   "families": {
+    "ambient": {
+     "pass": 15,
+     "of": 20,
+     "rate": 0.75,
+     "ci95": [
+      0.5313,
+      0.8881
+     ]
+    },
+    "chat_honesty": {
+     "pass": 17,
+     "of": 32,
+     "rate": 0.5312,
+     "ci95": [
+      0.3645,
+      0.6913
+     ]
+    },
+    "chat_plain": {
+     "pass": 41,
+     "of": 41,
+     "rate": 1.0,
+     "ci95": [
+      0.9143,
+      1.0
+     ]
+    },
+    "chat_tools": {
+     "pass": 76,
+     "of": 120,
+     "rate": 0.6333,
+     "ci95": [
+      0.5442,
+      0.7142
+     ]
+    },
+    "dictation": {
+     "pass": 40,
+     "of": 51,
+     "rate": 0.7843,
+     "ci95": [
+      0.6537,
+      0.8751
+     ]
+    },
+    "email_audit": {
+     "pass": 27,
+     "of": 28,
+     "rate": 0.9643,
+     "ci95": [
+      0.8229,
+      0.9937
+     ]
+    },
+    "email_triage": {
+     "pass": 18,
+     "of": 26,
+     "rate": 0.6923,
+     "ci95": [
+      0.5001,
+      0.835
+     ]
+    },
+    "injection": {
+     "pass": 59,
+     "of": 70,
+     "rate": 0.8429,
+     "ci95": [
+      0.7401,
+      0.9099
+     ]
+    },
+    "issue": {
+     "pass": 15,
+     "of": 15,
+     "rate": 1.0,
+     "ci95": [
+      0.7961,
+      1.0
+     ]
+    },
+    "meeting": {
+     "pass": 10,
+     "of": 10,
+     "rate": 1.0,
+     "ci95": [
+      0.7225,
+      1.0
+     ]
+    },
+    "notification": {
+     "pass": 35,
+     "of": 35,
+     "rate": 1.0,
+     "ci95": [
+      0.9011,
+      1.0
+     ]
+    },
+    "title": {
+     "pass": 14,
+     "of": 16,
+     "rate": 0.875,
+     "ci95": [
+      0.6398,
+      0.965
+     ]
+    }
+   },
+   "unscored": 0,
+   "chat_p95_s_gpu": 1.22
+  },
+  "holdout2": {
+   "set_hash": "da6577c7178a0963",
+   "rows": 466,
+   "total": {
+    "pass": 354,
+    "of": 466,
+    "rate": 0.7597,
+    "ci95": [
+     0.7188,
+     0.7962
+    ]
+   },
+   "hidden_instructions": {
+    "pass": 24,
+    "of": 70,
+    "rate": 0.3429,
+    "ci95": [
+     0.2425,
+     0.4596
+    ]
+   },
+   "families": {
+    "ambient": {
+     "pass": 15,
+     "of": 20,
+     "rate": 0.75,
+     "ci95": [
+      0.5313,
+      0.8881
+     ]
+    },
+    "chat_honesty": {
+     "pass": 23,
+     "of": 34,
+     "rate": 0.6765,
+     "ci95": [
+      0.5084,
+      0.8087
+     ]
+    },
+    "chat_plain": {
+     "pass": 41,
+     "of": 41,
+     "rate": 1.0,
+     "ci95": [
+      0.9143,
+      1.0
+     ]
+    },
+    "chat_tools": {
+     "pass": 92,
+     "of": 120,
+     "rate": 0.7667,
+     "ci95": [
+      0.6834,
+      0.8333
+     ]
+    },
+    "dictation": {
+     "pass": 40,
+     "of": 51,
+     "rate": 0.7843,
+     "ci95": [
+      0.6537,
+      0.8751
+     ]
+    },
+    "email_audit": {
+     "pass": 27,
+     "of": 28,
+     "rate": 0.9643,
+     "ci95": [
+      0.8229,
+      0.9937
+     ]
+    },
+    "email_triage": {
+     "pass": 18,
+     "of": 26,
+     "rate": 0.6923,
+     "ci95": [
+      0.5001,
+      0.835
+     ]
+    },
+    "injection": {
+     "pass": 24,
+     "of": 70,
+     "rate": 0.3429,
+     "ci95": [
+      0.2425,
+      0.4596
+     ]
+    },
+    "issue": {
+     "pass": 15,
+     "of": 15,
+     "rate": 1.0,
+     "ci95": [
+      0.7961,
+      1.0
+     ]
+    },
+    "meeting": {
+     "pass": 10,
+     "of": 10,
+     "rate": 1.0,
+     "ci95": [
+      0.7225,
+      1.0
+     ]
+    },
+    "notification": {
+     "pass": 35,
+     "of": 35,
+     "rate": 1.0,
+     "ci95": [
+      0.9011,
+      1.0
+     ]
+    },
+    "title": {
+     "pass": 14,
+     "of": 16,
+     "rate": 0.875,
+     "ci95": [
+      0.6398,
+      0.965
+     ]
+    }
+   },
+   "unscored": 0,
+   "chat_p95_s_gpu": 2.08
+  }
+ },
+ "boxes": [
+  {
+   "id": null,
+   "gpu_type": null,
+   "spot": null,
+   "hours": 0.0085,
+   "settled_usd": "0.06",
+   "outcome": "box lost or never up: RuntimeError: no GPU box: spot=True: Failed to create sandbox: An unexpected error occurred.",
+   "tasks_left_at_start": 930
+  },
+  {
+   "id": "2a8183c7-b247-4c69-a613-2a5638009a50",
+   "gpu_type": "GpuType.H200",
+   "spot": "True",
+   "hours": 0.271,
+   "settled_usd": "1.77",
+   "outcome": "complete",
+   "tasks_left_at_start": 930
+  }
+ ],
+ "box_hours": 0.28,
+ "outbox": "~/.grux/autopilot/grux-local/runs/2026-11-10-mimo-v2.6_9b"
+}

@@ -5,6 +5,7 @@ harness that sends the (synthetic) prompts runs outside it, so every result is a
 the box the moment it is scored; a spot eviction loses at most the request in flight.
 The Daytona key stays in the environment (DAYTONA_API_KEY=<your key> ...)."""
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -18,9 +19,15 @@ PORT = 11434
 
 
 class OllamaBox:
-    def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False):
+    def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False,
+                 owner="grux", image="ollama/ollama:latest", reservation=None):
+        # Every box is paid for before it exists, each with its own reservation (recipe/meter.py).
+        self.reservation = reservation
+        if not self.reservation:
+            raise RuntimeError("no spend reservation for this box: reserve it first (recipe/meter.py) and pass "
+                               "reservation=; no box is created without one")
         self.gpu_types = [GpuType(t) if isinstance(t, str) else t for t in gpu_types]
-        self.label = {"grux.factory": label}
+        self.label = {"grux.factory": owner, "grux.run": label}   # owner for the sweeper, run name for people
         self.ttl = ttl_minutes
         self.spot = spot
         # The free credit applies to "GPU Spot Sandbox" only (wallet breakdown, 2026-10-22); an
@@ -31,10 +38,17 @@ class OllamaBox:
         self.sb = None
         self.url = self.token = None
         self.num_parallel = num_parallel
+        self.owner, self.image = owner, image
         self.info = {}
 
     def __enter__(self):
-        self.start()
+        try:
+            self.start()
+        except BaseException:
+            # `with` never calls __exit__ when __enter__ raises, and a live Lease keeps re-arming the TTL, so a
+            # start that fails after the create would bill until this process ends. Delete it here.
+            self.stop()
+            raise
         return self
 
     def __exit__(self, *exc):
@@ -49,12 +63,12 @@ class OllamaBox:
         for spot in attempts:
             try:
                 self.sb = self.d.create(CreateSandboxFromImageParams(
-                    image=Image.base("ollama/ollama:latest"),
+                    image=Image.base(self.image),
                     resources=Resources(gpu=1, gpu_type=self.gpu_types),
                     env_vars={"OLLAMA_HOST": f"0.0.0.0:{PORT}", "OLLAMA_KEEP_ALIVE": "30m",
                               "OLLAMA_NUM_PARALLEL": str(self.num_parallel), "OLLAMA_MAX_LOADED_MODELS": "1"},
                     ephemeral=True, spot=spot, ttl_minutes=LEASE_MINUTES, auto_stop_interval=30,
-                    labels={**self.label, "dcj.owner": "grux", "dcj.max-minutes": str(self.ttl)}),
+                    labels={**self.label, "grux.max-minutes": str(self.ttl)}),
                     timeout=900)
                 break
             except Exception as e:  # spot fails at once when there is no spare capacity
@@ -143,10 +157,16 @@ class OllamaBox:
         if self.sb is not None:
             self.info["box_seconds"] = round(time.time() - self.info.get("started_at", time.time()), 1)
             try:
-                self.lease.release()
+                if getattr(self, "lease", None) is None:   # the create returned but the Lease never formed
+                    self.d.delete(self.sb, wait=True, timeout=180)
+                else:
+                    self.lease.release()
             except Exception as e:
                 self.log(f"delete error: {e} (the {LEASE_MINUTES} minute TTL still ends it)")
             self.sb = None
         time.sleep(5)
-        self.info["boxes_left"] = [s.id for s in self.d.list(ListSandboxesQuery(labels=self.label))]
+        try:   # a failed list must never replace the error that brought us here
+            self.info["boxes_left"] = [s.id for s in self.d.list(ListSandboxesQuery(labels=self.label))]
+        except Exception as e:
+            self.info["boxes_left"] = f"list failed: {str(e)[:120]}"
         self.log(f"box down: seconds {self.info.get('box_seconds')}, left {self.info['boxes_left']}")

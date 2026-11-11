@@ -1,0 +1,30 @@
+{
+ "_why": "The base every candidate is measured against, per Mac tier: the stock Ollama library build of the base each published Grux Local tag was trained from (results/v1.json base_model and before_training_model). A candidate competes in the tier its size puts it in (common.tier_for).",
+ "family": "qwen3.5",
+ "tiers": {
+  "2b": {"ram_gb": 8, "made_for": "8 GB Macs", "ollama_tag": "qwen3.5:2b", "hf_id": "Qwen/Qwen3.5-2B"},
+  "4b": {"ram_gb": 16, "made_for": "16 GB Macs and up", "ollama_tag": "qwen3.5:4b", "hf_id": "Qwen/Qwen3.5-4B"},
+  "9b": {"ram_gb": 24, "made_for": "24 GB Macs and up", "ollama_tag": "qwen3.5:9b", "hf_id": "Qwen/Qwen3.5-9B"}
+ },
+ "headline_tier": "4b",
+ "since": "2026-10-22",
+ "since_why": "S1 measured the whole open field on ollama.com on 2026-10-22 (Grux-Mac docs/factory/local-model-eval.md) and the Qwen 3.5 base was chosen from it; a base published or re-published after that date is new.",
+ "license_allowlist": {
+  "apache-2.0": "permits redistributing modified weights with the license and notices kept",
+  "mit": "permits redistributing modified weights with the notice kept"
+ },
+ "license_overrides": {},
+ "license_overrides_why": "Key '<source>:<id>' to {license, reason}. Anything not on the allowlist stays out unless it is named here with the reason it is safe to ship fine-tuned weights under it.",
+ "hf_orgs": ["Qwen", "google", "meta-llama", "mistralai", "microsoft", "ibm-granite", "deepseek-ai", "HuggingFaceTB", "allenai"],
+ "train": {
+  "recipe": "4b-v2: LoRA rank 64, two epochs, round 2 data",
+  "rank": 64,
+  "epochs": 2,
+  "data_env": "GRUX_LOCAL_TRAIN_DATA",
+  "data_path": "~/.grux/autopilot/grux-local/train-data/train.jsonl",
+  "data_path_why": "Pinned by install_launchd.py --train-data, which scans the source and drops rows with an identity term (and refuses a secret shape) on the way in; GRUX_LOCAL_TRAIN_DATA overrides it.",
+  "data_scan_vocab": "~/.grux/autopilot/grux-local/vocab/banned-vocabulary.json:?~/.grux/autopilot/grux-local/vocab/extra.txt",
+  "data_scan_vocab_why": "Identity terms for s2/data_scan.py, kept outside this public repo: Grux's own banned vocabulary plus a local list.",
+  "modelfile_family": "qwen3.5"
+ }
+}

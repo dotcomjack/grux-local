@@ -25,6 +25,7 @@ import suite  # noqa: E402
 import train_bank  # noqa: E402
 from eval_run import BOX_EXTRA, PRICE, log  # noqa: E402
 from gpu_box import OllamaBox  # noqa: E402
+import meter  # noqa: E402
 
 TEACHER = "gemma4:26b"   # google/gemma-4-26B-A4B-it, apache-2.0; S1 0.945 [0.918, 0.973] with think off
 SEEDS = (7, 8, 9)
@@ -196,6 +197,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="first N cases per family (smoke)")
     ap.add_argument("--export", action="store_true")
     ap.add_argument("--shard", default="0/1", help="i/n: this process takes every n-th case, from i")
+    ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
+    ap.add_argument("--meter-lane", default="grux")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
@@ -218,10 +221,13 @@ def main():
     json.dump({"teacher": TEACHER, "think": False, "seeds": SEEDS, "cases": len(cases), "cap": a.cap},
               open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     spent, attempts, finished = 0.0, 0, False
+    rate_gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
     while not finished and attempts < 3 and spent < a.cap:
         attempts += 1
-        with OllamaBox(a.gpu.split(","), f"s2-data-{i}of{n}-" + os.path.basename(run_dir), ttl_minutes=360,
-                       log=lambda m: log(m, run_dir), num_parallel=a.parallel) as box:
+        hours = max(0.25, (a.cap - spent) / (PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA))
+        with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu) as rid, \
+                OllamaBox(a.gpu.split(","), f"s2-data-{i}of{n}-" + os.path.basename(run_dir), ttl_minutes=360,
+                          log=lambda m: log(m, run_dir), num_parallel=a.parallel, reservation=rid) as box:
             gpu = str(box.info.get("gpu_type")).split(".")[-1].replace("_", "-").strip("'>")
             gpu = next((g for g in PRICE if g.replace("-", "") == gpu.replace("-", "").upper()), gpu)
             price = PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA

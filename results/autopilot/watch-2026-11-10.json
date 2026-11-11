@@ -1,0 +1,364 @@
+{
+ "date": "2026-11-10",
+ "since": "2026-10-22",
+ "rule": "Weekly watch: new open-weight bases at Mac sizes, from the Hugging Face API and the Ollama library.",
+ "candidates": [
+  {
+   "source": "ollama",
+   "id": "mimo-v2.6:9b",
+   "digest": "sha256:cc58eacf0e3e4a96556657fe6f29c80ca38401bf242eec83f4eee074dd02bc86",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 6.55,
+   "license": "mit",
+   "license_first_line": "MIT (declared by XiaomiMiMo in the pinned source model card)",
+   "params_b": 9.0,
+   "hf_id": "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B",
+   "license_source": "the build's license file points to XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B, whose model card declares mit",
+   "tier": "9b",
+   "est_loaded_gb": 9.17,
+   "tier_budget_gb": 18.0,
+   "updated": "2026-11-03",
+   "pulls": "52K",
+   "pulls_n": 52000.0,
+   "description": "MiMo-V2.6-Distill-Qwen-9B is Xiaomi MiMo\u2019s 9B model for code and agent workflows",
+   "reason": "license mit, 9b, tier 9b, about 9.17 GB loaded",
+   "new": true,
+   "scorable": true
+  }
+ ],
+ "waiting": [
+  {
+   "source": "hf",
+   "id": "microsoft/Mage-VL-Cowork",
+   "sha": "6fbe7f91da477c1c73790dbb1f08d001b8626be1",
+   "created": "2026-10-30",
+   "license": "apache-2.0",
+   "params_b": 4.74,
+   "pipeline": "image-text-to-text",
+   "gated": false,
+   "tier": "4b",
+   "reason": "license apache-2.0, 4.74B, tier 4b; no Ollama library build yet (rechecked weekly)"
+  }
+ ],
+ "filtered": [
+  {
+   "source": "ollama",
+   "id": "ripple-preview",
+   "reason": "sizes ['65b'], none in 1B to 10.5B",
+   "updated": "2026-11-09",
+   "badges": [
+    "tools",
+    "thinking"
+   ],
+   "sizes": [
+    "65b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "autotrust-jev",
+   "reason": "no tools badge (Grux calls tools); badges ['vision', 'decision']",
+   "updated": "2026-11-04",
+   "badges": [
+    "vision",
+    "decision"
+   ],
+   "sizes": [
+    "9b",
+    "35b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "kimi-k3.1-pro",
+   "reason": "cloud-only (no local build)",
+   "updated": "2026-11-04",
+   "badges": [
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "sizes": []
+  },
+  {
+   "source": "ollama",
+   "id": "pplx-decider-flash",
+   "reason": "no tools badge (Grux calls tools); badges ['vision', 'decision']",
+   "updated": "2026-11-03",
+   "badges": [
+    "vision",
+    "decision"
+   ],
+   "sizes": [
+    "4b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "lfm3:1.7b",
+   "digest": "sha256:b36a103fe2f8fbe9df2ceec88b9cfdf842dc04aaabe2b4677d1acf8e16570b5d",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 1.1,
+   "license": null,
+   "license_first_line": "LFM Open License v1.0",
+   "params_b": 1.7,
+   "updated": "2026-10-29",
+   "pulls": "68.9K",
+   "pulls_n": 68900.0,
+   "description": "LFM3-1.7B is a tri-hybrid model for local agents and specialized applications.",
+   "reason": "license LFM Open License v1.0 is not on the allowlist (Apache-2.0, MIT)"
+  },
+  {
+   "source": "ollama",
+   "id": "lfm3-audio:2b",
+   "digest": "sha256:3327c1a067559929d03d9e6e811cc2bc50b292b295e896b10733990dc6187590",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 1.67,
+   "license": null,
+   "license_first_line": "LFM Open License v1.0",
+   "params_b": 2.0,
+   "updated": "2026-10-29",
+   "pulls": "29.5K",
+   "pulls_n": 29500.0,
+   "description": "LFM3-Audio-2B is a compact, fully featured audio model.",
+   "reason": "license LFM Open License v1.0 is not on the allowlist (Apache-2.0, MIT)"
+  },
+  {
+   "source": "ollama",
+   "id": "lfm3-omni:2b",
+   "digest": "sha256:4c0ee9400634babb880868b873bcebf09fbbf1a5328e550bdbaff25888f1f7e2",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 2.05,
+   "license": null,
+   "license_first_line": "LFM Open License v1.0",
+   "params_b": 2.0,
+   "updated": "2026-10-29",
+   "pulls": "50.6K",
+   "pulls_n": 50600.0,
+   "description": "a single end-to-end model that understands text, images, video and audio, and answers in text and speech",
+   "reason": "license LFM Open License v1.0 is not on the allowlist (Apache-2.0, MIT)"
+  },
+  {
+   "source": "ollama",
+   "id": "lfm3-vl:2b",
+   "digest": "sha256:00ca45bf65a5c626104a906ec9b5f4cd2f576387dbcdefdb150e88d0b3bd7b2e",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 1.48,
+   "license": null,
+   "license_first_line": "LFM Open License v1.0",
+   "params_b": 2.0,
+   "updated": "2026-10-29",
+   "pulls": "34.6K",
+   "pulls_n": 34600.0,
+   "description": "LFM3-VL-2B is a vision-language model for on-device visual understanding.",
+   "reason": "license LFM Open License v1.0 is not on the allowlist (Apache-2.0, MIT)"
+  },
+  {
+   "source": "ollama",
+   "id": "d3",
+   "reason": "no tools badge (Grux calls tools); badges ['vision', 'decision']",
+   "updated": "2026-10-30",
+   "badges": [
+    "vision",
+    "decision"
+   ],
+   "sizes": [
+    "2b",
+    "4b",
+    "9b",
+    "27b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "phonon",
+   "reason": "no tools badge (Grux calls tools); badges none",
+   "updated": "2026-10-24",
+   "badges": [],
+   "sizes": []
+  },
+  {
+   "source": "ollama",
+   "id": "flint",
+   "reason": "sizes ['40b'], none in 1B to 10.5B",
+   "updated": "2026-10-22",
+   "badges": [
+    "tools",
+    "thinking"
+   ],
+   "sizes": [
+    "40b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "d1-omni",
+   "reason": "no tools badge (Grux calls tools); badges ['vision', 'decision', 'audio']",
+   "updated": "2026-10-27",
+   "badges": [
+    "vision",
+    "decision",
+    "audio"
+   ],
+   "sizes": [
+    "600m",
+    "2b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "d1",
+   "reason": "no tools badge (Grux calls tools); badges ['vision', 'decision']",
+   "updated": "2026-10-27",
+   "badges": [
+    "vision",
+    "decision"
+   ],
+   "sizes": [
+    "2b",
+    "3b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "nemotron-3.5-bolt:e4b",
+   "digest": "sha256:69f2be39b309ade35ef04ee02507915f4cd839f6631e14425146cb6c9df3bd39",
+   "format": "gguf",
+   "runner": "llamacpp",
+   "model_gb": 7.17,
+   "license": null,
+   "license_first_line": "OpenMDW License Agreement, version 1.1 (OpenMDW-1.1)",
+   "params_b": 4.0,
+   "updated": "2026-10-23",
+   "pulls": "62.6K",
+   "pulls_n": 62600.0,
+   "description": "Nemotron 3.5 Bolt is NVIDIA\u2019s compact vision-language model for local coding, reasoning, and tool use.",
+   "reason": "license OpenMDW License Agreement, version 1.1 (OpenMDW-1.1) is not on the allowlist (Apache-2.0, MIT)"
+  },
+  {
+   "source": "ollama",
+   "id": "qwen3.8-flash-next",
+   "reason": "sizes none listed, none in 1B to 10.5B",
+   "updated": "2026-11-09",
+   "badges": [
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "sizes": []
+  },
+  {
+   "source": "ollama",
+   "id": "qwen3.8",
+   "reason": "sizes ['27b'], none in 1B to 10.5B",
+   "updated": "2026-11-08",
+   "badges": [
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "sizes": [
+    "27b"
+   ]
+  },
+  {
+   "source": "ollama",
+   "id": "qwen3.6",
+   "reason": "sizes ['27b', '35b'], none in 1B to 10.5B",
+   "updated": "2026-10-30",
+   "badges": [
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "sizes": [
+    "27b",
+    "35b"
+   ]
+  },
+  {
+   "source": "hf",
+   "id": "ibm-granite/granite-speech-5.0-2b-ONNX",
+   "sha": "a9cf1d13d045d65813b4bc80bde8fdd62db4c35c",
+   "created": "2026-10-28",
+   "license": "apache-2.0",
+   "params_b": null,
+   "pipeline": "automatic-speech-recognition",
+   "gated": false,
+   "reason": "not a chat model (pipeline automatic-speech-recognition)"
+  },
+  {
+   "source": "hf",
+   "id": "ibm-granite/granite-switch-4.1-8b-GGUF",
+   "sha": "844a3df25e1b257eb08561ef9a4a34e3973e3f58",
+   "created": "2026-10-22",
+   "license": "apache-2.0",
+   "params_b": null,
+   "pipeline": null,
+   "gated": false,
+   "reason": "not a chat model (pipeline None)"
+  },
+  {
+   "source": "hf",
+   "id": "ibm-granite/granite-switch-4.1-30b-GGUF",
+   "sha": "0b354ee7142ded77eb004b16496c21ce18b3c72e",
+   "created": "2026-10-22",
+   "license": "apache-2.0",
+   "params_b": null,
+   "pipeline": null,
+   "gated": false,
+   "reason": "not a chat model (pipeline None)"
+  },
+  {
+   "source": "hf",
+   "id": "allenai/Molmo2-4B-tb",
+   "sha": "e5c3ef6018c5f6b011a2b3d0b774fddb5aa1f842",
+   "created": "2026-11-05",
+   "license": "apache-2.0",
+   "params_b": null,
+   "pipeline": "robotics",
+   "gated": false,
+   "reason": "not a chat model (pipeline robotics)"
+  },
+  {
+   "source": "hf",
+   "id": "allenai/maniflow-tb",
+   "sha": "1e8385fdb1a28096989309d8c36f51f247ddf0d3",
+   "created": "2026-11-05",
+   "license": "apache-2.0",
+   "params_b": null,
+   "pipeline": "robotics",
+   "gated": false,
+   "reason": "not a chat model (pipeline robotics)"
+  },
+  {
+   "source": "hf",
+   "id": "allenai/OlmoEarth-v1_2-FT-LFMC-Base",
+   "sha": "a3747521ea3e965381c3f43d9f16fb41609375a9",
+   "created": "2026-10-23",
+   "license": "other",
+   "params_b": null,
+   "pipeline": null,
+   "gated": false,
+   "reason": "not a chat model (pipeline None)"
+  }
+ ],
+ "baseline_count": 1081,
+ "errors": [],
+ "ollama_entries": 269,
+ "pick": "mimo-v2.6:9b",
+ "pick_rule": "headline tier (4b) first, then newest update, then pulls; only builds not seen before",
+ "counts": {
+  "candidates": 1,
+  "new_candidates": 1,
+  "waiting": 1,
+  "filtered": 23,
+  "baseline": 1081,
+  "errors": 0
+ }
+}

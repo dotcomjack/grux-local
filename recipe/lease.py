@@ -74,7 +74,12 @@ class Lease:
         _install()
         with _lock:
             _live[sandbox.id] = (daytona, sandbox)
-        self.sb.set_ttl(self.minutes)
+        try:
+            self.sb.set_ttl(self.minutes)
+        except BaseException:   # no Lease formed: the caller deletes the box; leave nothing registered behind
+            with _lock:
+                _live.pop(sandbox.id, None)
+            raise
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 

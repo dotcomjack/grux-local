@@ -18,9 +18,9 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import catalog  # noqa: E402
 import suite  # noqa: E402
 from gpu_box import OllamaBox  # noqa: E402
+import meter  # noqa: E402
 
 ONLY_THINKING = False
 # Listed GPU rate per hour, plus what every GPU box also bills: 16 vCPU at $0.0504 and 192 GB RAM at
@@ -127,6 +127,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="first N cases per family (smoke runs)")
     ap.add_argument("--only-thinking", action="store_true", help="skip models without the thinking capability")
     ap.add_argument("--candidates", action="store_true", help="run candidates.json instead of the Cookbook catalog")
+    ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
+    ap.add_argument("--meter-lane", default="grux")
     a = ap.parse_args()
     global ONLY_THINKING
     ONLY_THINKING = a.only_thinking
@@ -138,6 +140,7 @@ def main():
     if a.limit:
         seen = {}
         cases = [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= a.limit]
+    import catalog  # S1 only (the Grux tree); train_run imports this module for BOX_EXTRA, PRICE, log
     pool = catalog.candidates() if a.candidates else catalog.catalog()
     models = [m["id"] for m in pool]
     if a.models:
@@ -149,10 +152,13 @@ def main():
     spent = 0.0
     attempts = 0
     pending = list(models)
+    rate_gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
     while pending and attempts < 3:
         attempts += 1
-        with OllamaBox(a.gpu.split(","), "lme-" + os.path.basename(run_dir), ttl_minutes=a.ttl,
-                       log=lambda m: log(m, run_dir)) as box:
+        hours = max(0.25, (a.cap - spent) / (PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA))
+        with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu) as rid, \
+                OllamaBox(a.gpu.split(","), "lme-" + os.path.basename(run_dir), ttl_minutes=a.ttl,
+                          log=lambda m: log(m, run_dir), reservation=rid) as box:
             gpu = str(box.info.get("gpu_type")).split(".")[-1].replace("_", "-").strip("'>")
             gpu = next((g for g in PRICE if g.replace("-", "") == gpu.replace("-", "").upper()), gpu)
             price = PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA

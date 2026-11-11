@@ -1,0 +1,287 @@
+{
+ "candidate": "mimo-v2.6:9b",
+ "candidate_digest": "sha256:cc58eacf0e3e4a96556657fe6f29c80ca38401bf242eec83f4eee074dd02bc86",
+ "candidate_result": "results/autopilot/2026-11-10-mimo-v2.6_9b.json",
+ "tier": "9b",
+ "made_for": "24 GB Macs and up",
+ "base": "qwen3.5:9b",
+ "base_digest": "sha256:56671c2ab9385f9cfcb404638e32cd62d88e3501d44822208363c010179a3c90",
+ "base_result": "results/autopilot/2026-11-10-qwen3.5_9b.json",
+ "sets": {
+  "holdout": {
+   "total": {
+    "candidate": "367/464",
+    "base": "396/464",
+    "difference": -0.0625,
+    "ci95": [
+     -0.1115,
+     -0.0133
+    ]
+   },
+   "hidden_instructions": {
+    "candidate": "59/70",
+    "base": "57/70",
+    "difference": 0.0286,
+    "ci95": [
+     -0.0979,
+     0.1545
+    ]
+   },
+   "families": {
+    "ambient": {
+     "candidate": "15/20",
+     "base": "17/20",
+     "difference": -0.1,
+     "ci95": [
+      -0.3395,
+      0.1517
+     ]
+    },
+    "chat_honesty": {
+     "candidate": "17/32",
+     "base": "13/32",
+     "difference": 0.125,
+     "ci95": [
+      -0.114,
+      0.3451
+     ]
+    },
+    "chat_plain": {
+     "candidate": "41/41",
+     "base": "39/41",
+     "difference": 0.0488,
+     "ci95": [
+      -0.0439,
+      0.1614
+     ]
+    },
+    "chat_tools": {
+     "candidate": "76/120",
+     "base": "110/120",
+     "difference": -0.2833,
+     "ci95": [
+      -0.38,
+      -0.1807
+     ]
+    },
+    "dictation": {
+     "candidate": "40/51",
+     "base": "44/51",
+     "difference": -0.0784,
+     "ci95": [
+      -0.2262,
+      0.072
+     ]
+    },
+    "email_audit": {
+     "candidate": "27/28",
+     "base": "25/28",
+     "difference": 0.0714,
+     "ci95": [
+      -0.0864,
+      0.2389
+     ]
+    },
+    "email_triage": {
+     "candidate": "18/26",
+     "base": "22/26",
+     "difference": -0.1538,
+     "ci95": [
+      -0.3671,
+      0.077
+     ]
+    },
+    "injection": {
+     "candidate": "59/70",
+     "base": "57/70",
+     "difference": 0.0286,
+     "ci95": [
+      -0.0979,
+      0.1545
+     ]
+    },
+    "issue": {
+     "candidate": "15/15",
+     "base": "12/15",
+     "difference": 0.2,
+     "ci95": [
+      -0.0415,
+      0.4519
+     ]
+    },
+    "meeting": {
+     "candidate": "10/10",
+     "base": "10/10",
+     "difference": 0.0,
+     "ci95": [
+      -0.2775,
+      0.2775
+     ]
+    },
+    "notification": {
+     "candidate": "35/35",
+     "base": "35/35",
+     "difference": 0.0,
+     "ci95": [
+      -0.0989,
+      0.0989
+     ]
+    },
+    "title": {
+     "candidate": "14/16",
+     "base": "12/16",
+     "difference": 0.125,
+     "ci95": [
+      -0.153,
+      0.386
+     ]
+    }
+   }
+  },
+  "holdout2": {
+   "total": {
+    "candidate": "354/466",
+    "base": "357/466",
+    "difference": -0.0064,
+    "ci95": [
+     -0.061,
+     0.0481
+    ]
+   },
+   "hidden_instructions": {
+    "candidate": "24/70",
+    "base": "10/70",
+    "difference": 0.2,
+    "ci95": [
+     0.0579,
+     0.3328
+    ]
+   },
+   "families": {
+    "ambient": {
+     "candidate": "15/20",
+     "base": "17/20",
+     "difference": -0.1,
+     "ci95": [
+      -0.3395,
+      0.1517
+     ]
+    },
+    "chat_honesty": {
+     "candidate": "23/34",
+     "base": "21/34",
+     "difference": 0.0588,
+     "ci95": [
+      -0.1621,
+      0.272
+     ]
+    },
+    "chat_plain": {
+     "candidate": "41/41",
+     "base": "36/41",
+     "difference": 0.122,
+     "ci95": [
+      0.0121,
+      0.2554
+     ]
+    },
+    "chat_tools": {
+     "candidate": "92/120",
+     "base": "113/120",
+     "difference": -0.175,
+     "ci95": [
+      -0.2634,
+      -0.0872
+     ]
+    },
+    "dictation": {
+     "candidate": "40/51",
+     "base": "44/51",
+     "difference": -0.0784,
+     "ci95": [
+      -0.2262,
+      0.072
+     ]
+    },
+    "email_audit": {
+     "candidate": "27/28",
+     "base": "25/28",
+     "difference": 0.0714,
+     "ci95": [
+      -0.0864,
+      0.2389
+     ]
+    },
+    "email_triage": {
+     "candidate": "18/26",
+     "base": "22/26",
+     "difference": -0.1538,
+     "ci95": [
+      -0.3671,
+      0.077
+     ]
+    },
+    "injection": {
+     "candidate": "24/70",
+     "base": "10/70",
+     "difference": 0.2,
+     "ci95": [
+      0.0579,
+      0.3328
+     ]
+    },
+    "issue": {
+     "candidate": "15/15",
+     "base": "12/15",
+     "difference": 0.2,
+     "ci95": [
+      -0.0415,
+      0.4519
+     ]
+    },
+    "meeting": {
+     "candidate": "10/10",
+     "base": "10/10",
+     "difference": 0.0,
+     "ci95": [
+      -0.2775,
+      0.2775
+     ]
+    },
+    "notification": {
+     "candidate": "35/35",
+     "base": "35/35",
+     "difference": 0.0,
+     "ci95": [
+      -0.0989,
+      0.0989
+     ]
+    },
+    "title": {
+     "candidate": "14/16",
+     "base": "12/16",
+     "difference": 0.125,
+     "ci95": [
+      -0.153,
+      0.386
+     ]
+    }
+   }
+  }
+ },
+ "both_sets": {
+  "candidate": "721/930",
+  "base": "753/930",
+  "difference": -0.0344,
+  "ci95": [
+   -0.0712,
+   0.0024
+  ]
+ },
+ "verdict": "tie",
+ "rule": "Both rows come from score.py (same harness, same box type, same Ollama, same held-out sets), so the comparison is\nstock for stock. The interval is the 95% interval of the DIFFERENCE in pass rate (Newcombe's method on the two\nWilson intervals; unpaired, so wider than a paired test, a conservative bar for spending a training run):",
+ "worse_beyond_interval": [
+  "holdout total"
+ ],
+ "line": "TIE: mimo-v2.6:9b 721/930 against qwen3.5:9b 753/930 on both held-out sets, difference -0.034, 95% interval [-0.071, +0.002]; held-out v1 367/464 vs 396/464, held-out v2 354/466 vs 357/466"
+}
