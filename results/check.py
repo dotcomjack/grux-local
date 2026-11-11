@@ -94,7 +94,10 @@ def sentences_of(raw):
 
 def readme_scope(md):
     """The Grux README talks about much else; only the announcement and the Grux Local section are ours."""
-    callout = re.search(r"^> \*\*New: Grux Local.*?(?=^[^>])", md, re.S | re.M)
+    # The callout is the blockquote whose bold opening names Grux Local. Matched by that, never by its exact first
+    # words: 3.2 renamed "New: Grux Local" to "Grux Local, the model trained for Grux, ...", and the old pattern
+    # cut the headline out of the check, red for 10 days (2026-11-01 to 11-11) with every number right.
+    callout = re.search(r"^> \*\*[^\n]*?Grux Local.*?(?=^[^>]|\Z)", md, re.S | re.M)
     section = re.search(r"^## Grux Local\n.*?(?=^---|^## )", md, re.S | re.M)
     return (callout.group(0) if callout else "") + "\n" + (section.group(0) if section else "")
 
@@ -538,6 +541,10 @@ def main():
             failed += 1
             continue
         md = raw.decode("utf-8", "replace")
+        if name == "readme" and not re.search(r"^> \*\*[^\n]*?Grux Local", md, re.M):
+            print(f"FAIL readme: no Grux Local callout (a blockquote opening in bold that names Grux Local) in {src}")
+            failed += 1
+            continue
         ours = readme_scope(md).encode() if name == "readme" else raw
         text = text_of(ours, src)
         want = ([] if name == "blog" else rows) + headline.get(name, [])
