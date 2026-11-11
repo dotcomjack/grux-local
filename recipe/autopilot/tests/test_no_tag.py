@@ -12,7 +12,7 @@ class FakeBox:
     def __init__(self, *a, **k): self.info = {"id": "fake-box", "gpu_type": "H200", "spot": True}
     def __enter__(self): return self
     def __exit__(self, *e): pass
-    def get(self, path, timeout=30): return {"version": "test"} if path == "/api/version" else {"models": []}
+    def get(self, path, timeout=30): return {"version": common.OLLAMA_PIN} if path == "/api/version" else {"models": []}
     def post(self, path, body, timeout=600): return {}
     def pull(self, model): return "success", 0.1
     def evicted(self): return False

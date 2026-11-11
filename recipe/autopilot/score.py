@@ -196,10 +196,15 @@ def run_one(model, gpus, run_dir, est_hours, ttl):
         rec = {"meter_id": rid, "reserved_hours": hours, "tasks_left_at_start": left}
         meta["boxes"].append(rec)
         try:
-            with OllamaBox(gpus, "gl-" + common.stem(model), ttl_minutes=ttl, owner=common.OWNER, num_parallel=1,
+            with OllamaBox(gpus, "gl-" + common.stem(model), ttl_minutes=ttl, owner=common.OWNER, num_parallel=1, image=common.OLLAMA_IMAGE,
                            log=lambda m: common.log(m, logp), reservation=rid) as box:
                 rec.update({k: str(v) for k, v in box.info.items() if k in ("id", "gpu_type", "spot", "nvidia_smi")})
-                meta["ollama_version"] = box.get("/api/version").get("version")
+                version = box.get("/api/version").get("version")
+                if version != common.OLLAMA_PIN:   # a score on another runtime is another table
+                    rec["outcome"] = f"runtime {version} is not the pinned {common.OLLAMA_PIN}: not scored"
+                    common.log(f"{model}: {rec['outcome']}", logp)
+                    break
+                meta["ollama_version"] = version
                 status, pull_s = box.pull(model)
                 common.log(f"{model}: pull {status} in {pull_s}s", logp)
                 if status != "success":
