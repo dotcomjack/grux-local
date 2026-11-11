@@ -27,6 +27,12 @@ HEARTBEAT = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_HEARTBEAT", "~/.gr
 SPEND_TOOL = os.path.expanduser(os.environ.get("DAYTONA_SPEND_TOOL", "~/.claude/tools/daytona_spend.py"))
 LANE = "grux-local"
 OWNER = "grux-local"          # the grux.factory owner label on every box this lane makes
+# Every model is scored on ONE pinned Ollama runtime, so a week's scores share a table with the weeks before it
+# (2026-11-11 review: with :latest, the next run would score one new model on a newer runtime and lead the page with
+# it alone). 0.40.16 is the runtime the 2026-11-10 results were scored on. Moving the pin is a deliberate change that
+# starts a new table; score.py refuses a box that reports any other version.
+OLLAMA_PIN = "0.40.16"
+OLLAMA_IMAGE = "ollama/ollama:" + OLLAMA_PIN
 SWING_LIMIT_USD = 150.0       # one swing estimated over this stops and asks the owner; never a silent create
 # Listed spot rate per hour for the GPU, plus the 16 vCPU and 192 GiB every GPU box also bills ($3.92 an hour,
 # the same formula as the meter). Not a settled charge.
