@@ -3,7 +3,7 @@
 
 Order: the decision must say win; the base's Hugging Face weights must be public (never gated: no token goes in a
 box) and allowlisted; the recipe must know the base's Ollama renderer; the contamination check runs FIRST (no
-training row may share an 8-word run with either held-out set); then s2/train_run.py trains, merges, packs the
+training row may share an 8-word run with any held-out set: v1, v2 or v3); then s2/train_run.py trains, merges, packs the
 model for Ollama as nvfp4 and scores it on held-out v1 on the box; the Ollama model tar comes out to this machine.
 Last, it writes a Mini gate request (results/autopilot/gate-requests/<id>.json, carrying the exact eval_local.py
 command) and a ready item. It never pushes a tag, never touches gruxai.com and never runs anything on the Mini.
@@ -47,17 +47,22 @@ def words(text):
 
 
 def contamination(data_path):
-    """s2/contamination.py's rule, applied to both held-out sets and to the rendered training rows: a row is
+    """s2/contamination.py's rule, applied to the three held-out sets and to the rendered training rows: a row is
     contaminated when its ask equals a held-out case's text, or its user turn shares any 8-word run with one.
     Returns (contaminated ids, ids that only CONTAIN a short held-out ask inside a longer one: reported, not blocked)."""
     import contamination as c8
     import holdout
     import holdout_v2
+    import holdout_v3
     runs, wholes = set(), set()
     for case in holdout.cases() + holdout_v2.cases():
         ws = c8.texts(case)
         runs |= c8.grams(ws)
         wholes.add(" ".join(ws))
+    for case in holdout_v3.cases():   # nested jobs: every text a model reads, one at a time, and the ask whole
+        for t in holdout_v3.case_texts(case):
+            runs |= c8.grams(words(t))
+        wholes.add(" ".join(words(case["user"])))
     hits, near = [], []
     for line in open(data_path):
         row = json.loads(line)

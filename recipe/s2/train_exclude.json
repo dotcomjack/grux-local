@@ -1,5 +1,5 @@
 {
- "rule": "exact text or any shared 8-word run with s2/holdout.py (sha 1623e0e7)",
+ "rule": "exact text or any shared 8-word run with s2/holdout.py (sha 1623e0e7) or s2/holdout_v3.py (case sha 2506a2a8)",
  "excluded": [
   "t-chat_honesty-0090",
   "t-chat_plain-0450",

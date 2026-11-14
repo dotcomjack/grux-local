@@ -74,6 +74,15 @@ On the original held-out set, 4B v2 is one task behind v1 on that MacBook Pro: 4
 
 The tested build and the published `:4b-v2` differ only in an appended license file ([`results/reproductions/2026-10-24-4b-v2-license.md`](results/reproductions/2026-10-24-4b-v2-license.md)). Every number here is in [`results/v1.json`](results/v1.json) under `4b-v2`.
 
+## Held-out v3, for a bigger tier
+
+We built a third held-out set for the next, larger Grux Local tiers: 321 long, multi-step jobs on the full Grux turn,
+with all 119 tools Grux v3.3.1 defines offered on every request. It measures chains of dependent tool calls, shell
+work with snapshots and undo, saying no when no tool can do the ask, ignoring instructions planted in pasted or
+fetched text, using a fact said far back in a long conversation, and picking the right tool out of the whole
+catalogue. Every label was written by hand and no model labelled or judges any case. No model has been scored on
+it yet. How it works: [`recipe/README.md`](recipe/README.md#held-out-v3-the-full-grux-turn).
+
 ## Use it with Grux 3.1
 
 ```

@@ -50,6 +50,41 @@ realistic turn carries more tools and a longer reply budget than a held-out v1 r
 12, as `python3 recipe/local_turn.py` prints), so on that MacBook Pro the run took about 38 minutes per model.
 `python3 recipe/s2/holdout_v2.py` prints the set's counts, its fingerprint and the scorer's own self-test.
 
+### Held-out v3: the full Grux turn
+
+```
+export GRUX_SRC_V3="$(GRUX_TAG=v3.3.1 sh recipe/get_grux_source.sh)"
+python3 recipe/s2/holdout_v3.py
+python3 recipe/s2/test_holdout_v3.py
+python3 recipe/eval_local.py --model <tag> --set holdout_v3 --run /tmp/grux-local-v3
+python3 recipe/summarize.py /tmp/grux-local-v3/<model>-holdout_v3.jsonl
+```
+
+Held-out v1 is close to saturated: the shipped 9B already passes nearly every task, so it cannot show a bigger
+model doing better. Held-out v3 measures what a bigger local tier on a server is for: the full Grux turn on long,
+multi-step jobs. It is 321 jobs (`s2/holdout_v3.py`), and every request carries all 119 tools Grux v3.3.1 defines
+(commit `4b8d1b6`), with no shortlist, plus the full system prompt and the developer block, a 2,000 token reply
+and a 65,536 token window, so Ollama never trims an early fact. Six families, each of at least 30 jobs:
+
+- **chain**: three or more dependent tool calls, each needing the result of the one before;
+- **shell**: shell work with snapshots and undo (`shell_snapshots` then `shell_restore_snapshot`, `shell_undo` in a
+  live session, `shell_audit_log`, a gated command and its confirmation);
+- **refusal**: asks no Grux tool can do (move money, text or call someone, drive a device, post publicly as you):
+  no acting call, and no claim that it did or can;
+- **injection**: instructions planted in pasted or fetched text: do the task asked, follow nothing planted, and say
+  the text tried to steer it;
+- **long_context**: the fact the call needs was said once, far back in a long conversation;
+- **tool_choice**: one call, the right one out of the whole catalogue, with the right arguments.
+
+A job of several steps goes out one step at a time. Each step carries the tool results a real run would have seen by
+then, scripted in the case, so the score is deterministic, and a job passes only when every step does. No model
+labelled a case and no model judges an answer: every expected call, argument check and reply rule was written by
+hand into the tables of `s2/holdout_v3.py`, and the scorer is plain rules (`holdout_v3.score_v3`, reusing Grux's
+own ActionClaimGuard patterns). The set shares no 8-word run with held-out v1, v2 or the training bank, and
+`s2/contamination.py` now checks training data against it too. Its case sha (`2506a2a8...`) is frozen in the module
+and checked by its self-test, and `check_prompts.py` checks every request it sends when `GRUX_SRC_V3` is set;
+`s2/test_holdout_v3.py` proves the scorer fails what it should. No model has been scored on it yet.
+
 ## 2. Train your own
 
 | Step | File | What it does |
@@ -57,6 +92,7 @@ realistic turn carries more tools and a longer reply budget than a held-out v1 r
 | Cases | `s2/train_bank.py` | About 5,200 synthetic Grux tasks, deterministic for a seed, each with its expected result set when the task is made, never by a model |
 | Held-out set | `s2/holdout.py` | 464 tasks written separately; `s2/contamination.py` proves none of them leaks into training (`s2/train_exclude.json`) |
 | Held-out v2 | `s2/holdout_v2.py`, `s2/rules.py`, `local_turn.py` | 466 tasks scored as Grux 3.1.0 sends a local turn, with round 2's stricter rules; the set that measured 4b-v2 |
+| Held-out v3 | `s2/holdout_v3.py`, `s2/test_holdout_v3.py` | 321 multi-step jobs on the full Grux v3.3.1 turn, every tool on every request; the set for a bigger tier |
 | Answers | `s2/gen_data.py` | A teacher model (Gemma 4 26B on a GPU box, through Ollama) writes each reply; a reply is kept only when the scorer passes it |
 | Training | `s2/box_train.py` | LoRA on Qwen 3.5 (2B, 4B, 9B), loss on the answer tokens only, checkpoints so a lost spot box resumes |
 | Run | `s2/train_run.py` | Train, merge, import into Ollama as nvfp4, score the held-out set, pull the model out (the published 9B was then quantized separately with NVIDIA ModelOpt, to the mixed NVFP4 and MXFP8 recipe of Ollama's own qwen3.5:9b) |
