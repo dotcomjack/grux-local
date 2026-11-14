@@ -159,6 +159,10 @@ class Refused(Exception):
     pass
 
 
+class CharterRefused(Refused):
+    """The meter refused the swing charter (exit 5): no box."""
+
+
 def swing_guard(est_usd, what):
     """Code-level refusal: one swing estimated over SWING_LIMIT_USD never creates a box; the owner decides."""
     if est_usd > SWING_LIMIT_USD:
@@ -170,15 +174,16 @@ def box_rate(gpu):
     return GPU_RATE[gpu] + BOX_EXTRA
 
 
-def reserve(hours, gpu):
+def reserve(hours, gpu, purpose="measure"):
     """Reserve on the shared weekly meter BEFORE a create. Exit 3 from the meter is a refusal: raise, create nothing."""
     gpu_key = gpu.replace("-", "")
     cmd = [sys.executable, SPEND_TOOL, "reserve", "--lane", LANE, "--hours", f"{hours:.3f}", "--gpu", gpu_key]
     if CHARTER:
         cmd += ["--charter", CHARTER]
+    cmd += ["--purpose", purpose]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode == 5:
-        raise Refused("CHARTER " + (r.stderr.strip() or "REFUSED") + ". No box was created.")
+        raise CharterRefused("CHARTER " + (r.stderr.strip() or "REFUSED") + ". No box was created.")
     if r.returncode == 3:
         raise Refused("METER " + (r.stderr.strip() or "REFUSED: over the weekly cap") + ". No box was created.")
     if r.returncode != 0:

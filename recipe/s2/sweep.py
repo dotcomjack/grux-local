@@ -90,6 +90,8 @@ def main():
                    "--micro-tokens", str(mtok), "--accum", str(32 // micro), "--save-every", str(every)]
             if a.meter:
                 cmd += ["--meter", a.meter]
+                if os.environ.get("GRUX_SWING_CHARTER"):
+                    cmd += ["--charter", os.path.expanduser(os.environ["GRUX_SWING_CHARTER"])]
             if not (rank == 16 and ep == 1):
                 cmd.append("--skip-base")       # the r16-e1 run of each size scores its base once
             os.makedirs(run, exist_ok=True)

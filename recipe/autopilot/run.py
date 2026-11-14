@@ -89,7 +89,9 @@ def main():
         for st in week["steps"]:
             if st.get("score_exit") == common.BACKLOGGED or st.get("exit") == common.BACKLOGGED:
                 continue                                  # queued for the next swing charter: expected, not an alert
-            if st.get("score_exit") == 3:
+            if st.get("score_exit") == 5:
+                alerts.append("the meter refused the swing charter (exit 5): fix or activate GRUX_SWING_CHARTER")
+            elif st.get("score_exit") == 3:
                 alerts.append("the spend meter refused at least one scoring box (exit 3); a refused model retries next week")
             elif st.get("score_exit") == 4:
                 alerts.append("scoring refused over the $150 swing line (exit 4): no box was created")
@@ -159,6 +161,7 @@ def week_run():
     to_score = to_score[:MAX_PER_RUN]
     models = [c["id"] for c in to_score]
     rescores = state.setdefault("base_rescores", {})
+    added_rescores = []
     for tier in sorted({c["tier"] for c in pending}):
         if base_row_current(tier) is False:
             key = f"{tier}|{_BASE_DIGEST.get(tier)}"
@@ -170,11 +173,16 @@ def week_run():
                 week.setdefault("alerts", []).append(msg)
                 continue
             rescores.setdefault(key, []).append(date)
+            added_rescores.append(key)
             models.append(common.base_config()["tiers"][tier]["ollama_tag"])
     week["scored"] = models
     if models:
         r = subprocess.run([sys.executable, os.path.join(HERE, "score.py"), "--models", ",".join(models), "--date", date])
         week["steps"].append({"score_exit": r.returncode})
+        if r.returncode == common.BACKLOGGED:           # queued, nothing scored: a backlog is not a rescore attempt
+            for key in added_rescores:
+                rescores[key].remove(date)
+            week["backlogged"], week["scored"] = models, []
         _BASE_CURRENT.clear()                             # a base rescored just now may be current
     for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")

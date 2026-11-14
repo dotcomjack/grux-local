@@ -260,7 +260,7 @@ def main():
             gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
             hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
             cmd = [sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
-                   "--gpu", gpu.replace("-", "")] + (["--charter", a.charter] if a.charter else [])
+                   "--gpu", gpu.replace("-", ""), "--purpose", "train"] + (["--charter", a.charter] if a.charter else [])
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
                 log(f"STOP: the spend meter refused the box (exit {r.returncode}): {r.stderr.strip()[:200]}", run_dir)

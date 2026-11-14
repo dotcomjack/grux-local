@@ -269,6 +269,9 @@ def main():
     if a.one:
         try:
             r = run_one(a.one, gpus, a.run_dir, a.est_hours, a.ttl)
+        except common.CharterRefused as e:
+            print(str(e), flush=True)
+            sys.exit(5)
         except common.Refused as e:
             print(str(e), flush=True)
             sys.exit(3)
@@ -303,7 +306,8 @@ def main():
         time.sleep(10)                                  # stagger creates; spot capacity is contended
     codes = {m: p.wait() for m, p in procs.items()}
     print(json.dumps({"exit": codes}), flush=True)
-    sys.exit(0 if all(c == 0 for c in codes.values()) else (3 if 3 in codes.values() else 1))
+    sys.exit(0 if all(c == 0 for c in codes.values()) else
+             (5 if 5 in codes.values() else 3 if 3 in codes.values() else 1))
 
 
 if __name__ == "__main__":
