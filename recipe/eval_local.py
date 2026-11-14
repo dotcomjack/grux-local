@@ -35,6 +35,7 @@ BASE = "http://127.0.0.1:11434"
 MEM_FREE_PCT_MIN = 10      # memory_pressure's own free percentage
 PRESSURE_CRITICAL = 4      # kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical
 DISK_FREE_GB_MIN = 8       # room for macOS to grow swap into; the Mini had 4.2
+LARGE_WINDOW = 16384       # the disk floor binds above this: 16,384 runs held on the Mini with 0 B of swap
 GUARD_EVERY_S = 5
 
 
@@ -59,7 +60,9 @@ def mem_verdict(pressure_level, free_pct):
     return None
 
 
-def disk_verdict(free_gb):
+def disk_verdict(free_gb, num_ctx=None):
+    if num_ctx is not None and num_ctx <= LARGE_WINDOW:
+        return None
     if free_gb is not None and free_gb < DISK_FREE_GB_MIN:
         return f"disk free {free_gb} GB under {DISK_FREE_GB_MIN} GB: no room to swap into"
     return None
@@ -160,7 +163,7 @@ def main():
     have = set()
     if os.path.exists(path):
         have = {json.loads(l)["case"] for l in open(path)}
-    refuse = disk_verdict(round(shutil.disk_usage(a.run).free / 1e9, 1)) or mem_verdict(*read_mem())
+    refuse = disk_verdict(round(shutil.disk_usage(a.run).free / 1e9, 1), a.num_ctx) or mem_verdict(*read_mem())
     if refuse:
         sys.exit("REFUSED " + refuse)
     start_guard(a.model, os.path.join(a.run, stem + suffix + ".abort.json"))

@@ -8,7 +8,8 @@ and every LaunchAgent on the Mini stopped until a password was typed. The run sc
   1. the readers parse the real sysctl and memory_pressure lines (swap in M and in G, the free percentage);
   2. the verdict trips on a critical kernel pressure level and on a free percentage under the floor, and not on a
      healthy reading;
-  3. the disk preflight refuses a disk with no room to swap into;
+  3. the disk preflight refuses a disk with no room to swap into above a 16,384 window, and leaves the 16,384
+     runs that held on the Mini alone;
   4. the watchdog, fed a critical reading, unloads the model and stops the run with exit 7 and a written reason;
      fed a healthy one, it does neither.
 No model runs. Prints PASS or FAIL per check; exit 1 on any FAIL.
@@ -47,8 +48,10 @@ check("critical kernel pressure trips", e.mem_verdict(pressure_level=4, free_pct
 check("free percentage under the floor trips", e.mem_verdict(pressure_level=1, free_pct=e.MEM_FREE_PCT_MIN - 1) is not None)
 check("unknown readings do not trip by themselves", e.mem_verdict(pressure_level=None, free_pct=None) is None)
 
-check("disk with 4 GB free is refused", e.disk_verdict(4.2) is not None)
-check("disk with room passes", e.disk_verdict(e.DISK_FREE_GB_MIN + 1) is None)
+check("disk with 4 GB free is refused at held-out v3's window", e.disk_verdict(4.2, 65536) is not None)
+check("disk with room passes", e.disk_verdict(e.DISK_FREE_GB_MIN + 1, 65536) is None)
+check("a 16,384 window run is not blocked by the disk floor (the Mini's small-tier gates)",
+      e.disk_verdict(4.2, 16384) is None)
 
 calls = {"unload": 0, "exit": None}
 run = tempfile.mkdtemp()
