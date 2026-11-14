@@ -179,10 +179,12 @@ def week_run():
     if models:
         r = subprocess.run([sys.executable, os.path.join(HERE, "score.py"), "--models", ",".join(models), "--date", date])
         week["steps"].append({"score_exit": r.returncode})
-        if r.returncode == common.BACKLOGGED:           # queued, nothing scored: a backlog is not a rescore attempt
+        if r.returncode in (4, 5, common.BACKLOGGED):    # refused or queued before any box: not a rescore attempt
             for key in added_rescores:
                 rescores[key].remove(date)
-            week["backlogged"], week["scored"] = models, []
+            week["scored"] = []
+            if r.returncode == common.BACKLOGGED:
+                week["backlogged"] = models
         _BASE_CURRENT.clear()                             # a base rescored just now may be current
     for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")
