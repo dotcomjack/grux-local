@@ -4,11 +4,13 @@ person's Grux would. Records pass, latency and the Ollama runner's resident memo
 proven on the hardware it is for, not only on a GPU.
 
   python3 eval_local.py --model qwen3.5:4b --run results/mac-<stamp> [--think false] [--per-family N]
-                        [--set holdout|holdout2]
+                        [--set holdout|holdout2|holdout_v3]
 
 --set holdout scores S2's frozen held-out set (s2/holdout.py) instead of the S1 suite; --set holdout2 scores
 held-out version 2 (s2/holdout_v2.py), whose chat-shaped cases are sent the way a Grux 3.1.0 local turn sends
-them (local_turn.py) and scored against the tools that turn offered.
+them (local_turn.py) and scored against the tools that turn offered. --set holdout_v3 scores held-out version 3
+(s2/holdout_v3.py): the full Grux turn with every tool at its pinned tag (GRUX_SRC_V3), each job sent step by
+step with the scripted results of the steps before it; num_ctx defaults to that set's own window.
 """
 import argparse
 import json
@@ -46,8 +48,8 @@ def main():
     ap.add_argument("--run", required=True)
     ap.add_argument("--think", choices=["unset", "false"], default="false")
     ap.add_argument("--per-family", type=int, default=0, help="first N cases per job (0 = all)")
-    ap.add_argument("--num-ctx", type=int, default=16384)
-    ap.add_argument("--set", choices=["s1", "holdout", "holdout2"], default="s1")
+    ap.add_argument("--num-ctx", type=int, default=None, help="16384, or held-out v3's own window for holdout_v3")
+    ap.add_argument("--set", choices=["s1", "holdout", "holdout2", "holdout_v3"], default="s1")
     a = ap.parse_args()
     request, score, cases_fn, suffix = suite.request, suite.score, suite.cases, ""
     if a.set == "holdout":
@@ -58,6 +60,16 @@ def main():
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v2
         request, score, cases_fn, suffix = holdout_v2.request_v2, holdout_v2.score_v2, holdout_v2.cases, "-holdout2"
+    v3 = None
+    if a.set == "holdout_v3":
+        sys.path.insert(0, os.path.join(HERE, "s2"))
+        import holdout_v3 as v3
+        cases_fn, suffix = v3.cases, "-holdout_v3"
+        if a.num_ctx is not None:
+            v3.NUM_CTX = a.num_ctx
+        a.num_ctx = v3.NUM_CTX
+    if a.num_ctx is None:
+        a.num_ctx = 16384
     if a.think == "false":
         suite.THINK = False
     suite.NUM_CTX = a.num_ctx
@@ -85,6 +97,10 @@ def main():
         for c in cases:
             if c["id"] in have:
                 continue
+            if v3 is not None:
+                out.write(json.dumps(score_v3_row(v3, c, a.model)) + "\n")
+                out.flush()
+                continue
             req = request(c, a.model)
             t = time.time()
             try:
@@ -107,6 +123,20 @@ def main():
     meta["wall_s"] = round(time.time() - t0, 1)
     json.dump(meta, open(os.path.join(a.run, stem + suffix + ".meta.json"), "w"), indent=1)
     print(json.dumps(meta), flush=True)
+
+
+def score_v3_row(v3, c, model):
+    """One held-out v3 job, step by step (holdout_v3.run_case), as one row: pass, why, and each step's seconds and
+    prompt tokens, so a prompt Ollama trimmed shows as a prompt_tokens number below the request's size."""
+    t = time.time()
+    try:
+        ok, why, got, steps = v3.run_case(c, model, post)
+    except Exception as e:
+        return {"case": c["id"], "family": c["family"], "status": "skipped", "error": str(e)[:200],
+                "s": round(time.time() - t, 2)}
+    return {"case": c["id"], "family": c["family"], "status": "scored", "pass": ok, "why": why, "got": got,
+            "s": round(time.time() - t, 2), "steps": steps, "prompt_tokens": [x["prompt_tokens"] for x in steps],
+            "out_tokens": sum(x["out_tokens"] or 0 for x in steps)}
 
 
 def post_get(path):

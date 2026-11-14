@@ -8,6 +8,8 @@ cases already scored are skipped. Stops at the card's dollar cap.
 
   DAYTONA_API_KEY=<your key> \
     python eval_run.py --run results/s1-<stamp> [--models a,b] [--gpu H200,H100] [--cap 40]
+
+--set holdout_v3 --models a,b scores held-out v3 (s2/holdout_v3.py) instead, each job step by step.
 """
 import argparse
 import concurrent.futures as cf
@@ -52,7 +54,12 @@ def done_ids(path):
     return out
 
 
+V3 = None   # holdout_v3 when --set holdout_v3
+
+
 def one(box, model, case):
+    if V3 is not None:
+        return one_v3(box, model, case)
     req = suite.request(case, model)
     t0 = time.time()
     try:
@@ -67,6 +74,19 @@ def one(box, model, case):
     usage = raw.get("usage") or {}
     return {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why,
             "got": got, "s": secs, "out_tokens": usage.get("completion_tokens", raw.get("eval_count"))}
+
+
+def one_v3(box, model, case):
+    """A held-out v3 job, step by step through the box (holdout_v3.run_case); an error is retried by the caller."""
+    t0 = time.time()
+    try:
+        ok, why, got, steps = V3.run_case(case, model, lambda p, b: box.post(p, b, timeout=600))
+    except Exception as e:
+        return {"case": case["id"], "family": case["family"], "status": "error",
+                "error": f"{type(e).__name__}: {str(e)[:200]}", "s": round(time.time() - t0, 2)}
+    return {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why, "got": got,
+            "s": round(time.time() - t0, 2), "steps": steps, "prompt_tokens": [x["prompt_tokens"] for x in steps],
+            "out_tokens": sum(x["out_tokens"] or 0 for x in steps)}
 
 
 def run_model(box, model, cases, path, run_dir, parallel):
@@ -129,25 +149,37 @@ def main():
     ap.add_argument("--candidates", action="store_true", help="run candidates.json instead of the Cookbook catalog")
     ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
     ap.add_argument("--meter-lane", default="grux")
+    ap.add_argument("--set", choices=["s1", "holdout_v3"], default="s1",
+                    help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; needs --models")
     a = ap.parse_args()
-    global ONLY_THINKING
+    global ONLY_THINKING, V3
     ONLY_THINKING = a.only_thinking
     if a.think == "false":
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
-    cases = suite.cases()
+    if a.set == "holdout_v3":
+        sys.path.insert(0, os.path.join(HERE, "s2"))
+        import holdout_v3
+        V3 = holdout_v3
+    cases = V3.cases() if V3 else suite.cases()
     if a.limit:
         seen = {}
         cases = [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= a.limit]
-    import catalog  # S1 only (the Grux tree); train_run imports this module for BOX_EXTRA, PRICE, log
-    pool = catalog.candidates() if a.candidates else catalog.catalog()
-    models = [m["id"] for m in pool]
-    if a.models:
-        models = [m for m in models if m in a.models.split(",")]
-    models.sort(key=lambda mid: next(m["memGB"] for m in pool if m["id"] == mid))
-    json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models,
-               "gpu": a.gpu, "cap": a.cap, "think": a.think, "suite_sha": suite.fingerprint(cases)},
+    if V3:
+        if not a.models:
+            raise SystemExit("--set holdout_v3 needs --models (the catalog is the S1 Cookbook's)")
+        models = a.models.split(",")
+    else:
+        import catalog  # S1 only (the Grux tree); train_run imports this module for BOX_EXTRA, PRICE, log
+        pool = catalog.candidates() if a.candidates else catalog.catalog()
+        models = [m["id"] for m in pool]
+        if a.models:
+            models = [m for m in models if m in a.models.split(",")]
+        models.sort(key=lambda mid: next(m["memGB"] for m in pool if m["id"] == mid))
+    json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
+               "gpu": a.gpu, "cap": a.cap, "think": a.think,
+               "suite_sha": V3.case_sha(cases) if V3 else suite.fingerprint(cases)},
               open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     spent = 0.0
     attempts = 0
@@ -172,7 +204,8 @@ def main():
                     pending = []
                     break
                 model = pending[0]
-                path = os.path.join(run_dir, model.replace(":", "_").replace("/", "_") + ".jsonl")
+                path = os.path.join(run_dir, model.replace(":", "_").replace("/", "_")
+                                    + ("-holdout_v3" if V3 else "") + ".jsonl")
                 if run_model(box, model, cases, path, run_dir, a.parallel):
                     pending.pop(0)
                     log(f"{model}: done, cost so far ${spent + (time.time() - t0) / 3600 * price:.2f}", run_dir)

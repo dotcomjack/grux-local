@@ -134,7 +134,10 @@ def _strip_comments(src):
 _ESC = {"0": "\0", "\\": "\\", "t": "\t", "n": "\n", "r": "\r", '"': '"', "'": "'"}
 
 
-def _unescape(raw):
+def _unescape(raw, names=None):
+    """A Swift string literal's body. `\\(NAME)` is filled in only when NAME is a literal constant in `names`
+    (ShellRecoveryTools.swift interpolates its own `static let` numbers into descriptions); any other
+    interpolation raises."""
     out, i = [], 0
     while i < len(raw):
         c = raw[i]
@@ -148,7 +151,12 @@ def _unescape(raw):
             out.append(chr(int(raw[i + 3:j], 16)))
             i = j + 1
         elif nxt == "(":
-            raise ValueError("string interpolation in a tool literal: " + raw[i:i + 40])
+            j = raw.find(")", i)
+            key = raw[i + 2:j] if j > 0 else ""
+            if not names or not isinstance(names.get(key), (int, str)) or isinstance(names.get(key), bool):
+                raise ValueError("string interpolation in a tool literal: " + raw[i:i + 40])
+            out.append(str(names[key]))
+            i = j + 1
         else:
             out.append(_ESC[nxt])
             i += 2
@@ -203,14 +211,14 @@ class _Parser:
                 out.append(line[:-1] if cont else line)
                 out.append("" if cont or k == len(lines) - 1 else "\n")
             self.i = j + 3
-            return _unescape("".join(out))
+            return _unescape("".join(out), self.names)
         self.eat('"')
         j = self.i
         while self.s[j] != '"':
             j += 2 if self.s[j] == "\\" else 1
         raw = self.s[self.i:j]
         self.i = j + 1
-        return _unescape(raw)
+        return _unescape(raw, self.names)
 
     def value(self):
         v = self.term()
@@ -228,6 +236,10 @@ class _Parser:
         if m and m.group(0) in self.names:
             self.i = m.end()
             return self.names[m.group(0)]
+        m = re.compile(r"\[\s*String\s*:\s*Any\s*\]\(\)").match(self.s, self.i)
+        if m:   # an empty dictionary written as a typed initializer (ShellRecoveryTools.swift)
+            self.i = m.end()
+            return {}
         if c == "[":
             self.eat("[")
             if self.peek(":"):
@@ -313,17 +325,18 @@ def _body(src, header_re):
         j += 1
 
 
-def _read(path):
-    return _strip_comments(open(os.path.join(suite.SRC, path), encoding="utf-8").read())
+def _read(path, src=None):
+    return _strip_comments(open(os.path.join(src or suite.SRC, path), encoding="utf-8").read())
 
 
-def _group_file(type_name):
-    for root, _, files in os.walk(suite.SRC):
+def _group_file(type_name, src=None):
+    src = src or suite.SRC
+    for root, _, files in os.walk(src):
         for f in files:
             if f.endswith(".swift"):
                 p = os.path.join(root, f)
                 if re.search(rf"\b(enum|struct|class|actor) {type_name}\b", open(p, encoding="utf-8").read()):
-                    return os.path.relpath(p, suite.SRC)
+                    return os.path.relpath(p, src)
     raise ValueError("no declaration of " + type_name)
 
 
@@ -338,8 +351,10 @@ def _lets(body):
     return names
 
 
-def _tools_in(body):
-    out, i, names = [], 0, _lets(body)
+def _tools_in(body, outer=None):
+    """Every ClaudeTool literal in a function body. `outer` are the enclosing type's own literal constants
+    (ShellRecoveryTools.swift names its tools with `static let`); the function's lets win."""
+    out, i, names = [], 0, {**(outer or {}), **_lets(body)}
     for m in re.finditer(r"\bClaudeTool\(", body):
         if m.start() < i:
             continue
@@ -349,11 +364,11 @@ def _tools_in(body):
 
 
 @functools.lru_cache(maxsize=None)
-def _catalogue():
+def _catalogue(src=None):
     """ChatService.allTools() (ChatService.swift:1079-1555) in its own order: the inline tools and each
     appended group's claudeTools() literal. MCPManager.shared.claudeTools() is live state, empty until a
     server is set up (ToolCatalogueTests' header), so a fresh install, and this, add none."""
-    body = _body(_read("ChatService.swift"), r"static func allTools\(\) -> \[ClaudeTool\]")
+    body = _body(_read("ChatService.swift", src), r"static func allTools\(\) -> \[ClaudeTool\]")
     tools, groups, i = [], [], 0
     pat = re.compile(r"\bClaudeTool\(|append\(contentsOf:\s*([A-Za-z_][\w.]*)\.claudeTools\(\)\)")
     while True:
@@ -369,17 +384,19 @@ def _catalogue():
         if name == "MCPManager.shared":
             groups.append((name, None, 0))
             continue
-        path = _group_file(name)
-        src = _read(path)
-        decl = re.search(rf"\b(enum|struct|class|actor) {name}\b", src)
-        found = _tools_in(_body(src[decl.start():], r"func claudeTools\(\) -> \[ClaudeTool\]"))
+        path = _group_file(name, src)
+        text = _read(path, src)
+        decl = re.search(rf"\b(enum|struct|class|actor) {name}\b", text)
+        found = _tools_in(_body(text[decl.start():], r"func claudeTools\(\) -> \[ClaudeTool\]"),
+                          _lets(_body(text[decl.start():], rf"\b(?:enum|struct|class|actor) {name}\b")))
         groups.append((name, path, len(found)))
         tools += found
     return tools, groups
 
 
-def all_tools():
-    return _catalogue()[0]
+def all_tools(src=None):
+    """ChatService.allTools() read from `src` (a Grux-Mac/Sources/Grux tree), suite.SRC when not given."""
+    return _catalogue(src)[0]
 
 
 # --------------------------------------------------------------------------- ToolRelevance (ToolRelevance.swift)
