@@ -284,6 +284,7 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 import eval_local  # noqa: E402
 
 eval_local.BASE = f"http://127.0.0.1:{srv.server_address[1]}"
+eval_local.DISK_FREE_GB_MIN = 0   # the stub loads no model, so a full disk cannot swap-crash this run
 run_dir = tempfile.mkdtemp()
 sys.argv = ["eval_local.py", "--model", "stub:perfect", "--set", "holdout_v3", "--run", run_dir]
 eval_local.main()

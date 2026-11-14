@@ -15,8 +15,11 @@ step with the scripted results of the steps before it; num_ctx defaults to that 
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -25,6 +28,80 @@ sys.path.insert(0, HERE)
 import suite  # noqa: E402
 
 BASE = "http://127.0.0.1:11434"
+
+# The run stops itself before it can take the Mac down (test_eval_local_guard.py). Measured 2026-11-14 on the
+# Mini, 16 GB with 4 GB of disk free: held-out v3 at 65,536 ran it out of swap, macOS killed system services, the
+# login session reset and every LaunchAgent stopped until a password was typed.
+MEM_FREE_PCT_MIN = 10      # memory_pressure's own free percentage
+PRESSURE_CRITICAL = 4      # kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical
+DISK_FREE_GB_MIN = 8       # room for macOS to grow swap into; the Mini had 4.2
+GUARD_EVERY_S = 5
+
+
+def parse_swap_free_mb(text):
+    m = re.search(r"free = ([\d.]+)([MG])", text or "")
+    if not m:
+        return None
+    return round(float(m.group(1)) * (1024 if m.group(2) == "G" else 1), 2)
+
+
+def parse_free_pct(text):
+    m = re.search(r"memory free percentage: (\d+)%", text or "")
+    return int(m.group(1)) if m else None
+
+
+def mem_verdict(pressure_level, free_pct):
+    """None when the Mac can take more, else why it cannot. An unreadable number never trips alone."""
+    if pressure_level is not None and pressure_level >= PRESSURE_CRITICAL:
+        return f"kernel memory pressure critical (level {pressure_level})"
+    if free_pct is not None and free_pct < MEM_FREE_PCT_MIN:
+        return f"memory free {free_pct}% under the {MEM_FREE_PCT_MIN}% floor"
+    return None
+
+
+def disk_verdict(free_gb):
+    if free_gb is not None and free_gb < DISK_FREE_GB_MIN:
+        return f"disk free {free_gb} GB under {DISK_FREE_GB_MIN} GB: no room to swap into"
+    return None
+
+
+def _sh(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def read_mem():
+    """(kernel pressure level, free percentage), each None where this OS has no reader."""
+    level = _sh("sysctl", "-n", "kern.memorystatus_vm_pressure_level").strip()
+    return (int(level) if level.isdigit() else None), parse_free_pct(_sh("memory_pressure"))
+
+
+def guard_tick(read, unload, abort_path, exit=os._exit):
+    """One look. On a breach: unload the model (frees the memory at once), write why, stop the run with exit 7."""
+    level, free_pct = read()
+    why = mem_verdict(level, free_pct)
+    if why is None:
+        return
+    try:
+        unload()
+    finally:
+        json.dump({"why": why, "pressure_level": level, "free_pct": free_pct, "at": time.time(),
+                   "swap_free_mb": parse_swap_free_mb(_sh("sysctl", "vm.swapusage"))}, open(abort_path, "w"))
+        print("ABORT " + why, file=sys.stderr, flush=True)
+        exit(7)
+
+
+def start_guard(model, abort_path):
+    def unload():
+        post("/api/generate", {"model": model, "keep_alive": 0}, timeout=60)
+
+    def loop():
+        while True:
+            guard_tick(read_mem, unload, abort_path)
+            time.sleep(GUARD_EVERY_S)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def post(path, body, timeout=600):
@@ -83,6 +160,10 @@ def main():
     have = set()
     if os.path.exists(path):
         have = {json.loads(l)["case"] for l in open(path)}
+    refuse = disk_verdict(round(shutil.disk_usage(a.run).free / 1e9, 1)) or mem_verdict(*read_mem())
+    if refuse:
+        sys.exit("REFUSED " + refuse)
+    start_guard(a.model, os.path.join(a.run, stem + suffix + ".abort.json"))
     t0 = time.time()
     warm = post("/api/chat", {"model": a.model, "stream": False, "think": False,
                               "messages": [{"role": "user", "content": "ok"}],
