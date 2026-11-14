@@ -121,6 +121,10 @@ def main():
           f"; {len(near)} more contain a short held-out ask inside a longer one (reported, not blocked)")
     if hits:
         refuse(f"contaminated training data, first ids {hits[:5]}")
+    if not common.CHARTER and not a.dry_run:
+        iid = common.backlog("train", f"train {hf} with the Grux Local recipe on the win in {os.path.basename(a.decision)}")
+        print(f"TRAIN BACKLOGGED as {iid}: no swing charter (GRUX_SWING_CHARTER); this win rides the next charter")
+        sys.exit(common.BACKLOGGED)
     est = TRAIN_CAP_USD
     try:
         common.swing_guard(est, f"training {hf}")
@@ -131,7 +135,7 @@ def main():
     cmd = [sys.executable, os.path.join(common.RECIPE, "s2", "train_run.py"), "--run", run_dir, "--model", hf,
            "--data", data, "--rank", str(cfg["train"]["rank"]), "--epochs", str(cfg["train"]["epochs"]),
            "--cap", str(TRAIN_CAP_USD), "--tag", tag, "--skip-base", "--gpu", a.gpu,
-           "--meter", common.SPEND_TOOL, "--meter-lane", common.LANE, "--owner", common.OWNER, "--data-scan-vocab", vocab]
+           "--meter", common.SPEND_TOOL, "--meter-lane", common.LANE, "--charter", common.CHARTER, "--owner", common.OWNER, "--data-scan-vocab", vocab]
     print("train command:", " ".join(cmd))
     if a.dry_run:
         print("DRY RUN: every check passed; no box created, nothing written")

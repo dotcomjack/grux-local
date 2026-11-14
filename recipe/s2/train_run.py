@@ -228,6 +228,7 @@ def main():
     ap.add_argument("--micro-tokens", type=int, default=48000, help="token ceiling per forward pass")
     ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
     ap.add_argument("--meter-lane", default="grux-local")
+    ap.add_argument("--charter", default="", help="swing charter file the meter checks before a GPU box")
     ap.add_argument("--owner", default="grux", help="grux.factory owner label on every box")
     ap.add_argument("--data-scan-vocab", default="", help="identity vocabulary files for s2/data_scan.py (colon list)")
     a = ap.parse_args()
@@ -258,8 +259,9 @@ def main():
         if a.meter:   # a shared spend meter, reserved before every box create; exit 3 refuses the box
             gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
             hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
-            r = subprocess.run([sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
-                                "--gpu", gpu.replace("-", "")], capture_output=True, text=True)
+            cmd = [sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
+                   "--gpu", gpu.replace("-", ""), "--purpose", "train"] + (["--charter", a.charter] if a.charter else [])
+            r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
                 log(f"STOP: the spend meter refused the box (exit {r.returncode}): {r.stderr.strip()[:200]}", run_dir)
                 status = "meter refused"

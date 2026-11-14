@@ -25,6 +25,12 @@ GATE_REQUESTS = os.path.join(RESULTS, "gate-requests")
 READY = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_READY", "~/.grux/autopilot/ready"))
 HEARTBEAT = os.path.expanduser(os.environ.get("GRUX_AUTOPILOT_HEARTBEAT", "~/.grux/autopilot/heartbeat/grux-local.json"))
 SPEND_TOOL = os.path.expanduser(os.environ.get("DAYTONA_SPEND_TOOL", "~/.claude/tools/daytona_spend.py"))
+# Owner's rule, 2026-11-14: no GPU swing on one or two jobs. Every GPU box reserves under a swing charter that
+# carries many objectives and every queued job; without one, a job goes on the shared backlog and waits for the
+# next charter. The meter refuses a GPU reservation with no passing charter (exit 5).
+CHARTER = os.path.expanduser(os.environ.get("GRUX_SWING_CHARTER", ""))
+CHARTER_TOOL = os.path.expanduser(os.environ.get("SWING_CHARTER_TOOL", "~/.claude/tools/swing_charter.py"))
+BACKLOGGED = 6                # exit code: the job was put on the backlog, no box was created
 LANE = "grux-local"
 OWNER = "grux-local"          # the grux.factory owner label on every box this lane makes
 # Every model is scored on ONE pinned Ollama runtime, so a week's scores share a table with the weeks before it
@@ -153,6 +159,10 @@ class Refused(Exception):
     pass
 
 
+class CharterRefused(Refused):
+    """The meter refused the swing charter (exit 5): no box."""
+
+
 def swing_guard(est_usd, what):
     """Code-level refusal: one swing estimated over SWING_LIMIT_USD never creates a box; the owner decides."""
     if est_usd > SWING_LIMIT_USD:
@@ -164,15 +174,29 @@ def box_rate(gpu):
     return GPU_RATE[gpu] + BOX_EXTRA
 
 
-def reserve(hours, gpu):
+def reserve(hours, gpu, purpose="measure"):
     """Reserve on the shared weekly meter BEFORE a create. Exit 3 from the meter is a refusal: raise, create nothing."""
     gpu_key = gpu.replace("-", "")
-    r = subprocess.run([sys.executable, SPEND_TOOL, "reserve", "--lane", LANE, "--hours", f"{hours:.3f}",
-                        "--gpu", gpu_key], capture_output=True, text=True)
+    cmd = [sys.executable, SPEND_TOOL, "reserve", "--lane", LANE, "--hours", f"{hours:.3f}", "--gpu", gpu_key]
+    if CHARTER:
+        cmd += ["--charter", CHARTER]
+    cmd += ["--purpose", purpose]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode == 5:
+        raise CharterRefused("CHARTER " + (r.stderr.strip() or "REFUSED") + ". No box was created.")
     if r.returncode == 3:
         raise Refused("METER " + (r.stderr.strip() or "REFUSED: over the weekly cap") + ". No box was created.")
     if r.returncode != 0:
         raise Refused(f"meter failed (exit {r.returncode}): {r.stderr.strip()[:300]}. No box was created.")
+    return r.stdout.strip()
+
+
+def backlog(kind, what):
+    """Queue a job for the next swing charter instead of giving it a box of its own. Returns the item id."""
+    r = subprocess.run([sys.executable, CHARTER_TOOL, "backlog", "add", "--kind", kind, "--what", what,
+                        "--source", f"{LANE} lane, {today()}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Refused(f"backlog add failed (exit {r.returncode}): {r.stderr.strip()[:200]}. No box was created.")
     return r.stdout.strip()
 
 

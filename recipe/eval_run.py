@@ -156,7 +156,7 @@ def main():
     while pending and attempts < 3:
         attempts += 1
         hours = max(0.25, (a.cap - spent) / (PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA))
-        with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu) as rid, \
+        with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu, "measure") as rid, \
                 OllamaBox(a.gpu.split(","), "lme-" + os.path.basename(run_dir), ttl_minutes=a.ttl,
                           log=lambda m: log(m, run_dir), reservation=rid) as box:
             gpu = str(box.info.get("gpu_type")).split(".")[-1].replace("_", "-").strip("'>")
