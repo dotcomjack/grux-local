@@ -276,6 +276,12 @@ def main():
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     if not models:
         ap.error("give --models")
+    if not common.CHARTER:
+        for m in models:
+            iid = common.backlog("measure", f"score {m} on held-out v1 and v2 on the pinned Ollama runtime "
+                                            f"{common.OLLAMA_PIN}")
+            print(f"BACKLOGGED {m} as {iid}: no swing charter (GRUX_SWING_CHARTER), so no box of its own", flush=True)
+        sys.exit(common.BACKLOGGED)
     rate = max(common.box_rate(g) for g in gpus)
     est = round(len(models) * a.est_hours * rate, 2)
     try:

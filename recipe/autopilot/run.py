@@ -87,6 +87,8 @@ def main():
         week = week_run()
         alerts = list(week.get("alerts") or [])
         for st in week["steps"]:
+            if st.get("score_exit") == common.BACKLOGGED or st.get("exit") == common.BACKLOGGED:
+                continue                                  # queued for the next swing charter: expected, not an alert
             if st.get("score_exit") == 3:
                 alerts.append("the spend meter refused at least one scoring box (exit 3); a refused model retries next week")
             elif st.get("score_exit") == 4:
@@ -101,6 +103,8 @@ def main():
                     summary=(f"{week['watch'].get('candidates', 0)} candidate(s): {cands}; "
                              f"{week['watch'].get('new_candidates', 0)} without a verdict, "
                              f"{week['watch'].get('filtered', 0)} filtered; scored {len(week['scored'])} this run"
+                             + ("; queued on the swing backlog (no charter)" if any(
+                                 common.BACKLOGGED in (st.get("score_exit"), st.get("exit")) for st in week["steps"]) else "")
                              + (f"; ALERTS: {' | '.join(alerts)}" if alerts else "")))
     except BaseException as e:
         beat["summary"] = f"run.py failed: {type(e).__name__}: {str(e)[:300]}"
