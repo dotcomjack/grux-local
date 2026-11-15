@@ -43,7 +43,8 @@ class FakeBox:
         self.drops, self.posts = 0, 0
         self.info = {"gpu_type": "H200", "id": "fake"}
 
-    def pull(self, model):
+    def pull(self, model, timeout=3600):
+        self.pull_timeout = timeout
         return "success", 0.1
 
     def get(self, path, timeout=30):
@@ -76,6 +77,17 @@ def fake_one(ok=True, delay=0.0):
         time.sleep(delay)
         if not ok:
             return {"case": case["id"], "family": "f", "status": "error", "error": "boom", "s": 0}
+        return {"case": case["id"], "family": "f", "status": "scored", "pass": True, "s": 0}
+    return one
+
+
+def fake_one_warm_fails():
+    calls = {"n": 0}
+
+    def one(box, model, case):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"case": case["id"], "family": "f", "status": "error", "error": "out of memory", "s": 0}
         return {"case": case["id"], "family": "f", "status": "scored", "pass": True, "s": 0}
     return one
 
@@ -120,6 +132,48 @@ check("... and frees its disk once", box.drops == 1)
 box = FakeBox()
 eval_run.run_model(box, "m:1", CASES, os.path.join(run, "f.jsonl"), run, 4, drop=False)
 check("a model with a pass still to come keeps its disk", box.drops == 0)
+
+eval_run.one = fake_one_warm_fails()
+p = os.path.join(run, "g.jsonl")
+check("a model that loads small but fails its first real job is not scored",
+      eval_run.run_model(FakeBox(), "m:1", CASES, p, run, 4) is False and rows(p) == [])
+
+eval_run.one = fake_one()
+box = FakeBox()
+check("a cap already reached stops before the pull",
+      eval_run.run_model(box, "m:1", CASES, os.path.join(run, "h.jsonl"), run, 4, deadline=time.time() - 1) == "cap"
+      and not hasattr(box, "pull_timeout"))
+box = FakeBox()
+eval_run.run_model(box, "m:1", CASES, os.path.join(run, "i.jsonl"), run, 4, deadline=time.time() + 120)
+check("the pull's timeout is bounded by the money left", box.pull_timeout <= 121)
+
+sp = os.path.join(run, "skips.jsonl")
+with open(sp, "w") as f:
+    for i in range(8):
+        f.write(json.dumps({"case": f"s{i}", "status": "scored", "pass": True}) + "\n")
+    for i in range(2):
+        f.write(json.dumps({"case": f"k{i}", "status": "skipped"}) + "\n")
+check("a skipped case counts as a fail, never leaves the denominator", eval_run.pass_pct(sp) == (8, 10, 2))
+
+eval_run.one = fake_one(ok=False)
+box = FakeBox()
+box.evicted = lambda: False
+calls_ok = {"n": 0}
+
+
+def mostly_fail(b, model, case):
+    calls_ok["n"] += 1
+    if calls_ok["n"] <= 6:
+        return {"case": case["id"], "family": "f", "status": "scored", "pass": True, "s": 0}
+    return {"case": case["id"], "family": "f", "status": "error", "error": "wedged", "s": 0}
+
+
+eval_run.one = mostly_fail
+many = [{"id": f"m{i}", "family": "f"} for i in range(40)]
+check("a server that stops answering mid-pass stops the pass instead of writing skips",
+      eval_run.run_model(box, "m:1", many, os.path.join(run, "j.jsonl"), run, 1) is False
+      and sum(r["status"] == "skipped" for r in rows(os.path.join(run, "j.jsonl"))) <= eval_run.skip_max(40) + 1)
+eval_run.one = fake_one()
 
 # main: passes and the kill rule, with a fake box and a fake meter
 calls = []

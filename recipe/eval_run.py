@@ -25,6 +25,7 @@ from gpu_box import MLX_IMAGE, MLX_SETUP, OLLAMA_VERSION, OllamaBox  # noqa: E40
 import meter  # noqa: E402
 
 ONLY_THINKING = False
+TEARDOWN_USD = lambda price: price * 0.05   # about 3 minutes of delete and in-flight jobs kept out of the cap
 # Listed GPU rate per hour, plus what every GPU box also bills: 16 vCPU at $0.0504 and 192 GB RAM at
 # $0.0162 an hour, $3.92 (measured 2026-10-22: the wallet moved $23.04 where GPU rates alone said $12).
 BOX_EXTRA = 16 * 0.0504 + 192 * 0.0162
@@ -89,14 +90,14 @@ def one_v3(box, model, case):
             "out_tokens": sum(x["out_tokens"] or 0 for x in steps)}
 
 
-def probe(box, model, expect_digest=None):
+def probe(box, model, expect_digest=None, timeout=900):
     """Step 0 for every model, before any case: does it load and answer, on which runner, with which digest.
     Returns (info, reason); reason is None when the model may be scored."""
     try:
         tags = box.get("/api/tags").get("models", [])
         digest = next((m.get("digest") for m in tags if model in (m.get("name"), m.get("model"))), None)
         r = box.post("/api/generate", {"model": model, "prompt": "ok", "stream": False,
-                                       "options": {"num_predict": 4, "num_ctx": 4096}}, timeout=900)
+                                       "options": {"num_predict": 4, "num_ctx": 4096}}, timeout=max(1, timeout))
         ps = box.get("/api/ps").get("models", [])
         m = next((x for x in ps if model in (x.get("name"), x.get("model"))), {})
         info = {"digest": digest, "runner": m.get("runner"), "format": (m.get("details") or {}).get("format"),
@@ -114,6 +115,15 @@ def probe(box, model, expect_digest=None):
 EARLY_ERRORS = 4   # a model whose first 4 cases all error is stopped, not run through all of them
 
 
+def skip_max(n):
+    """Skipped cases a pass may carry and still count: 5 or 2%, whichever is larger. Past it the pass is damaged."""
+    return max(5, int(0.02 * n))
+
+
+def remaining(deadline, cap_s):
+    return cap_s if deadline is None else max(0.0, min(cap_s, deadline - time.time()))
+
+
 def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None):
     """True when the model is done, False when it could not run, "cap" when the dollar cap was reached mid-model."""
     have = done_ids(path)
@@ -121,11 +131,15 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
     if not todo:
         log(f"{model}: already complete ({len(have)} cases)", run_dir)
         return True
-    status, pull_s = box.pull(model)
+    if deadline is not None and time.time() >= deadline:
+        return "cap"
+    status, pull_s = box.pull(model, timeout=max(60, remaining(deadline, 3600)))
     log(f"{model}: pull {status} in {pull_s}s; {len(todo)} cases to run", run_dir)
+    if deadline is not None and time.time() >= deadline:
+        return "cap"
     if status != "success":
         return False
-    info, why_not = probe(box, model, expect_digest)
+    info, why_not = probe(box, model, expect_digest, timeout=remaining(deadline, 900))
     try:
         show = box.post("/api/show", {"model": model}, timeout=60)
         caps = {"capabilities": show.get("capabilities"), "details": show.get("details"),
@@ -141,8 +155,13 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
         log(f"{model}: does not think; nothing to measure with think false", run_dir)
         box.drop(model)
         return True
-    warm = one(box, model, cases[0])  # first call carries the model load; never timed
+    if deadline is not None and time.time() >= deadline:
+        return "cap"
+    warm = one(box, model, cases[0])  # first call carries the model load at the real window; never timed
     log(f"{model}: warm {warm['s']}s ({warm['status']})", run_dir)
+    if warm["status"] == "error":   # loads at 4,096 but not at the real window: no pool of slow failures
+        log(f"{model}: the first real job failed ({warm.get('error')}); not scored", run_dir)
+        return False
     retry, seen, result = [], 0, True
     pool = cf.ThreadPoolExecutor(parallel)
     futs = [pool.submit(one, box, model, c) for c in todo]
@@ -165,6 +184,7 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
                     result = "cap"
                     break
             if result is True:
+                skipped = 0
                 for cid in retry:
                     if box.evicted():
                         return False
@@ -173,9 +193,15 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
                         return "cap"
                     r = one(box, model, next(c for c in cases if c["id"] == cid))
                     if r["status"] == "error":
+                        if box.evicted():   # the box went away mid-call: a new box reruns it, never a skip
+                            return False
                         r["status"] = "skipped"
+                        skipped += 1
                     out.write(json.dumps(r) + "\n")
                     out.flush()
+                    if skipped > skip_max(len(cases)):
+                        log(f"{model}: {skipped} cases failed twice; the server is not answering, pass stopped", run_dir)
+                        return False
     finally:
         for f in futs:
             f.cancel()
@@ -186,10 +212,12 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
 
 
 def pass_pct(path):
-    """(passed, scored) over a results file's scored rows."""
+    """(passed, counted, skipped). A skipped case counts as a fail: leaving it out of the denominator would
+    inflate the score of a model that times out on the hardest jobs."""
     rows = [json.loads(l) for l in open(path)] if os.path.exists(path) else []
     scored = [r for r in rows if r.get("status") == "scored"]
-    return sum(bool(r.get("pass")) for r in scored), len(scored)
+    skipped = sum(r.get("status") == "skipped" for r in rows)
+    return sum(bool(r.get("pass")) for r in scored), len(scored) + skipped, skipped
 
 
 def main():
@@ -256,6 +284,8 @@ def main():
     while pending and attempts < 3:
         attempts += 1
         hours = max(0.25, (a.cap - spent) / (PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA))
+        t_enter = time.time()   # the box bills from its create, so the cap clock starts here, not after setup
+        price = PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA
         with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu, "measure") as rid, \
                 OllamaBox(a.gpu.split(","), "lme-" + os.path.basename(run_dir), ttl_minutes=a.ttl,
                           log=lambda m: log(m, run_dir), reservation=rid, num_parallel=a.parallel,
@@ -266,8 +296,8 @@ def main():
             price = PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA
             log(f"box {box.info.get('id')} {gpu} at ${price}/h, spent so far ${spent:.2f}, "
                 f"ollama {box.get('/api/version').get('version')}", run_dir)
-            t0 = time.time()
-            deadline = t0 + max(0.0, a.cap - spent) / price * 3600
+            t0 = t_enter
+            deadline = t0 + max(0.0, a.cap - spent - TEARDOWN_USD(price)) / price * 3600
             while pending:
                 cost_now = spent + (time.time() - t0) / 3600 * price
                 if cost_now >= a.cap:
@@ -286,10 +316,11 @@ def main():
                     break
                 if got:
                     pending.pop(0)
-                    passed, scored = pass_pct(path)
-                    log(f"{model} pass {k}: done, {passed} of {scored} scored passed, cost so far "
-                        f"${spent + (time.time() - t0) / 3600 * price:.2f}", run_dir)
-                    if model == a.kill_model and k == 1 and scored and 100.0 * passed / scored >= a.kill_at > 0:
+                    passed, scored, skipped = pass_pct(path)
+                    log(f"{model} pass {k}: done, {passed} of {scored} passed ({skipped} skipped, counted as fails), "
+                        f"cost so far ${spent + (time.time() - t0) / 3600 * price:.2f}", run_dir)
+                    if (model == a.kill_model and k == 1 and scored and skipped <= skip_max(len(cases))
+                            and 100.0 * passed / scored >= a.kill_at > 0):
                         log(f"KILL: {model} scored {100.0 * passed / scored:.1f}%, at or above {a.kill_at}%: "
                             "no headroom, the run stops (charter kill rule)", run_dir)
                         not_run, stopped_by, pending = list(pending), "kill rule", []
@@ -300,7 +331,7 @@ def main():
                 else:
                     log(f"{model}: could not run; recorded and skipped (all its passes)", run_dir)
                     pending = [(m, j) for m, j in pending if m != model]
-            spent += (time.time() - t0) / 3600 * price
+        spent += (time.time() - t_enter) / 3600 * price   # after the with: the delete is billed too
         log(f"box closed: left {box.info.get('boxes_left')}, spent ${spent:.2f}", run_dir)
     json.dump({"spent_estimate": round(spent, 2), "unfinished": pending + not_run, "stopped_by": stopped_by},
               open(os.path.join(run_dir, "finish.json"), "w"), indent=1)
