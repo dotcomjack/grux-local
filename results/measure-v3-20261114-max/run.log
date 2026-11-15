@@ -1,0 +1,13 @@
+21:38:40 box up: {'id': '6039164f-2bbc-40e7-92ec-d245b971390d', 'gpu_type': <GpuType.H200: 'H200'>, 'gpu': 1, 'target': 'earth', 'spot': True, 'cpu': 16, 'memory': 192, 'disk': 512, 'create_errors': [], 'created_s': 4.1, 'started_at': 1794710273.735188, 'setup_s': 41.1, 'ollama_version': '0.40.8', 'nvidia_smi': 'NVIDIA H200, 143771 MiB'}
+21:38:40 box 6039164f-2bbc-40e7-92ec-d245b971390d H200 at $6.5268/h, spent so far $0.00, ollama 0.40.8
+21:40:57 qwen3.5:122b-a10b: pull success in 137.1s; 321 cases to run
+21:42:22 qwen3.5:122b-a10b: probe {'digest': '8b9d11d807c57feb1e2ecb0d6cbf40334c37dcc3523bed5540af4f927f112a37', 'runner': 'llamacpp', 'format': 'gguf', 'quant': 'Q4_K_M', 'size_vram': 79299388373, 'answered': True} -> ok; capabilities ['completion', 'vision', 'tools', 'thinking']
+21:43:05 qwen3.5:122b-a10b: warm 43.3s (scored)
+21:57:23 qwen3.5:122b-a10b pass 1: done, 245 of 321 passed (0 skipped, counted as fails), cost so far $2.13
+21:57:23 qwen3.5:122b-a10b: pull success in 0.5s; 321 cases to run
+21:57:40 qwen3.5:122b-a10b: probe {'digest': '8b9d11d807c57feb1e2ecb0d6cbf40334c37dcc3523bed5540af4f927f112a37', 'runner': 'llamacpp', 'format': 'gguf', 'quant': 'Q4_K_M', 'size_vram': 79299388373, 'answered': True} -> ok; capabilities ['completion', 'vision', 'tools', 'thinking']
+21:58:08 qwen3.5:122b-a10b: warm 27.39s (scored)
+22:12:07 qwen3.5:122b-a10b pass 2: done, 250 of 321 passed (0 skipped, counted as fails), cost so far $3.73
+22:12:14 box down: seconds 2053.6, left []
+22:12:14 box closed: left [], spent $3.74
+22:12:14 FINISHED: spent about $3.74, unfinished []

@@ -1,0 +1,35 @@
+20:38:27 box up: {'id': '2b0f13c1-799d-4ada-be11-c755518838a4', 'gpu_type': <GpuType.H200: 'H200'>, 'gpu': 1, 'target': 'earth', 'spot': True, 'cpu': 16, 'memory': 192, 'disk': 512, 'create_errors': [], 'created_s': 144.0, 'started_at': 1794706645.852107, 'setup_s': 51.3, 'ollama_version': '0.40.8', 'nvidia_smi': 'NVIDIA H200, 143771 MiB'}
+20:38:28 box 2b0f13c1-799d-4ada-be11-c755518838a4 H200 at $6.5268/h, spent so far $0.00, ollama 0.40.8
+20:40:12 gruxai.com/grux/grux-local:9b: pull success in 104.3s; 321 cases to run
+20:45:08 gruxai.com/grux/grux-local:9b: probe {'digest': '357e4bd45ff0030a6dbfdf5a7650b745418f1dcdb7eeed473b4078987f111837', 'runner': 'mlx', 'format': 'safetensors', 'quant': '', 'size_vram': 7247102440, 'answered': True} -> ok; capabilities ['completion', 'vision', 'tools', 'thinking']
+20:46:11 gruxai.com/grux/grux-local:9b: warm 62.2s (scored)
+20:54:43 gruxai.com/grux/grux-local:9b pass 1: done, 214 of 321 passed (0 skipped, counted as fails), cost so far $2.14
+20:54:43 gruxai.com/grux/grux-local:9b: pull success in 0.4s; 321 cases to run
+20:54:45 gruxai.com/grux/grux-local:9b: probe {'digest': '357e4bd45ff0030a6dbfdf5a7650b745418f1dcdb7eeed473b4078987f111837', 'runner': 'mlx', 'format': 'safetensors', 'quant': '', 'size_vram': 16842932712, 'answered': True} -> ok; capabilities ['completion', 'vision', 'tools', 'thinking']
+20:54:47 gruxai.com/grux/grux-local:9b: warm 2.21s (scored)
+21:02:18 gruxai.com/grux/grux-local:9b pass 2: done, 213 of 321 passed (0 skipped, counted as fails), cost so far $2.97
+21:03:47 qwen3.5:35b-a3b-nvfp4: pull success in 89.1s; 321 cases to run
+21:04:58 qwen3.5:35b-a3b-nvfp4: probe {'digest': 'fb2d58ab6d451bbcdddbdddf8c2c10524f0a704ebe48dc87f2ddb957e9d5e5ed', 'runner': 'mlx', 'format': 'safetensors', 'quant': 'nvfp4', 'size_vram': 22025182112, 'answered': True} -> ok; capabilities ['completion', 'vision', 'thinking', 'tools']
+21:05:04 qwen3.5:35b-a3b-nvfp4: warm 5.74s (error)
+21:05:04 qwen3.5:35b-a3b-nvfp4: the first real job failed (HTTPError: HTTP Error 502: Bad Gateway); not scored
+21:05:04 box evicted during qwen3.5:35b-a3b-nvfp4; a new box resumes it
+21:05:04 delete error: Failed to remove sandbox: Sandbox state change in progress (the 20 minute TTL still ends it)
+21:05:10 box down: seconds 1659.0, left []
+21:05:10 box closed: left [], spent $3.28
+21:08:31 box up: {'id': '5709e95e-07f2-4f22-8b60-11b52f5cb321', 'gpu_type': <GpuType.H200: 'H200'>, 'gpu': 1, 'target': 'earth', 'spot': True, 'cpu': 16, 'memory': 192, 'disk': 512, 'create_errors': [], 'created_s': 145.0, 'started_at': 1794708455.1723268, 'setup_s': 51.2, 'ollama_version': '0.40.8', 'nvidia_smi': 'NVIDIA H200, 143771 MiB'}
+21:08:32 box 5709e95e-07f2-4f22-8b60-11b52f5cb321 H200 at $6.5268/h, spent so far $3.28, ollama 0.40.8
+21:10:16 qwen3.5:35b-a3b-nvfp4: pull success in 104.4s; 321 cases to run
+21:16:20 qwen3.5:35b-a3b-nvfp4: probe {'digest': 'fb2d58ab6d451bbcdddbdddf8c2c10524f0a704ebe48dc87f2ddb957e9d5e5ed', 'runner': 'mlx', 'format': 'safetensors', 'quant': 'nvfp4', 'size_vram': 22025182112, 'answered': True} -> ok; capabilities ['completion', 'vision', 'thinking', 'tools']
+21:17:55 qwen3.5:35b-a3b-nvfp4: warm 95.25s (scored)
+21:26:44 qwen3.5:35b-a3b-nvfp4 pass 1: done, 180 of 321 passed (1 skipped, counted as fails), cost so far $5.63
+21:26:45 qwen3.5:35b-a3b-nvfp4: pull success in 0.8s; 321 cases to run
+21:26:46 qwen3.5:35b-a3b-nvfp4: probe {'digest': 'fb2d58ab6d451bbcdddbdddf8c2c10524f0a704ebe48dc87f2ddb957e9d5e5ed', 'runner': 'mlx', 'format': 'safetensors', 'quant': 'nvfp4', 'size_vram': 31168785312, 'answered': True} -> ok; capabilities ['completion', 'vision', 'thinking', 'tools']
+21:26:50 qwen3.5:35b-a3b-nvfp4: warm 3.91s (scored)
+21:35:06 qwen3.5:35b-a3b-nvfp4 pass 2: done, 191 of 321 passed (1 skipped, counted as fails), cost so far $6.54
+21:35:07 qwen3.5:122b-a10b-q4: pull attempt 1 failed: error HTTP 500: {"error":"pull model manifest: file does not exist"}
+21:35:17 qwen3.5:122b-a10b-q4: pull attempt 2 failed: error HTTP 500: {"error":"pull model manifest: file does not exist"}
+21:35:27 qwen3.5:122b-a10b-q4: pull error HTTP 500: {"error":"pull model manifest: file does not exist"} in 21.0s; 321 cases to run
+21:35:28 qwen3.5:122b-a10b-q4: could not run; recorded and skipped (all its passes)
+21:35:34 box down: seconds 1672.9, left []
+21:35:34 box closed: left [], spent $6.59
+21:35:34 FINISHED: spent about $6.59, unfinished []
