@@ -3,7 +3,8 @@
 side's text). A training case is excluded when its user-facing text equals a held-out case's, or shares
 any 8-word run with one. The held-out list is version 1 (s2/holdout.py), version 2 (s2/holdout_v2.py) and
 version 3 (s2/holdout_v3.py), the three the swing charter names.
-Writes s2/train_exclude.json; gen_data.py skips those ids.
+Writes s2/train_exclude.json; gen_data.py skips those ids. The v3-shaped bank (s2/train_bank_v3.py) is checked by
+v3_excluded, every text of a job one at a time, and never lands in train_exclude.json (its ids are its own).
 
   python3 s2/contamination.py
 """
@@ -45,6 +46,183 @@ def held_out():
     v3 = [re.findall(r"[a-z0-9']+", t.lower()) for c in holdout_v3.cases() for t in holdout_v3.case_texts(c)]
     return ([texts(c) for c in holdout.cases()] + [texts(c) for c in holdout_v2.cases()]
             + [w for w in v3 if len(w) >= 3])   # not "Got it." as a whole text
+
+
+# Lines Grux itself prints at holdout_v3.GRUX_TAG, whole, with only counts and a day as slots: (the line, the source
+# file, the literal pieces of it that file holds, which test_train_bank_v3 checks). A v3-shaped training case carries
+# them in a tool result exactly as held-out v3 does, so they are product output, not held-out content. Only a whole
+# line that matches one of them is set aside; every other line, and every word around it, is still checked.
+RUNTIME_LINES = [
+    (r"ok: \d+ snapshots? from the last \d+ days(?:, showing \d+)?, the ones taken before a destructive command "
+     r"first, then newest first\.", "ShellTool/ShellRecoveryTools.swift",
+     (" from the last ", ", the ones taken before a destructive command first, then newest first.")),
+    (r"ok: no snapshot from the last \d+ days can be restored from chat\.", "ShellTool/ShellRecoveryTools.swift",
+     ("ok: no snapshot from the last ", " days can be restored from chat.")),
+    (r"pending: this is waiting for your OK in Approvals\. Nothing is sent or changed until you approve it\.",
+     "Jax/JaxToolGate.swift",
+     ("pending: this is waiting for your OK in Approvals.", " Nothing is sent or changed until you approve it.")),
+    (r"ok: \d+ lines? (?:today|yesterday|[A-Z][a-z]+day)(?: with outcome refused)?, \d+ shell commands? ran ok "
+     r"(?:today|yesterday|[A-Z][a-z]+day)\.", "ShellTool/ShellRecoveryTools.swift",
+     (" with outcome ", " shell command", " ran ok ")),
+]
+_RUNTIME = re.compile("|".join(f"(?:{p})" for p, _, _ in RUNTIME_LINES))
+
+
+def v3_texts(c):
+    """Every text a held-out-v3-shaped case shows a model (holdout_v3.case_texts: the ask, each earlier turn, each
+    scripted call and result), one per message, with RUNTIME_LINES set aside line by line."""
+    out = []
+    for t in holdout_v3.case_texts(c):
+        t = "\n".join(line for line in t.split("\n") if not _RUNTIME.fullmatch(line.strip()))
+        if t.strip():
+            out.append(t)
+    return out
+
+
+def v3_excluded(cases):
+    """{id: why} for each v3-shaped training case (s2/train_bank_v3.py) that shares a whole text (3 words or more)
+    or any 8-word run with held-out v1, v2 or v3, one text at a time, by held_out()'s reading of those sets."""
+    held = held_out()
+    whole = {" ".join(w) for w in held if len(w) >= 3}
+    runs = set().union(*[grams(w) for w in held])
+    memo, out = {}, {}
+    for c in cases:
+        for t in v3_texts(c):
+            if t not in memo:
+                ws = re.findall(r"[a-z0-9']+", t.lower())
+                joined = " ".join(ws)
+                shared = sorted(grams(ws) & runs)
+                memo[t] = ("same text: " + joined[:60] if len(ws) >= 3 and joined in whole
+                           else shared[0] if shared else None)
+            if memo[t]:
+                out[c["id"]] = memo[t]
+                break
+    return out
+
+
+# --------------------------------------------------------------------------- the template-clone gate
+# The 8-word rule cannot see "same template, other slot values". skeleton() strips the slot values (anything in
+# backticks or quotes, URLs, addresses and paths, times, amounts and numbers, day and month names, and capitalized
+# words inside a sentence, which are the names), so two lines from one template read the same; near_v3 scores a
+# line by its highest word-4-gram Jaccard against any held-out v3 text, and a line too short for a 4-gram by an
+# exact match of its whole skeleton. test_train_bank_v3 sets the threshold.
+# What it does not see: a lowercase noun swapped for another ("a pizza stone" for "a kiln") keeps the shape but
+# changes the words, so the gate proves there is no near-identical clone of a held-out line, not that no line
+# shares a held-out line's idea. That second guard is the rewrite itself, read by a reviewer.
+
+_DAYS = ("monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|"
+         "august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|today|"
+         "tomorrow|yesterday|tonight")
+_SLOTS = [(re.compile(r"`[^`]*`"), " C "),
+          (re.compile(r"(?<![A-Za-z])['\"‘“][^'\"’”\n]{2,80}['\"’”](?![A-Za-z])"), " Q "),
+          (re.compile(r"https?://\S+|\S+@\S+\.\S+|~?/[\w./*-]+|\b[\w-]+\.(?:example|com|org|net|gov|be)\S*"), " U "),
+          (re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:[AaPp]\.?[Mm]\.?)(?![a-z])|\b\d{1,2}:\d{2}\b"), " T "),
+          (re.compile(r"\$[\d,.]+|\b\d[\d,.]*\b"), " # ")]
+_DAYS_RE = re.compile(rf"(?i)\b(?:{_DAYS})\b")
+_NAME = re.compile(r"(?<=[A-Za-z0-9,;)'’] )[A-Z][A-Za-z'’-]*")   # a capital that is not the first word of a sentence
+
+
+def skeleton(text):
+    """The words of text with every slot value replaced by a placeholder, runs of one placeholder collapsed."""
+    t = text
+    for rx, ph in _SLOTS:
+        t = rx.sub(ph, t)
+    t = _DAYS_RE.sub(" D ", t)
+    t = _NAME.sub("N", t)
+    out = []
+    for w in re.findall(r"[A-Za-z']+|[#]", t):
+        w = w if w in ("C", "Q", "U", "T", "D", "N", "#") else w.lower()
+        if not (out and w == out[-1] and w in ("C", "Q", "U", "T", "D", "N", "#")):
+            out.append(w)
+    return out
+
+
+def grams4(ws):
+    return {" ".join(ws[i:i + 4]) for i in range(len(ws) - 3)}
+
+
+def v3_reference():
+    """[(case id, skeleton 4-grams, whole skeleton)] for every held-out v3 text a model reads, one per text."""
+    out = []
+    for c in holdout_v3.cases():
+        for t in holdout_v3.case_texts(c):
+            sk = skeleton(t)
+            if sk:
+                out.append((c["id"], grams4(sk), " ".join(sk)))
+    return out
+
+
+def near_v3(lines, ref=None, skip_case=None):
+    """{line: (highest Jaccard, held-out case id)} over held-out v3's texts (v3_reference). skip_case(line) names a
+    held-out case id whose texts are left out (for scoring held-out's own lines against the rest of it)."""
+    ref = v3_reference() if ref is None else ref
+    index, shorts = {}, {}
+    for i, (cid, g, whole) in enumerate(ref):
+        for x in g:
+            index.setdefault(x, []).append(i)
+        if not g:
+            shorts.setdefault(whole, []).append(cid)
+    out = {}
+    for line in lines:
+        sk = skeleton(line)
+        g = grams4(sk)
+        best, who = 0.0, None
+        own = skip_case(line) if skip_case else None
+        if not g:   # under 4 words: the same short skeleton as a held-out text is a clone
+            who = next((cid for cid in shorts.get(" ".join(sk), ()) if cid != own), None)
+            best = 1.0 if who else 0.0
+        if g:
+            hits = {}
+            for x in g:
+                for i in index.get(x, ()):
+                    hits[i] = hits.get(i, 0) + 1
+            for i, n in hits.items():
+                if ref[i][0] == own:
+                    continue
+                j = n / len(g | ref[i][1])
+                if j > best:
+                    best, who = j, ref[i][0]
+        out[line] = (best, who)
+    return out
+
+
+SHORT = 12   # a line under this many skeleton words also gets the short-line score
+
+
+def grams3(ws):
+    return {" ".join(ws[i:i + 3]) for i in range(len(ws) - 2)}
+
+
+def near_v3_short(lines, skip_case=None):
+    """{line: (highest containment, held-out case id)} for each line under SHORT skeleton words: the share of the
+    line's word-3-grams found in one held-out v3 text. A one-word swap in a six-word line keeps half of its 3-grams
+    and scores 0.5, where its 4-gram Jaccard reads 0.20. Longer lines score (0.0, None)."""
+    ref = []
+    for c in holdout_v3.cases():
+        for t in holdout_v3.case_texts(c):
+            g = grams3(skeleton(t))
+            if g:
+                ref.append((c["id"], g))
+    index = {}
+    for i, (_, g) in enumerate(ref):
+        for x in g:
+            index.setdefault(x, []).append(i)
+    out = {}
+    for line in lines:
+        sk = skeleton(line)
+        g = grams3(sk)
+        best, who = 0.0, None
+        if g and len(sk) < SHORT:
+            own = skip_case(line) if skip_case else None
+            hits = {}
+            for x in g:
+                for i in index.get(x, ()):
+                    hits[i] = hits.get(i, 0) + 1
+            for i, n in hits.items():
+                if ref[i][0] != own and n / len(g) > best:
+                    best, who = n / len(g), ref[i][0]
+        out[line] = (best, who)
+    return out
 
 
 def main():
