@@ -33,7 +33,9 @@ def _named(x, names):
         if x in names:
             yield x
     elif isinstance(x, dict):
-        for v in x.values():
+        for k, v in x.items():          # an alternative is a key: {"search_memory": [...checks]}
+            if isinstance(k, str) and k in names:
+                yield k
             yield from _named(v, names)
     elif isinstance(x, (list, tuple)):
         for v in x:

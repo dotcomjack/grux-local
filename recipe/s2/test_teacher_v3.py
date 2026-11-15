@@ -118,6 +118,27 @@ for c in tb.kept()[::40]:
     body = tp.student_body(c, 0)
     sizes.append((len(json.dumps(body["tools"])) + sum(len(m["content"] or "") for m in body["messages"])) / 4)
 check("every tool a job names is offered, planted and forbidden ones included", ok_named)
+
+
+def named_plain(c):
+    """Collected without train_prompt: every call, alternative, forbidden, allowed and target tool, by plain loops."""
+    out = set()
+    if isinstance(c.get("target"), str):
+        out.add(c["target"])
+    for st in c["steps"]:
+        if st.get("call"):
+            out.add(st["call"])
+        out |= set((st.get("alt") or {}).keys())
+        out |= set(st.get("forbid") or [])
+        rep = st.get("reply") or {}
+        out |= set(rep.get("forbid") or []) | set(rep.get("allow") or [])
+    return out & set(h.tool_names())
+
+
+miss = [(c["id"], sorted(named_plain(c) - set(tp.tool_names_for(c)))) for c in tb.kept()
+        if named_plain(c) - set(tp.tool_names_for(c))]
+check(f"every call, alternative, forbidden and allowed tool is offered, read independently ({len(miss)} jobs miss one)",
+      not miss)
 check(f"each job offers {tp.TOOLS_PER_JOB} distinct tools, not {full}", ok_size)
 sizes.sort()
 check(f"a training prompt is about 12,000 tokens, not 31,000 (median {int(sizes[len(sizes) // 2])}, max {int(sizes[-1])})",
