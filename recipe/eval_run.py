@@ -12,6 +12,7 @@ cases already scored are skipped. Stops at the card's dollar cap.
 --set holdout_v3 --models a,b scores held-out v3 (s2/holdout_v3.py) instead, each job step by step.
 """
 import argparse
+import urllib.error
 import concurrent.futures as cf
 import json
 import os
@@ -111,6 +112,50 @@ def probe(box, model, expect_digest=None, timeout=900):
     if not info["answered"]:
         return info, "loaded but gave no answer"
     return info, None
+
+
+def manifest_url(model):
+    """Where a registry serves this tag's manifest. Forms: name:tag, user/name:tag (library and users on
+    registry.ollama.ai), host[:port]/ns/name:tag (its own host), and any of them pinned with @sha256:..."""
+    ref, _, digest = model.partition("@")
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    name, tag = (ref[:colon], ref[colon + 1:]) if colon > slash else (ref, "latest")
+    parts = name.split("/")
+    first = parts[0]
+    if len(parts) >= 2 and ("." in first or ":" in first or first == "localhost"):
+        host, path = first, "/".join(parts[1:])
+    else:
+        host, path = "registry.ollama.ai", name if "/" in name else "library/" + name
+    return f"https://{host}/v2/{path}/manifests/{digest or tag}"
+
+
+def missing_models(models, fetch=None):
+    """(missing, unverified): tags whose registry answers 404, and tags it could not be asked about (an error, a
+    401, a 5xx). Checked before any box exists: 2026-11-14 a tag listed on ollama.com (qwen3.5:122b-a10b-q4) had
+    no manifest, and the box only found out after scoring two other models."""
+    import urllib.request
+
+    def default_fetch(url):
+        r = urllib.request.Request(url, method="GET", headers={   # the default Python agent is refused at the edge
+            "Accept": "application/vnd.docker.distribution.manifest.v2+json", "User-Agent": "grux-local-eval/1"})
+        try:
+            with urllib.request.urlopen(r, timeout=30) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:
+            return None
+
+    fetch = fetch or default_fetch
+    missing, unverified = [], []
+    for m in models:
+        code = fetch(manifest_url(m))
+        if code == 404:
+            missing.append(m)
+        elif code != 200:
+            unverified.append(f"{m} (answer {code})")
+    return missing, unverified
 
 
 EARLY_ERRORS = 4   # a model whose first 4 cases all error is stopped, not run through all of them
@@ -272,6 +317,9 @@ def main():
             models = [m for m in models if m in a.models.split(",")]
         models.sort(key=lambda mid: next(m["memGB"] for m in pool if m["id"] == mid))
     expect = dict(x.split("=", 1) for x in a.expect_digest)
+    gone, unsure = missing_models(models)
+    if gone or unsure:
+        raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
                "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect,
