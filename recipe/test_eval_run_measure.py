@@ -117,10 +117,10 @@ box = FakeBox()
 check("a model whose first cases all fail is stopped", eval_run.run_model(box, "m:1", CASES, p, run, 1) is False)
 check("... before it runs every case", box.posts < len(CASES))
 
-eval_run.one = fake_one(delay=0.05)
+eval_run.one = fake_one(delay=0.1)
 p = os.path.join(run, "d.jsonl")
 check("the cap binds inside a model", eval_run.run_model(FakeBox(), "m:1", CASES, p, run, 1,
-                                                         deadline=time.time() + 0.12) == "cap")
+                                                         deadline=time.time() + 0.35) == "cap")
 check("... after scoring started and before every case ran", 1 <= len(rows(p)) < len(CASES))
 
 eval_run.one = fake_one()
@@ -245,6 +245,25 @@ check("the kill rule stops the run after the named model's first pass scores at 
       [c[0] for c in calls] == ["a:1"])
 check("... and the finish file lists what was left unrun",
       len(json.load(open(os.path.join(run3, "finish.json")))["unfinished"]) == 3)
+
+made = {"n": 0}
+
+
+class CountingBox(FakeOllamaBox):
+    def __init__(self, *a, **k):
+        made["n"] += 1
+        super().__init__(*a, **k)
+
+
+eval_run.OllamaBox = CountingBox
+run4 = tempfile.mkdtemp()
+sys.argv = ["eval_run.py", "--run", run4, "--set", "holdout_v3", "--models", "a:1,b:1", "--limit", "1",
+            "--meter", "x", "--cap", "1"]
+eval_run.main()
+fin = json.load(open(os.path.join(run4, "finish.json")))
+check("with less than a useful box slice of money, no box is made", made["n"] == 0)
+check("... and the finish file says the cap stopped it with every model unrun",
+      fin["stopped_by"] == "cap" and len(fin["unfinished"]) == 2)
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

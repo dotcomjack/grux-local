@@ -182,7 +182,8 @@ class OllamaBox:
             except Exception as e:
                 status = f"error {type(e).__name__}: {str(e)[:200]}"
             self.log(f"{model}: pull attempt {attempt} failed: {status}")
-            time.sleep(10)
+            if attempt == 1:
+                time.sleep(10 if deadline is None else min(10, max(0, deadline - time.time())))
         return status, round(time.time() - t0, 1)
 
     def drop(self, model):
