@@ -3,8 +3,8 @@
 (it refuses when /api/ps shows a model: the Mini's Ollama is shared with other loops).
 
 Two runs, each in a child process so the guard's real os._exit is what ends it:
-  unload: the floor is forced above 100%, so the real guard thread trips on its first look, asks Ollama to unload,
-          kills the runner by pid and exits 7;
+  unload: the floor is forced above 100%, so the real guard thread trips on its first look, kills the runner by
+          pid, asks Ollama to unload (Ollama answers) and exits 7;
   kill:   Ollama's address is pointed at a closed port after the load, so the unload fails the way it would against
           a starved Ollama, and only the pid kill can free the memory.
 Each run must end with exit 7, an abort file naming the reason, and the runner's pid gone.
@@ -71,6 +71,8 @@ def main():
             ("abort file names the reason", "floor" in got.get("why", "")),
             ("runner pid gone", bool(pids) and not alive(pids[0])),
         ]
+        if mode == "unload":
+            checks += [("Ollama acknowledged the unload", got.get("unload") == "ok")]
         if mode == "kill":
             checks += [("unload failed as staged", got.get("unload", "").startswith("failed")),
                        ("the pid kill freed it", got.get("killed") == pids)]

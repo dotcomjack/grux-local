@@ -111,7 +111,7 @@ def read_mem():
     return (int(level) if level.isdigit() else None), parse_free_pct(_sh("memory_pressure"))
 
 
-def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: [], sample=lambda: None):
+def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: []):
     """One look. On a breach: stop every new request, kill the runner by pid (frees the memory at once, even when
     Ollama is too starved to answer), then ask Ollama to unload so its bookkeeping agrees, write why, exit 7."""
     level, free_pct = read()
@@ -119,14 +119,9 @@ def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: [], sample=
     if why is None:
         return
     ABORTING.set()
-    unloaded, killed, peak = "not tried", [], PEAK["gb"]
+    unloaded, killed = "not tried", []
     try:
-        try:
-            vals = [x for x in (peak, sample()) if x is not None]
-            peak = max(vals) if vals else None
-        except Exception:
-            pass
-        try:
+        try:   # nothing slow runs before the kill: a thrashing Mac is the case this exists for
             killed = kill()
         except Exception as e:
             killed = ["kill failed: " + str(e)[:120]]
@@ -138,7 +133,7 @@ def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: [], sample=
         try:   # a full disk or a closed stderr must not stop the exit below
             with open(abort_path, "w") as f:
                 json.dump({"why": why, "pressure_level": level, "free_pct": free_pct, "at": time.time(),
-                           "unload": unloaded, "killed": killed, "peak_runner_footprint_gb": peak,
+                           "unload": unloaded, "killed": killed, "peak_runner_footprint_gb": PEAK["gb"],
                            "swap_free_mb": parse_swap_free_mb(_sh("sysctl", "vm.swapusage", timeout=5))}, f)
             print("ABORT " + why, file=sys.stderr, flush=True)
         except Exception:
@@ -181,7 +176,7 @@ def guard_step(model, abort_path, read=None, tick=0):
     try:
         guard_tick(read or read_mem, lambda: _post("/api/generate", {"model": model, "keep_alive": 0},
                                                    timeout=UNLOAD_TIMEOUT_S),
-                   abort_path, kill=lambda: kill_runner(model), sample=lambda: peak_sample(model))
+                   abort_path, kill=lambda: kill_runner(model))
         if tick % SAMPLE_EVERY == 0:
             gb = peak_sample(model)
             if gb is not None and (PEAK["gb"] is None or gb > PEAK["gb"]):
@@ -211,10 +206,15 @@ def guard_alive():
     return BEAT["t"] is not None and time.time() - BEAT["t"] < GUARD_STALE_S
 
 
-def hold_if_aborting():
-    """The guard is between its kill and its exit: write nothing (a 'skipped' row would never be retried)."""
+def hold_if_aborting(limit_s=60, exit=os._exit):
+    """The guard is between its kill and its exit: write nothing (a 'skipped' row would never be retried). If the
+    guard never gets to its exit (a hung write on a starved disk), stop the run here with the same code."""
+    t0 = time.time()
     while ABORTING.is_set():
-        time.sleep(1)
+        if time.time() - t0 > limit_s:
+            exit(7)
+            return
+        time.sleep(0.2)
 
 
 def load_done(path):
@@ -250,6 +250,16 @@ def post(path, body, timeout=600):
 
 
 def main():
+    """A breach can land during the model load, outside any per-case try: wait for the guard to finish its abort
+    file and exit 7 rather than dying with exit 1 and no record."""
+    try:
+        _main()
+    except BaseException:
+        hold_if_aborting()
+        raise
+
+
+def _main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--run", required=True)
@@ -320,6 +330,8 @@ def main():
                 sys.exit("ABORT the memory guard stopped answering; the run does not go on unwatched")
             if v3 is not None:
                 row = score_v3_row(v3, c, a.model)
+                if row["status"] == "skipped":
+                    time.sleep(GUARD_EVERY_S + 1)
                 hold_if_aborting()
                 out.write(json.dumps(row) + "\n")
                 out.flush()
@@ -340,6 +352,7 @@ def main():
             except Exception as e:
                 row = {"case": c["id"], "family": c["family"], "status": "skipped", "error": str(e)[:200],
                        "s": round(time.time() - t, 2)}
+                time.sleep(GUARD_EVERY_S + 1)   # a runner that died of memory: let the guard see the breach first
             hold_if_aborting()
             out.write(json.dumps(row) + "\n")
             out.flush()

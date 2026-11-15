@@ -133,19 +133,26 @@ check("a malformed number reads as None, never crashes", e.parse_footprint_gb("p
 
 order = []
 e.ABORTING.clear()
+e.PEAK["gb"] = 9.9
 try:
     e.guard_tick(read=lambda: (4, 50), unload=lambda: order.append("unload"), abort_path=os.path.join(run, "o.abort.json"),
-                 exit=fake_exit, kill=lambda: (order.append("kill"), [7])[1], sample=lambda: 9.9)
+                 exit=fake_exit, kill=lambda: (order.append("kill"), [7])[1])
 except SystemExit:
     pass
 check("the runner is killed before Ollama is asked (a starved Ollama cannot delay the kill)", order == ["kill", "unload"])
-check("the abort file records the peak read at the breach", json.load(open(os.path.join(run, "o.abort.json")))["peak_runner_footprint_gb"] == 9.9)
+check("the abort file records the run's peak", json.load(open(os.path.join(run, "o.abort.json")))["peak_runner_footprint_gb"] == 9.9)
 try:
     e.post("/api/chat", {})
     check("after a breach no request can reload the model", False)
 except RuntimeError:
     check("after a breach no request can reload the model", True)
+held = {"exit": None}
+e.hold_if_aborting(limit_s=0.3, exit=lambda code: held.__setitem__("exit", code))
+check("a guard that never reaches its exit is backstopped: the run stops with exit 7", held["exit"] == 7)
 e.ABORTING.clear()
+t0 = __import__("time").time()
+e.hold_if_aborting(limit_s=5)
+check("with no breach, writing a row is never delayed", __import__("time").time() - t0 < 0.1)
 
 import time as _t
 e.BEAT["t"] = _t.time()
