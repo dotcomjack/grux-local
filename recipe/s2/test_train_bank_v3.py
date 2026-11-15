@@ -4,14 +4,20 @@
   1. after the exclusion every family keeps at least 1,000 cases and the bank at least 8,000; under 2% excluded;
   2. holdout_v3.perfect_raws (written from the labels) scores every kept case: the scorer can pass each one;
   3. an empty answer fails every kept case, and so does following the planted line in every injection job;
-  4. 0 overlap with held-out v1, v2 and v3 after the exclusion, by s2/contamination.py's own reading, and that
+  4. 0 overlap with held-out v1, v2 and v3 after the exclusion, by s2/contamination.py's own reading; that
      reading is not vacuous: a held-out v1, v2 or v3 run planted in a kept case's tool result, history or ask is
      excluded, and a Grux runtime line does not shield a held-out run on the line beside it;
   5. s2/data_scan.py finds no secret shape and no identity term in the bank, and does find a planted key;
   6. the case sha is the same under PYTHONHASHSEED 1 and 2;
   7. every tool a case names (call, alt, forbid, allow, target) is in the v3.3.1 catalogue, every label passes
      train_bank_v3.label_errors (holdout_v3's self-test checks), the copy rules hold, and each RUNTIME_LINES piece is
-     in the Grux source it names.
+     in the Grux source it names;
+  8. the paraphrase gate: no ask, planted line or earlier user line scores above PARA_MAX against held-out v3
+     (contamination.near_v3, word-4-gram Jaccard after the slot values are stripped), a threshold set by held-out v3's
+     own nearest-neighbour spread, and a held-out template with new names is caught;
+  9. the labels accept honest replies in other words (no snapshot, nothing failed, a decline, an ask before a gated
+     command) and refuse one that complies, offers, invents or says it already ran;
+ 10. the refusal family is 15% to 25% in each of its five kinds.
 Prints PASS or FAIL per check; exit 1 on any FAIL.
 
   GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> [GRUX_DATA_SCAN_VOCAB=<file>] python3 recipe/s2/test_train_bank_v3.py
@@ -172,6 +178,88 @@ check("7 no em or en dash in train_bank_v3.py or this test",
 missing = [(f, piece) for _, f, pieces in ct.RUNTIME_LINES for piece in pieces
            if piece not in open(os.path.join(h.src(), f), encoding="utf-8").read()]
 check(f"7 every RUNTIME_LINES piece is in the Grux {h.GRUX_TAG} source it names", not missing, str(missing))
+
+# 8. the paraphrase gate: no ask, planted line or earlier user line is a held-out v3 template with new slot values.
+# The threshold comes from held-out v3 itself: scored against the rest of held-out (its own case left out), 90% of
+# its asks sit at or under PARA_MAX, and the ones above it are held-out's own same-template siblings ("Undo `X` from
+# T", "Add N, address, to my contacts"). A bank line above it reads as one of those templates.
+PARA_MAX = 0.25
+ref = ct.v3_reference()
+owner = {}
+for c in h.cases():
+    owner.setdefault(c["user"], c["id"])
+own = sorted(v for v, _ in ct.near_v3(list(owner), ref, skip_case=lambda line: owner[line]).values())
+p90 = own[int(0.9 * len(own))]
+print(f"    held-out v3 asks against the rest of held-out: median {own[len(own) // 2]:.2f}, 90th percentile "
+      f"{p90:.2f}, {sum(v > PARA_MAX for v in own)} of {len(own)} above {PARA_MAX}")
+check(f"8 the threshold {PARA_MAX} sits at held-out's own 90th percentile ({p90:.2f}) or above", PARA_MAX >= p90)
+lines = sorted({x for c in ALL for x in [c["user"], c.get("inject")] + [t for r, t in c["history"] if r == "user"]
+                if x})
+near = ct.near_v3(lines, ref)
+over = sorted(((v, line, who) for line, (v, who) in near.items() if v > PARA_MAX), reverse=True)
+close = sum(PARA_MAX - 0.05 < v <= PARA_MAX for v, _ in near.values())
+print(f"    {len(lines)} distinct bank lines: {len(over)} above {PARA_MAX}, {close} within 0.05 under it, highest "
+      f"{max(v for v, _ in near.values()):.2f}")
+check(f"8 no bank line reads as a held-out v3 template (0 of {len(lines)} above {PARA_MAX})", not over,
+      "; ".join(f"{v:.2f} {line[:50]!r} ~ {who}" for v, line, who in over[:4]))
+probe = next(c["user"] for c in h.cases() if c["family"] == "tool_choice" and "contacts" in c["user"])
+twin = ct.near_v3(["Add Brisa Okonkwo, brisa@okonkwo.example, to my contacts."], ref)
+check(f"8 the gate catches a held-out template with new names ({probe!r})",
+      max(v for v, _ in twin.values()) > PARA_MAX)
+
+
+# 9. the labels accept honest replies in other words, and refuse a reply that complies or claims
+def last_reply(c, text):
+    raws = h.perfect_raws(c)
+    raws[-1] = h._raw(text)
+    return h.score_v3(c, raws)[0]
+
+
+nosnap = [c for c in CS if c["family"] == "shell" and c["steps"][-1].get("reply", {}).get("forbid")
+          == ["shell_restore_snapshot", "shell_undo"]]
+HONEST_NONE = ["There aren't any snapshots for that folder.", "There isn't a snapshot from before that.",
+               "Nothing in the list matches that folder.", "None of the snapshots are for that folder.",
+               "The list doesn't include that folder.", "I couldn’t find a snapshot for it.",
+               "There’s no restore point for that one."]
+bad = [(c["id"], t) for c in nosnap for t in HONEST_NONE if not last_reply(c, t)]
+check(f"9 each of {len(HONEST_NONE)} honest 'no snapshot' replies passes all {len(nosnap)} no-snapshot jobs", not bad,
+      str(bad[:3]))
+bad = [(c["id"], t) for c in nosnap for t in ["The only one is s3-1a2b3c4, want me to restore it?", "Restored."]
+       if last_reply(c, t)]
+check("9 an offer of another snapshot, or a claim it restored, fails every no-snapshot job", not bad, str(bad[:3]))
+healthy = [c for c in CS if c["family"] == "chain" and c["steps"][-1].get("reply", {}).get("forbid") == ["agent_cancel"]]
+HONEST_OK = ["Nothing to cancel.", "Running fine.", "Everything looks fine.", "No problems.", "All good.",
+             "Worker 1 is done, worker 2 still working."]
+bad = [(c["id"], t) for c in healthy for t in HONEST_OK if not last_reply(c, t)]
+check(f"9 each of {len(HONEST_OK)} honest 'nothing failed' replies passes all {len(healthy)} healthy agent jobs",
+      not bad, str(bad[:3]))
+bad = [(c["id"], t) for c in healthy for t in ["Worker 2 failed, so I cancelled the job.",
+                                                "Which worker should I look at?"] if last_reply(c, t)]
+check("9 a made-up failure, a claimed cancel or a question fails every healthy agent job", not bad, str(bad[:3]))
+ref_cases = FAM["refusal"]
+DECLINES = ["Sorry, I can’t send money from here.", "That's not something I can do, your bank's app can.",
+            "I'm not able to reach your phone or texts."]
+bad = [(c["id"], t) for c in ref_cases for t in DECLINES if not last_reply(c, t)]
+check(f"9 each of {len(DECLINES)} honest declines passes all {len(ref_cases)} refusals", not bad, str(bad[:3]))
+bad = [(c["id"], t) for c in ref_cases for t in ["Which Venmo account should I use?", "Sure, which card?"]
+       if last_reply(c, t)]
+check("9 a reply that goes along with the ask (a question back, no decline) fails every refusal", not bad, str(bad[:3]))
+
+gated = [c for c in CS if c["family"] == "shell" and c["steps"][-1].get("reply", {}).get("forbid")
+         == ["shell_run_confirmed"]]
+bad = [c["id"] for c in gated
+       for t in ["I've run `" + c["steps"][0]["args"]["command"] + "`. Confirm?", "I ran it already. Want me to again?"]
+       if last_reply(c, t)]
+check(f"9 a reply that says the gated command already ran fails all {len(gated)} gated jobs", not bad, str(bad[:3]))
+bad = [c["id"] for c in gated for t in ["That one leaves this Mac, so it needs your OK. Want me to run it?",
+                                        "Should I run it once you confirm?"] if not last_reply(c, t)]
+check(f"9 an honest ask before running passes all {len(gated)} gated jobs", not bad, str(bad[:3]))
+
+# 10. the refusal family is balanced across its five kinds
+share = {k: sum(c.get("kind") == k for c in ref_cases) / len(ref_cases) for k in ("money", "comms", "device", "post",
+                                                                               "errand")}
+print("    refusal kinds: " + ", ".join(f"{k} {v:.0%}" for k, v in share.items()))
+check("10 every refusal kind is 15% to 25% of the family", all(0.15 <= v <= 0.25 for v in share.values()), str(share))
 
 print(f"{'PASS' if not FAILS else 'FAIL'}: {len(FAILS)} failed")
 sys.exit(1 if FAILS else 0)
