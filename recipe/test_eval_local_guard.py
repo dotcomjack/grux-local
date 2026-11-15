@@ -76,10 +76,11 @@ check("critical reading unloads the model", calls["unload"] == 1)
 check("critical reading stops the run with exit 7", calls["exit"] == 7)
 check("critical reading writes the reason", os.path.exists(abort_path) and "pressure" in json.load(open(abort_path))["why"])
 
+e.ABORTING.clear()
 calls = {"unload": 0, "exit": None}
 e.guard_tick(read=lambda: (1, 70), unload=lambda: calls.__setitem__("unload", 1),
              abort_path=os.path.join(run, "y.abort.json"), exit=fake_exit)
-check("healthy reading leaves the run alone", calls == {"unload": 0, "exit": None})
+check("healthy reading leaves the run alone", calls == {"unload": 0, "exit": None} and not e.ABORTING.is_set())
 
 calls = {"kill": 0, "exit": None}
 try:
@@ -129,6 +130,28 @@ check("the next row starts on its own line", open(rp).read().endswith("\n"))
 check("footprint's own high-water mark parses",
       e.parse_footprint_gb("    phys_footprint: 7128 MB\n    phys_footprint_peak: 7647 MB", "phys_footprint_peak") == 7.65)
 check("a malformed number reads as None, never crashes", e.parse_footprint_gb("phys_footprint: 7.1.2 MB") is None)
+
+order = []
+e.ABORTING.clear()
+try:
+    e.guard_tick(read=lambda: (4, 50), unload=lambda: order.append("unload"), abort_path=os.path.join(run, "o.abort.json"),
+                 exit=fake_exit, kill=lambda: (order.append("kill"), [7])[1], sample=lambda: 9.9)
+except SystemExit:
+    pass
+check("the runner is killed before Ollama is asked (a starved Ollama cannot delay the kill)", order == ["kill", "unload"])
+check("the abort file records the peak read at the breach", json.load(open(os.path.join(run, "o.abort.json")))["peak_runner_footprint_gb"] == 9.9)
+try:
+    e.post("/api/chat", {})
+    check("after a breach no request can reload the model", False)
+except RuntimeError:
+    check("after a breach no request can reload the model", True)
+e.ABORTING.clear()
+
+import time as _t
+e.BEAT["t"] = _t.time()
+check("a guard that just ticked counts as alive", e.guard_alive())
+e.BEAT["t"] = _t.time() - e.GUARD_STALE_S - 1
+check("a guard silent past the limit stops the run", not e.guard_alive())
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

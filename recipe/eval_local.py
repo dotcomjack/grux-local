@@ -39,7 +39,11 @@ DISK_FREE_GB_MIN = 8       # room for macOS to grow swap into; the Mini had 4.2
 LARGE_WINDOW = 16384       # the disk floor binds above this: 16,384 runs held on the Mini with 0 B of swap
 GUARD_EVERY_S = 5
 UNLOAD_TIMEOUT_S = 5       # a dying Ollama may never answer; the runner is killed by pid right after
-PEAK = {"gb": None}        # the runner's largest footprint, sampled by the guard every tick
+PEAK = {"gb": None}        # the runner's largest footprint, sampled by the guard
+ABORTING = threading.Event()   # set the moment a breach is seen: no request may reload the model after it
+BEAT = {"t": None}         # the guard's last completed tick; a guard silent past GUARD_STALE_S stops the run
+GUARD_STALE_S = 120
+SAMPLE_EVERY = 6           # footprint walks the runner's memory map; sample it every 6th tick, never on the breach path
 
 
 def parse_swap_free_mb(text):
@@ -94,9 +98,9 @@ def disk_verdict(free_gb, num_ctx=None):
     return None
 
 
-def _sh(*cmd):
+def _sh(*cmd, timeout=20):
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=20).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout).stdout
     except Exception:   # a reader that throws would kill the guard thread; an empty reading never trips
         return ""
 
@@ -107,29 +111,35 @@ def read_mem():
     return (int(level) if level.isdigit() else None), parse_free_pct(_sh("memory_pressure"))
 
 
-def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: []):
-    """One look. On a breach: ask Ollama to unload (short timeout), kill the runner by pid whatever the answer, write
-    why, stop the run with exit 7. The kill is what frees memory when Ollama itself is too starved to answer."""
+def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: [], sample=lambda: None):
+    """One look. On a breach: stop every new request, kill the runner by pid (frees the memory at once, even when
+    Ollama is too starved to answer), then ask Ollama to unload so its bookkeeping agrees, write why, exit 7."""
     level, free_pct = read()
     why = mem_verdict(level, free_pct)
     if why is None:
         return
-    unloaded, killed = "not tried", []
+    ABORTING.set()
+    unloaded, killed, peak = "not tried", [], PEAK["gb"]
     try:
-        unload()
-        unloaded = "ok"
-    except Exception as e:
-        unloaded = "failed: " + str(e)[:120]
-    try:
+        try:
+            vals = [x for x in (peak, sample()) if x is not None]
+            peak = max(vals) if vals else None
+        except Exception:
+            pass
         try:
             killed = kill()
         except Exception as e:
             killed = ["kill failed: " + str(e)[:120]]
+        try:
+            unload()
+            unloaded = "ok"
+        except Exception as e:
+            unloaded = "failed: " + str(e)[:120]
         try:   # a full disk or a closed stderr must not stop the exit below
             with open(abort_path, "w") as f:
                 json.dump({"why": why, "pressure_level": level, "free_pct": free_pct, "at": time.time(),
-                           "unload": unloaded, "killed": killed, "peak_runner_footprint_gb": PEAK["gb"],
-                           "swap_free_mb": parse_swap_free_mb(_sh("sysctl", "vm.swapusage"))}, f)
+                           "unload": unloaded, "killed": killed, "peak_runner_footprint_gb": peak,
+                           "swap_free_mb": parse_swap_free_mb(_sh("sysctl", "vm.swapusage", timeout=5))}, f)
             print("ABORT " + why, file=sys.stderr, flush=True)
         except Exception:
             pass
@@ -156,32 +166,55 @@ def runner_footprint_gb(model, key="phys_footprint"):
     """The runner's memory as macOS counts it (GPU memory included). None where footprint does not exist (Linux):
     there, meta's ollama_size_gb is the number to read. key="phys_footprint_peak" reads the runner's own high-water
     mark, which catches a spike between two guard ticks."""
-    vals = [parse_footprint_gb(_sh("footprint", "-p", str(pid)), key) for pid in runner_pids(model)]
+    vals = [parse_footprint_gb(_sh("footprint", "-p", str(pid), timeout=5), key) for pid in runner_pids(model)]
     vals = [v for v in vals if v is not None]
     return round(sum(vals), 2) if vals else None
 
 
-def guard_step(model, abort_path, read=None):
-    """One guard tick plus a peak sample. Nothing in here may raise: a dead guard thread fails open."""
+def peak_sample(model):
+    return runner_footprint_gb(model, "phys_footprint_peak") or runner_footprint_gb(model)
+
+
+def guard_step(model, abort_path, read=None, tick=0):
+    """One guard tick, a peak sample every SAMPLE_EVERY ticks, and a heartbeat. Nothing in here may raise: a dead
+    guard thread fails open."""
     try:
-        guard_tick(read or read_mem, lambda: post("/api/generate", {"model": model, "keep_alive": 0},
-                                                  timeout=UNLOAD_TIMEOUT_S),
-                   abort_path, kill=lambda: kill_runner(model))
-        gb = runner_footprint_gb(model, "phys_footprint_peak") or runner_footprint_gb(model)
-        if gb is not None and (PEAK["gb"] is None or gb > PEAK["gb"]):
-            PEAK["gb"] = gb
+        guard_tick(read or read_mem, lambda: _post("/api/generate", {"model": model, "keep_alive": 0},
+                                                   timeout=UNLOAD_TIMEOUT_S),
+                   abort_path, kill=lambda: kill_runner(model), sample=lambda: peak_sample(model))
+        if tick % SAMPLE_EVERY == 0:
+            gb = peak_sample(model)
+            if gb is not None and (PEAK["gb"] is None or gb > PEAK["gb"]):
+                PEAK["gb"] = gb
     except Exception as e:
-        print("guard tick skipped: " + str(e)[:120], file=sys.stderr, flush=True)
+        try:
+            print("guard tick skipped: " + str(e)[:120], file=sys.stderr, flush=True)
+        except Exception:
+            pass
+    BEAT["t"] = time.time()
 
 
 def start_guard(model, abort_path):
     def loop():
+        tick = 0
         while True:
-            guard_step(model, abort_path)
+            guard_step(model, abort_path, tick=tick)
+            tick += 1
             time.sleep(GUARD_EVERY_S)
+    BEAT["t"] = time.time()
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     return t
+
+
+def guard_alive():
+    return BEAT["t"] is not None and time.time() - BEAT["t"] < GUARD_STALE_S
+
+
+def hold_if_aborting():
+    """The guard is between its kill and its exit: write nothing (a 'skipped' row would never be retried)."""
+    while ABORTING.is_set():
+        time.sleep(1)
 
 
 def load_done(path):
@@ -202,11 +235,18 @@ def load_done(path):
     return have
 
 
-def post(path, body, timeout=600):
+def _post(path, body, timeout=600):
     r = urllib.request.Request(BASE + path, data=json.dumps(body).encode(), method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=timeout) as resp:
         return json.loads(resp.read().decode() or "{}")
+
+
+def post(path, body, timeout=600):
+    """Every request the run makes. Refused once the guard has seen a breach, so nothing reloads the model."""
+    if ABORTING.is_set():
+        raise RuntimeError("aborting: the memory guard tripped")
+    return _post(path, body, timeout)
 
 
 def main():
@@ -255,7 +295,7 @@ def main():
     abort_path = os.path.join(a.run, stem + suffix + ".abort.json")
     if os.path.exists(abort_path):
         os.remove(abort_path)   # a reason from an earlier run must not sit beside this one's result
-    guard = start_guard(a.model, abort_path)
+    start_guard(a.model, abort_path)
     t0 = time.time()
     warm = post("/api/chat", {"model": a.model, "stream": False, "think": False,
                               "messages": [{"role": "user", "content": "ok"}],
@@ -267,15 +307,21 @@ def main():
             "version": post_get("/api/version").get("version"), "guard_runner_pids": runner_pids(a.model)}
     print(json.dumps(meta), flush=True)
     if not meta["guard_runner_pids"] and a.num_ctx > LARGE_WINDOW:
+        try:
+            _post("/api/generate", {"model": a.model, "keep_alive": 0}, timeout=UNLOAD_TIMEOUT_S)
+        except Exception:
+            pass
         sys.exit("REFUSED no runner process found for " + a.model + ": the guard could only ask Ollama to unload")
     with open(path, "a") as out:
         for c in cases:
             if c["id"] in have:
                 continue
-            if not guard.is_alive():
-                sys.exit("ABORT the memory guard stopped; the run does not go on unwatched")
+            if not guard_alive():
+                sys.exit("ABORT the memory guard stopped answering; the run does not go on unwatched")
             if v3 is not None:
-                out.write(json.dumps(score_v3_row(v3, c, a.model)) + "\n")
+                row = score_v3_row(v3, c, a.model)
+                hold_if_aborting()
+                out.write(json.dumps(row) + "\n")
                 out.flush()
                 continue
             req = request(c, a.model)
@@ -294,6 +340,7 @@ def main():
             except Exception as e:
                 row = {"case": c["id"], "family": c["family"], "status": "skipped", "error": str(e)[:200],
                        "s": round(time.time() - t, 2)}
+            hold_if_aborting()
             out.write(json.dumps(row) + "\n")
             out.flush()
     meta["peak_runner_footprint_gb"] = PEAK["gb"]   # sampled every guard tick; rss_gb keys before this measured the wrong thing
