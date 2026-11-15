@@ -43,8 +43,8 @@ class FakeBox:
         self.drops, self.posts = 0, 0
         self.info = {"gpu_type": "H200", "id": "fake"}
 
-    def pull(self, model, timeout=3600):
-        self.pull_timeout = timeout
+    def pull(self, model, timeout=3600, deadline=None):
+        self.pull_timeout = timeout if deadline is None else min(timeout, deadline - time.time())
         return "success", 0.1
 
     def get(self, path, timeout=30):
@@ -119,9 +119,9 @@ check("... before it runs every case", box.posts < len(CASES))
 
 eval_run.one = fake_one(delay=0.05)
 p = os.path.join(run, "d.jsonl")
-check("the cap binds inside a model", eval_run.run_model(FakeBox(), "m:1", CASES, p, run, 2,
-                                                         deadline=time.time() - 1) == "cap")
-check("... with at most one row written", len(rows(p)) <= 1)
+check("the cap binds inside a model", eval_run.run_model(FakeBox(), "m:1", CASES, p, run, 1,
+                                                         deadline=time.time() + 0.12) == "cap")
+check("... after scoring started and before every case ran", 1 <= len(rows(p)) < len(CASES))
 
 eval_run.one = fake_one()
 p = os.path.join(run, "e.jsonl")
@@ -174,6 +174,20 @@ check("a server that stops answering mid-pass stops the pass instead of writing 
       eval_run.run_model(box, "m:1", many, os.path.join(run, "j.jsonl"), run, 1) is False
       and sum(r["status"] == "skipped" for r in rows(os.path.join(run, "j.jsonl"))) <= eval_run.skip_max(40) + 1)
 eval_run.one = fake_one()
+
+import gpu_box  # noqa: E402
+gb = gpu_box.OllamaBox.__new__(gpu_box.OllamaBox)
+gb.log = lambda m: None
+posted = []
+gb.post = lambda path, body, timeout=600: (posted.append(timeout), (_ for _ in ()).throw(TimeoutError("slow")))[1]
+_sleep = gpu_box.time.sleep
+gpu_box.time.sleep = lambda s: None   # the time module is shared: restored right after these two checks
+status, _ = gb.pull("m:1", timeout=3600, deadline=time.time() + 50)
+check("a pull's retry never runs past the dollar deadline", len(posted) >= 1 and all(t <= 50 for t in posted))
+posted.clear()
+status, _ = gb.pull("m:1", timeout=3600, deadline=time.time() - 1)
+check("no pull starts once the money is gone", posted == [] and status.startswith("not tried"))
+gpu_box.time.sleep = _sleep
 
 # main: passes and the kill rule, with a fake box and a fake meter
 calls = []

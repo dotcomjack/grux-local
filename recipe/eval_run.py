@@ -26,6 +26,7 @@ import meter  # noqa: E402
 
 ONLY_THINKING = False
 TEARDOWN_USD = lambda price: price * 0.05   # about 3 minutes of delete and in-flight jobs kept out of the cap
+MIN_BOX_HOURS = 0.25   # create, setup and delete alone take minutes: no box is made for less than this
 # Listed GPU rate per hour, plus what every GPU box also bills: 16 vCPU at $0.0504 and 192 GB RAM at
 # $0.0162 an hour, $3.92 (measured 2026-10-22: the wallet moved $23.04 where GPU rates alone said $12).
 BOX_EXTRA = 16 * 0.0504 + 192 * 0.0162
@@ -133,7 +134,7 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
         return True
     if deadline is not None and time.time() >= deadline:
         return "cap"
-    status, pull_s = box.pull(model, timeout=max(60, remaining(deadline, 3600)))
+    status, pull_s = box.pull(model, timeout=3600, deadline=deadline)
     log(f"{model}: pull {status} in {pull_s}s; {len(todo)} cases to run", run_dir)
     if deadline is not None and time.time() >= deadline:
         return "cap"
@@ -286,6 +287,10 @@ def main():
         hours = max(0.25, (a.cap - spent) / (PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA))
         t_enter = time.time()   # the box bills from its create, so the cap clock starts here, not after setup
         price = PRICE.get(rate_gpu, max(PRICE.values())) + BOX_EXTRA
+        if spent + TEARDOWN_USD(price) + price * MIN_BOX_HOURS >= a.cap:   # a new box would be billed for nothing
+            log(f"STOP: ${a.cap - spent:.2f} left, under one useful box slice; no new box", run_dir)
+            not_run, stopped_by, pending = list(pending), "cap", []
+            break
         with meter.Reserved(a.meter, a.meter_lane, hours, rate_gpu, "measure") as rid, \
                 OllamaBox(a.gpu.split(","), "lme-" + os.path.basename(run_dir), ttl_minutes=a.ttl,
                           log=lambda m: log(m, run_dir), reservation=rid, num_parallel=a.parallel,

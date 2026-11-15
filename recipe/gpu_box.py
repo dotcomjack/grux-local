@@ -163,14 +163,18 @@ class OllamaBox:
     def post(self, path, payload, timeout=600):
         return self._req("POST", path, payload, timeout=timeout)
 
-    def pull(self, model, timeout=3600):
+    def pull(self, model, timeout=3600, deadline=None):
         """A failed pull is a result, never a crash: (status, seconds), status carrying the
         server's own words. Measured 2026-10-22: one pull answered HTTP 500 and the
         uncaught error ended a whole pass."""
         t0 = time.time()
+        status = "not tried: the money ran out before the pull"
         for attempt in (1, 2):
+            left = timeout if deadline is None else min(timeout, deadline - time.time())
+            if left <= 0:   # a retry never runs past the run's dollar deadline
+                break
             try:
-                out = self.post("/api/pull", {"model": model, "stream": False}, timeout=timeout)
+                out = self.post("/api/pull", {"model": model, "stream": False}, timeout=left)
                 return out.get("status"), round(time.time() - t0, 1)
             except urllib.error.HTTPError as e:
                 body = e.read().decode(errors="replace")[:300]
