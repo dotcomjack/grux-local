@@ -363,7 +363,7 @@ def main():
     if gone or unsure:
         raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
-               "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes,
+               "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes, "limit": a.limit,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect,
                "suite_sha": V3.case_sha(cases) if V3 else suite.fingerprint(cases)},
               open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)

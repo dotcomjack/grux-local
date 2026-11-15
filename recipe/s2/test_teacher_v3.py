@@ -104,5 +104,28 @@ check("each row's target is the teacher's raw answer",
       all(g["target"]["tool_calls"] == rows[0]["raw"][k]["tool_calls"] for k, g in enumerate(r0)))
 check("the export summary counts what it wrote", s["rows"] == len(got) and s["jobs_kept"] == len(ids))
 
+# rows written before job_sha existed: trusted only when the run's manifest names the bank as the run sliced it
+legacy = tempfile.mkdtemp()
+lim = 3
+sliced = export_v3.first_per_family(tb.kept(), lim)
+pick = sliced[0]
+eval_run.KEEP_RAW = True
+lrow = dict(eval_run.one(ReplayBox(pick), "teacher", pick))
+lrow.pop("job_sha")   # as a row written before job_sha existed
+with open(os.path.join(legacy, "t-train_v3-pass1.jsonl"), "w") as f:
+    f.write(json.dumps(lrow) + "\n")
+fams = {}
+for c in sliced:
+    fams[c["family"]] = fams.get(c["family"], 0) + 1
+json.dump({"suite_sha": h.case_sha(sliced), "families": fams}, open(os.path.join(legacy, "manifest.json"), "w"))
+s2 = export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))
+check("a legacy row from a --limit run is exported when the manifest matches that slice", s2["jobs_kept"] == 1)
+json.dump({"suite_sha": "0" * 64, "families": fams}, open(os.path.join(legacy, "manifest.json"), "w"))
+s3 = export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))
+check("a legacy row is refused when the manifest names another bank", s3["jobs_kept"] == 0 and s3["dropped_job_changed"] == 1)
+os.remove(os.path.join(legacy, "manifest.json"))
+check("a legacy row is refused when the run has no manifest",
+      export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))["jobs_kept"] == 0)
+
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

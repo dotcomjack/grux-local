@@ -21,12 +21,24 @@ import holdout_v3  # noqa: E402
 import train_bank_v3  # noqa: E402
 
 
-def run_bank_sha(run_dir):
-    """The bank sha the teacher run recorded (manifest.json suite_sha), or None."""
+def first_per_family(cases, n):
+    """eval_run.py --limit n: the first n cases of each family, in bank order."""
+    seen = {}
+    return [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= n]
+
+
+def legacy_bank_ok(run_dir, bank):
+    """For rows written before job_sha: the run's manifest sha must be the sha of the bank as that run sliced it
+    (the whole bank, or the first --limit jobs of each family, the limit read from the manifest or its family
+    counts). Fails closed when the manifest is missing or matches neither."""
     try:
-        return json.load(open(os.path.join(run_dir, "manifest.json"))).get("suite_sha")
+        m = json.load(open(os.path.join(run_dir, "manifest.json")))
     except (OSError, ValueError):
-        return None
+        return False
+    sha = m.get("suite_sha")
+    limits = {m.get("limit") or 0, max((m.get("families") or {}).values() or [0])}
+    return sha == holdout_v3.case_sha(bank) or any(
+        n and sha == holdout_v3.case_sha(first_per_family(bank, n)) for n in limits)
 
 
 def kept_answers(run_dir):
@@ -62,7 +74,7 @@ def export(run_dir, out_path):
     for a row written before job_sha existed, the run's whole-bank sha must equal the bank's sha now."""
     bank = train_bank_v3.kept()
     by_id = {c["id"]: c for c in bank}
-    same_bank = run_bank_sha(run_dir) == holdout_v3.case_sha(bank)
+    same_bank = legacy_bank_ok(run_dir, bank)
     answers = kept_answers(run_dir)
     fams, rows_n, short, changed, gone = {}, 0, 0, 0, 0
     with open(out_path, "w") as f:
