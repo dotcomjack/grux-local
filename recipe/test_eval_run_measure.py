@@ -225,7 +225,7 @@ class FakeOllamaBox(FakeBox):
 
 
 _missing = eval_run.missing_models
-eval_run.missing_models = lambda models: []   # the fake model names below are served by no registry
+eval_run.missing_models = lambda models: ([], [])   # the fake model names below are served by no registry
 eval_run.run_model = fake_run_model
 eval_run.meter.Reserved = FakeReserved
 eval_run.OllamaBox = FakeOllamaBox
@@ -271,12 +271,20 @@ check("a library tag's manifest is read from Ollama's registry",
       eval_run.manifest_url("qwen3.5:122b-a10b") == "https://registry.ollama.ai/v2/library/qwen3.5/manifests/122b-a10b")
 check("a host-qualified tag's manifest is read from its own host",
       eval_run.manifest_url("gruxai.com/grux/grux-local:9b") == "https://gruxai.com/v2/grux/grux-local/manifests/9b")
-served = {"https://registry.ollama.ai/v2/library/qwen3.5/manifests/122b-a10b": 200}
-check("a tag no registry serves is found before any box exists",
-      _missing(["qwen3.5:122b-a10b", "qwen3.5:122b-a10b-q4"], fetch=lambda u: served.get(u, 404))
-      == ["qwen3.5:122b-a10b-q4"])
+for model, url in [
+        ("qwen3.5", "https://registry.ollama.ai/v2/library/qwen3.5/manifests/latest"),
+        ("someuser/model:7b", "https://registry.ollama.ai/v2/someuser/model/manifests/7b"),
+        ("localhost:5000/ns/m:tag", "https://localhost:5000/v2/ns/m/manifests/tag"),
+        ("qwen3.5@sha256:abcd", "https://registry.ollama.ai/v2/library/qwen3.5/manifests/sha256:abcd"),
+        ("gruxai.com/grux/grux-local:9b@sha256:ef01", "https://gruxai.com/v2/grux/grux-local/manifests/sha256:ef01")]:
+    check(f"manifest url for {model}", eval_run.manifest_url(model) == url)
+served = {"https://registry.ollama.ai/v2/library/qwen3.5/manifests/122b-a10b": 200,
+          "https://registry.ollama.ai/v2/library/qwen3.5/manifests/35b": 503}
+got = _missing(["qwen3.5:122b-a10b", "qwen3.5:122b-a10b-q4", "qwen3.5:35b"], fetch=lambda u: served.get(u, 404))
+check("only a 404 counts as missing", got[0] == ["qwen3.5:122b-a10b-q4"])
+check("a registry error is reported as unverified, not as missing", got[1] == ["qwen3.5:35b (answer 503)"])
 
-eval_run.missing_models = lambda models: ["a:1"]
+eval_run.missing_models = lambda models: (["a:1"], [])
 try:
     sys.argv = ["eval_run.py", "--run", tempfile.mkdtemp(), "--set", "holdout_v3", "--models", "a:1", "--meter", "x"]
     made["n"] = 0

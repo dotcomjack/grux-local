@@ -115,18 +115,25 @@ def probe(box, model, expect_digest=None, timeout=900):
 
 
 def manifest_url(model):
-    """Where a registry serves this tag's manifest: host/ns/name:tag, or a library name:tag on registry.ollama.ai."""
-    name, _, tag = model.partition(":")
+    """Where a registry serves this tag's manifest. Forms: name:tag, user/name:tag (library and users on
+    registry.ollama.ai), host[:port]/ns/name:tag (its own host), and any of them pinned with @sha256:..."""
+    ref, _, digest = model.partition("@")
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    name, tag = (ref[:colon], ref[colon + 1:]) if colon > slash else (ref, "latest")
     parts = name.split("/")
-    if len(parts) >= 3 and "." in parts[0]:
-        return f"https://{parts[0]}/v2/{'/'.join(parts[1:])}/manifests/{tag or 'latest'}"
-    path = name if "/" in name else "library/" + name
-    return f"https://registry.ollama.ai/v2/{path}/manifests/{tag or 'latest'}"
+    first = parts[0]
+    if len(parts) >= 2 and ("." in first or ":" in first or first == "localhost"):
+        host, path = first, "/".join(parts[1:])
+    else:
+        host, path = "registry.ollama.ai", name if "/" in name else "library/" + name
+    return f"https://{host}/v2/{path}/manifests/{digest or tag}"
 
 
 def missing_models(models, fetch=None):
-    """Tags no registry serves. Checked before any box exists: 2026-11-14 a tag listed on ollama.com
-    (qwen3.5:122b-a10b-q4) had no manifest, and the box only found out after scoring two other models."""
+    """(missing, unverified): tags whose registry answers 404, and tags it could not be asked about (an error, a
+    401, a 5xx). Checked before any box exists: 2026-11-14 a tag listed on ollama.com (qwen3.5:122b-a10b-q4) had
+    no manifest, and the box only found out after scoring two other models."""
     import urllib.request
 
     def default_fetch(url):
@@ -137,9 +144,18 @@ def missing_models(models, fetch=None):
                 return resp.status
         except urllib.error.HTTPError as e:
             return e.code
+        except Exception:
+            return None
 
     fetch = fetch or default_fetch
-    return [m for m in models if fetch(manifest_url(m)) != 200]
+    missing, unverified = [], []
+    for m in models:
+        code = fetch(manifest_url(m))
+        if code == 404:
+            missing.append(m)
+        elif code != 200:
+            unverified.append(f"{m} (answer {code})")
+    return missing, unverified
 
 
 EARLY_ERRORS = 4   # a model whose first 4 cases all error is stopped, not run through all of them
@@ -301,10 +317,9 @@ def main():
             models = [m for m in models if m in a.models.split(",")]
         models.sort(key=lambda mid: next(m["memGB"] for m in pool if m["id"] == mid))
     expect = dict(x.split("=", 1) for x in a.expect_digest)
-    if V3:
-        gone = missing_models(models)
-        if gone:
-            raise SystemExit(f"REFUSED no registry serves {gone}; no box is created for a tag that cannot pull")
+    gone, unsure = missing_models(models)
+    if gone or unsure:
+        raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
                "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect,
