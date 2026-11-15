@@ -42,21 +42,23 @@ cases = tb.kept()[:60]
 by_fam = {}
 for c in tb.kept():
     by_fam.setdefault(c["family"], c)
-sample = list(by_fam.values()) + cases[:20]
+sample = list({c["id"]: c for c in list(by_fam.values()) + cases[:20]}.values())   # each job once
 
 
 class ReplayBox:
     """Answers each step with holdout_v3's perfect answer for that step."""
 
     def __init__(self, case):
-        self.raws, self.k = h.perfect_raws(case), 0
+        self.raws, self.k, self.cid = h.perfect_raws(case), 0, case["id"]
 
     def post(self, path, body, timeout=600):
+        SEEN.setdefault(self.cid, []).append(body)
         r = self.raws[self.k]
         self.k += 1
         return r
 
 
+SEEN = {}   # case id -> the request bodies the box received, step by step
 eval_run.V3 = h
 eval_run.KEEP_RAW = True
 rows = [eval_run.one(ReplayBox(c), "teacher", c) for c in sample]
@@ -75,7 +77,11 @@ with open(p1, "w") as f:
         if i == 1:
             r["pass"] = False                      # a failed job
         if i == 2:
-            r["raw"] = r["raw"][:-1] if len(r["raw"]) > 1 else []   # an answer missing a step
+            r["raw"] = []                                            # an answer with no steps
+        if i == next(j for j, c in enumerate(sample) if len(c["steps"]) > 1 and j > 3):
+            r["raw"] = r["raw"][:-1]                                 # a multi-step answer missing its last step
+        if i == 3:
+            r["job_sha"] = "0" * 64                                  # an answer to a job that has since changed
         f.write(json.dumps(r) + "\n")
 check("a retry pass skips the jobs an earlier pass passed",
       sample[1]["id"] not in eval_run.passed_ids([p1]) and sample[0]["id"] in eval_run.passed_ids([p1]))
@@ -85,12 +91,15 @@ s = export_v3.export(run, out)
 got = [json.loads(l) for l in open(out)]
 ids = {g["id"].split("#")[0] for g in got}
 check("a failed job is not exported", sample[1]["id"] not in ids)
-check("a job whose answer misses a step is not exported", sample[2]["id"] not in ids or len(sample[2]["steps"]) == 1)
+multi = next(i for i, c in enumerate(sample) if len(c["steps"]) > 1 and i > 3)
 c0 = sample[0]
 r0 = [g for g in got if g["id"].startswith(c0["id"] + "#")]
+check("a job whose answer misses a step is not exported", sample[multi]["id"] not in ids and sample[2]["id"] not in ids)
+check("an answer whose job changed since the run is not exported", sample[3]["id"] not in ids and s["dropped_job_changed"] == 1)
 check("a passing job becomes one row per step", len(r0) == len(c0["steps"]))
-check("each row's request is the one the teacher saw at that step",
-      all(g["messages"] == h.request_v3(c0, "teacher", k)["body"]["messages"] for k, g in enumerate(r0)))
+check("each row's request is the one the box received at that step",
+      all(g["messages"] == SEEN[c0["id"]][k]["messages"] and g["tools"] == SEEN[c0["id"]][k]["tools"]
+          for k, g in enumerate(r0)))
 check("each row's target is the teacher's raw answer",
       all(g["target"]["tool_calls"] == rows[0]["raw"][k]["tool_calls"] for k, g in enumerate(r0)))
 check("the export summary counts what it wrote", s["rows"] == len(got) and s["jobs_kept"] == len(ids))

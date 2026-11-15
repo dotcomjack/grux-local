@@ -21,6 +21,14 @@ import holdout_v3  # noqa: E402
 import train_bank_v3  # noqa: E402
 
 
+def run_bank_sha(run_dir):
+    """The bank sha the teacher run recorded (manifest.json suite_sha), or None."""
+    try:
+        return json.load(open(os.path.join(run_dir, "manifest.json"))).get("suite_sha")
+    except (OSError, ValueError):
+        return None
+
+
 def kept_answers(run_dir):
     """case id -> the first passing row that carries every step's raw answer, across all pass files."""
     out = {}
@@ -50,13 +58,21 @@ def rows_for(case, answer, model="teacher"):
 
 
 def export(run_dir, out_path):
-    by_id = {c["id"]: c for c in train_bank_v3.kept()}
+    """An answer is paired only with the exact job it answered: its row's job_sha must equal the job's sha now, or,
+    for a row written before job_sha existed, the run's whole-bank sha must equal the bank's sha now."""
+    bank = train_bank_v3.kept()
+    by_id = {c["id"]: c for c in bank}
+    same_bank = run_bank_sha(run_dir) == holdout_v3.case_sha(bank)
     answers = kept_answers(run_dir)
-    fams, rows_n, short = {}, 0, 0
+    fams, rows_n, short, changed, gone = {}, 0, 0, 0, 0
     with open(out_path, "w") as f:
         for cid, ans in answers.items():
             case = by_id.get(cid)
             if case is None:
+                gone += 1
+                continue
+            if (ans["job_sha"] != holdout_v3.case_sha([case])) if "job_sha" in ans else not same_bank:
+                changed += 1
                 continue
             rows = rows_for(case, ans)
             if not rows:
@@ -70,7 +86,7 @@ def export(run_dir, out_path):
     for c in by_id.values():
         total[c["family"]] = total.get(c["family"], 0) + 1
     summary = {"jobs_kept": sum(fams.values()), "jobs_in_bank": len(by_id), "rows": rows_n,
-               "dropped_short_answers": short,
+               "dropped_short_answers": short, "dropped_job_changed": changed, "dropped_job_gone": gone,
                "families": {k: {"kept": fams.get(k, 0), "bank": n, "yield": round(fams.get(k, 0) / n, 3)}
                             for k, n in sorted(total.items())}}
     json.dump(summary, open(os.path.join(os.path.dirname(os.path.abspath(out_path)), "export.json"), "w"), indent=1)

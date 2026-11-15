@@ -102,6 +102,7 @@ def one_v3(box, model, case):
            "out_tokens": sum(x["out_tokens"] or 0 for x in steps), "seed": suite.SEED}
     if KEEP_RAW:
         row["raw"] = raws
+        row["job_sha"] = V3.case_sha([case])   # the exporter pairs this answer only with this exact job
     return row
 
 
@@ -204,6 +205,8 @@ def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=Tr
     todo = [c for c in cases if c["id"] not in have]
     if not todo:
         log(f"{model}: already complete ({len(have)} cases)", run_dir)
+        if drop:
+            box.drop(model)
         return True
     if deadline is not None and time.time() >= deadline:
         return "cap"
