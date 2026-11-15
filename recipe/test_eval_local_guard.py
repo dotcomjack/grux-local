@@ -105,5 +105,30 @@ check("footprint parses in MB", e.parse_footprint_gb("    phys_footprint: 7128 M
 check("footprint parses in GB", e.parse_footprint_gb("    phys_footprint: 12.5 GB") == 12.5)
 check("no footprint reads as None, never as zero", e.parse_footprint_gb("footprint: command not found") is None)
 
+calls = {"exit": None}
+try:
+    e.guard_tick(read=lambda: (4, 50), unload=lambda: None, abort_path="/nonexistent-dir/x.abort.json",
+                 exit=fake_exit, kill=lambda: [])
+except SystemExit:
+    pass
+check("an abort file that cannot be written (full disk) still stops the run with exit 7", calls["exit"] == 7)
+
+def boom():
+    raise ValueError("unreadable")
+try:
+    e.guard_step("no-such-model", os.path.join(run, "s.abort.json"), read=boom)
+    check("a reader that throws skips the tick instead of killing the guard thread", True)
+except Exception:
+    check("a reader that throws skips the tick instead of killing the guard thread", False)
+
+rp = os.path.join(run, "r.jsonl")
+open(rp, "w").write('{"case": "a"}\n{"case": "b"}\n{"case": "c", "steps": [1, 2')
+check("a row cut off by an abort is skipped on resume", e.load_done(rp) == {"a", "b"})
+check("the next row starts on its own line", open(rp).read().endswith("\n"))
+
+check("footprint's own high-water mark parses",
+      e.parse_footprint_gb("    phys_footprint: 7128 MB\n    phys_footprint_peak: 7647 MB", "phys_footprint_peak") == 7.65)
+check("a malformed number reads as None, never crashes", e.parse_footprint_gb("phys_footprint: 7.1.2 MB") is None)
+
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
