@@ -11,7 +11,11 @@ and every LaunchAgent on the Mini stopped until a password was typed. The run sc
   3. the disk preflight refuses a disk with no room to swap into above a 16,384 window, and leaves the 16,384
      runs that held on the Mini alone;
   4. the watchdog, fed a critical reading, unloads the model and stops the run with exit 7 and a written reason;
-     fed a healthy one, it does neither.
+     fed a healthy one, it does neither;
+  5. when the unload fails (a starved Ollama that never answers), the runner is still killed by pid and the run
+     still stops; the pid finder picks only the runner serving this exact model;
+  6. memory is read from footprint, which counts the GPU memory resident size misses (9B: 0.15 GB rss, 7.13 GB).
+Live proof against a real runner: live_guard_check.py, on a Mac with Ollama.
 No model runs. Prints PASS or FAIL per check; exit 1 on any FAIL.
 
   python3 recipe/test_eval_local_guard.py
@@ -76,6 +80,30 @@ calls = {"unload": 0, "exit": None}
 e.guard_tick(read=lambda: (1, 70), unload=lambda: calls.__setitem__("unload", 1),
              abort_path=os.path.join(run, "y.abort.json"), exit=fake_exit)
 check("healthy reading leaves the run alone", calls == {"unload": 0, "exit": None})
+
+calls = {"kill": 0, "exit": None}
+try:
+    e.guard_tick(read=lambda: (4, 50), unload=lambda: (_ for _ in ()).throw(TimeoutError("timed out")),
+                 abort_path=os.path.join(run, "z.abort.json"), exit=fake_exit,
+                 kill=lambda: (calls.__setitem__("kill", calls["kill"] + 1), [4242])[1])
+except SystemExit:
+    pass
+z = json.load(open(os.path.join(run, "z.abort.json")))
+check("a failed unload still kills the runner", calls["kill"] == 1 and z["killed"] == [4242])
+check("a failed unload still stops the run with exit 7", calls["exit"] == 7)
+check("a failed unload is written down, not hidden", z["unload"].startswith("failed"))
+
+PS = """  101 /opt/homebrew/opt/ollama/bin/ollama serve
+49207 /opt/homebrew/Cellar/ollama/0.40.8/libexec/ollama runner --model gruxai.com/grux/grux-local:9b --port 62645
+49300 /opt/homebrew/Cellar/ollama/0.40.8/libexec/ollama runner --model gruxai.com/grux/grux-local:2b --port 62700
+49400 /usr/bin/python3 eval_local.py --model gruxai.com/grux/grux-local:9b
+"""
+check("pid finder picks the runner for this exact model", e.parse_runner_pids(PS, "gruxai.com/grux/grux-local:9b") == [49207])
+check("pid finder never picks the server or the eval itself", e.parse_runner_pids(PS, "gruxai.com/grux/grux-local:2") == [])
+
+check("footprint parses in MB", e.parse_footprint_gb("    phys_footprint: 7128 MB\n    phys_footprint_peak: 7647 MB") == 7.13)
+check("footprint parses in GB", e.parse_footprint_gb("    phys_footprint: 12.5 GB") == 12.5)
+check("no footprint reads as None, never as zero", e.parse_footprint_gb("footprint: command not found") is None)
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

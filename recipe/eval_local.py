@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """S1 on a real Mac: the same suite, sent one request at a time to this Mac's own Ollama, as a
-person's Grux would. Records pass, latency and the Ollama runner's resident memory, so a pick is
+person's Grux would. Records pass, latency and the Ollama runner's memory footprint, so a pick is
 proven on the hardware it is for, not only on a GPU.
 
   python3 eval_local.py --model qwen3.5:4b --run results/mac-<stamp> [--think false] [--per-family N]
@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -37,6 +38,8 @@ PRESSURE_CRITICAL = 4      # kern.memorystatus_vm_pressure_level: 1 normal, 2 wa
 DISK_FREE_GB_MIN = 8       # room for macOS to grow swap into; the Mini had 4.2
 LARGE_WINDOW = 16384       # the disk floor binds above this: 16,384 runs held on the Mini with 0 B of swap
 GUARD_EVERY_S = 5
+UNLOAD_TIMEOUT_S = 5       # a dying Ollama may never answer; the runner is killed by pid right after
+PEAK = {"gb": None}        # the runner's largest footprint, sampled by the guard every tick
 
 
 def parse_swap_free_mb(text):
@@ -49,6 +52,29 @@ def parse_swap_free_mb(text):
 def parse_free_pct(text):
     m = re.search(r"memory free percentage: (\d+)%", text or "")
     return int(m.group(1)) if m else None
+
+
+def parse_footprint_gb(text):
+    """macOS footprint's phys_footprint line in GB. Resident size (ps rss) misses the GPU memory an MLX or Metal
+    runner holds: measured 2026-11-14 on the Mini, the 9B read 0.15 GB rss against 7.13 GB footprint."""
+    m = re.search(r"phys_footprint:\s*([\d.]+)\s*(KB|MB|GB|B)\b", text or "")
+    if not m:
+        return None
+    return round(float(m.group(1)) * {"B": 1e-9, "KB": 1e-6, "MB": 1e-3, "GB": 1}[m.group(2)], 2)
+
+
+def parse_runner_pids(ps_text, model):
+    """Pids of the Ollama runner serving exactly `model`, from `ps -axo pid=,args=` lines."""
+    pids = []
+    for line in (ps_text or "").splitlines():
+        parts = line.split(None, 1)
+        if len(parts) < 2 or not parts[0].isdigit():
+            continue
+        args = parts[1].split()
+        if (args and os.path.basename(args[0]) == "ollama" and "runner" in args and "--model" in args
+                and args.index("--model") + 1 < len(args) and args[args.index("--model") + 1] == model):
+            pids.append(int(parts[0]))
+    return pids
 
 
 def mem_verdict(pressure_level, free_pct):
@@ -81,28 +107,64 @@ def read_mem():
     return (int(level) if level.isdigit() else None), parse_free_pct(_sh("memory_pressure"))
 
 
-def guard_tick(read, unload, abort_path, exit=os._exit):
-    """One look. On a breach: unload the model (frees the memory at once), write why, stop the run with exit 7."""
+def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: []):
+    """One look. On a breach: ask Ollama to unload (short timeout), kill the runner by pid whatever the answer, write
+    why, stop the run with exit 7. The kill is what frees memory when Ollama itself is too starved to answer."""
     level, free_pct = read()
     why = mem_verdict(level, free_pct)
     if why is None:
         return
+    unloaded, killed = "not tried", []
     try:
         unload()
+        unloaded = "ok"
+    except Exception as e:
+        unloaded = "failed: " + str(e)[:120]
+    try:
+        killed = kill()
+    except Exception as e:
+        killed = ["kill failed: " + str(e)[:120]]
     finally:
         json.dump({"why": why, "pressure_level": level, "free_pct": free_pct, "at": time.time(),
+                   "unload": unloaded, "killed": killed,
                    "swap_free_mb": parse_swap_free_mb(_sh("sysctl", "vm.swapusage"))}, open(abort_path, "w"))
         print("ABORT " + why, file=sys.stderr, flush=True)
         exit(7)
 
 
+def runner_pids(model):
+    return parse_runner_pids(_sh("ps", "-axo", "pid=,args="), model)
+
+
+def kill_runner(model):
+    killed = []
+    for pid in runner_pids(model):
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
+def runner_footprint_gb(model):
+    """The runner's memory as macOS counts it (GPU memory included). None where footprint does not exist (Linux):
+    there, meta's ollama_size_gb is the number to read."""
+    vals = [parse_footprint_gb(_sh("footprint", "-p", str(pid))) for pid in runner_pids(model)]
+    vals = [v for v in vals if v is not None]
+    return round(sum(vals), 2) if vals else None
+
+
 def start_guard(model, abort_path):
     def unload():
-        post("/api/generate", {"model": model, "keep_alive": 0}, timeout=60)
+        post("/api/generate", {"model": model, "keep_alive": 0}, timeout=UNLOAD_TIMEOUT_S)
 
     def loop():
         while True:
-            guard_tick(read_mem, unload, abort_path)
+            guard_tick(read_mem, unload, abort_path, kill=lambda: kill_runner(model))
+            gb = runner_footprint_gb(model)
+            if gb is not None and (PEAK["gb"] is None or gb > PEAK["gb"]):
+                PEAK["gb"] = gb
             time.sleep(GUARD_EVERY_S)
     threading.Thread(target=loop, daemon=True).start()
 
@@ -112,14 +174,6 @@ def post(path, body, timeout=600):
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=timeout) as resp:
         return json.loads(resp.read().decode() or "{}")
-
-
-def runner_rss_gb():
-    """Resident memory of the Ollama model runner processes, from ps (KB)."""
-    out = subprocess.run(["ps", "-axo", "rss=,command="], capture_output=True, text=True).stdout
-    kb = sum(int(l.split(None, 1)[0]) for l in out.splitlines()
-             if "ollama" in l and " runner" in l and l.strip().split(None, 1)[0].isdigit())
-    return round(kb / 1048576, 2)
 
 
 def main():
@@ -174,7 +228,7 @@ def main():
     ps = post_get("/api/ps")
     m = next((x for x in ps.get("models", []) if x.get("name") == a.model), {})
     meta = {"model": a.model, "num_ctx": a.num_ctx, "think": a.think, "load_s": round(time.time() - t0, 1),
-            "ollama_size_gb": round(m.get("size", 0) / 1e9, 2), "runner_rss_gb": runner_rss_gb(),
+            "ollama_size_gb": round(m.get("size", 0) / 1e9, 2), "runner_footprint_gb": runner_footprint_gb(a.model),
             "version": post_get("/api/version").get("version")}
     print(json.dumps(meta), flush=True)
     with open(path, "a") as out:
@@ -203,7 +257,7 @@ def main():
                        "s": round(time.time() - t, 2)}
             out.write(json.dumps(row) + "\n")
             out.flush()
-    meta["peak_runner_rss_gb"] = runner_rss_gb()
+    meta["peak_runner_footprint_gb"] = PEAK["gb"]   # sampled every guard tick; rss_gb keys before this measured the wrong thing
     meta["wall_s"] = round(time.time() - t0, 1)
     json.dump(meta, open(os.path.join(a.run, stem + suffix + ".meta.json"), "w"), indent=1)
     print(json.dumps(meta), flush=True)
