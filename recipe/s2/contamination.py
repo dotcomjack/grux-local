@@ -3,7 +3,8 @@
 side's text). A training case is excluded when its user-facing text equals a held-out case's, or shares
 any 8-word run with one. The held-out list is version 1 (s2/holdout.py), version 2 (s2/holdout_v2.py) and
 version 3 (s2/holdout_v3.py), the three the swing charter names.
-Writes s2/train_exclude.json; gen_data.py skips those ids.
+Writes s2/train_exclude.json; gen_data.py skips those ids. The v3-shaped bank (s2/train_bank_v3.py) is checked by
+v3_excluded, every text of a job one at a time, and never lands in train_exclude.json (its ids are its own).
 
   python3 s2/contamination.py
 """
@@ -45,6 +46,58 @@ def held_out():
     v3 = [re.findall(r"[a-z0-9']+", t.lower()) for c in holdout_v3.cases() for t in holdout_v3.case_texts(c)]
     return ([texts(c) for c in holdout.cases()] + [texts(c) for c in holdout_v2.cases()]
             + [w for w in v3 if len(w) >= 3])   # not "Got it." as a whole text
+
+
+# Lines Grux itself prints at holdout_v3.GRUX_TAG, whole, with only counts and a day as slots: (the line, the source
+# file, the literal pieces of it that file holds, which test_train_bank_v3 checks). A v3-shaped training case carries
+# them in a tool result exactly as held-out v3 does, so they are product output, not held-out content. Only a whole
+# line that matches one of them is set aside; every other line, and every word around it, is still checked.
+RUNTIME_LINES = [
+    (r"ok: \d+ snapshots? from the last \d+ days(?:, showing \d+)?, the ones taken before a destructive command "
+     r"first, then newest first\.", "ShellTool/ShellRecoveryTools.swift",
+     (" from the last ", ", the ones taken before a destructive command first, then newest first.")),
+    (r"ok: no snapshot from the last \d+ days can be restored from chat\.", "ShellTool/ShellRecoveryTools.swift",
+     ("ok: no snapshot from the last ", " days can be restored from chat.")),
+    (r"pending: this is waiting for your OK in Approvals\. Nothing is sent or changed until you approve it\.",
+     "Jax/JaxToolGate.swift",
+     ("pending: this is waiting for your OK in Approvals.", " Nothing is sent or changed until you approve it.")),
+    (r"ok: \d+ lines? (?:today|yesterday|[A-Z][a-z]+day)(?: with outcome refused)?, \d+ shell commands? ran ok "
+     r"(?:today|yesterday|[A-Z][a-z]+day)\.", "ShellTool/ShellRecoveryTools.swift",
+     (" with outcome ", " shell command", " ran ok ")),
+]
+_RUNTIME = re.compile("|".join(f"(?:{p})" for p, _, _ in RUNTIME_LINES))
+
+
+def v3_texts(c):
+    """Every text a held-out-v3-shaped case shows a model (holdout_v3.case_texts: the ask, each earlier turn, each
+    scripted call and result), one per message, with RUNTIME_LINES set aside line by line."""
+    out = []
+    for t in holdout_v3.case_texts(c):
+        t = "\n".join(line for line in t.split("\n") if not _RUNTIME.fullmatch(line.strip()))
+        if t.strip():
+            out.append(t)
+    return out
+
+
+def v3_excluded(cases):
+    """{id: why} for each v3-shaped training case (s2/train_bank_v3.py) that shares a whole text (3 words or more)
+    or any 8-word run with held-out v1, v2 or v3, one text at a time, by held_out()'s reading of those sets."""
+    held = held_out()
+    whole = {" ".join(w) for w in held if len(w) >= 3}
+    runs = set().union(*[grams(w) for w in held])
+    memo, out = {}, {}
+    for c in cases:
+        for t in v3_texts(c):
+            if t not in memo:
+                ws = re.findall(r"[a-z0-9']+", t.lower())
+                joined = " ".join(ws)
+                shared = sorted(grams(ws) & runs)
+                memo[t] = ("same text: " + joined[:60] if len(ws) >= 3 and joined in whole
+                           else shared[0] if shared else None)
+            if memo[t]:
+                out[c["id"]] = memo[t]
+                break
+    return out
 
 
 def main():
