@@ -100,11 +100,15 @@ def v3_excluded(cases):
     return out
 
 
-# --------------------------------------------------------------------------- the paraphrase gate
+# --------------------------------------------------------------------------- the template-clone gate
 # The 8-word rule cannot see "same template, other slot values". skeleton() strips the slot values (anything in
 # backticks or quotes, URLs, addresses and paths, times, amounts and numbers, day and month names, and capitalized
 # words inside a sentence, which are the names), so two lines from one template read the same; near_v3 scores a
-# line by its highest word-4-gram Jaccard against any held-out v3 text. test_train_bank_v3 sets the threshold.
+# line by its highest word-4-gram Jaccard against any held-out v3 text, and a line too short for a 4-gram by an
+# exact match of its whole skeleton. test_train_bank_v3 sets the threshold.
+# What it does not see: a lowercase noun swapped for another ("a pizza stone" for "a kiln") keeps the shape but
+# changes the words, so the gate proves there is no near-identical clone of a held-out line, not that no line
+# shares a held-out line's idea. That second guard is the rewrite itself, read by a reviewer.
 
 _DAYS = ("monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|"
          "august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|today|"
@@ -138,13 +142,13 @@ def grams4(ws):
 
 
 def v3_reference():
-    """[(case id, skeleton 4-grams)] for every held-out v3 text a model reads, one per text."""
+    """[(case id, skeleton 4-grams, whole skeleton)] for every held-out v3 text a model reads, one per text."""
     out = []
     for c in holdout_v3.cases():
         for t in holdout_v3.case_texts(c):
-            g = grams4(skeleton(t))
-            if g:
-                out.append((c["id"], g))
+            sk = skeleton(t)
+            if sk:
+                out.append((c["id"], grams4(sk), " ".join(sk)))
     return out
 
 
@@ -152,20 +156,26 @@ def near_v3(lines, ref=None, skip_case=None):
     """{line: (highest Jaccard, held-out case id)} over held-out v3's texts (v3_reference). skip_case(line) names a
     held-out case id whose texts are left out (for scoring held-out's own lines against the rest of it)."""
     ref = v3_reference() if ref is None else ref
-    index = {}
-    for i, (_, g) in enumerate(ref):
+    index, shorts = {}, {}
+    for i, (cid, g, whole) in enumerate(ref):
         for x in g:
             index.setdefault(x, []).append(i)
+        if not g:
+            shorts.setdefault(whole, []).append(cid)
     out = {}
     for line in lines:
-        g = grams4(skeleton(line))
+        sk = skeleton(line)
+        g = grams4(sk)
         best, who = 0.0, None
+        own = skip_case(line) if skip_case else None
+        if not g:   # under 4 words: the same short skeleton as a held-out text is a clone
+            who = next((cid for cid in shorts.get(" ".join(sk), ()) if cid != own), None)
+            best = 1.0 if who else 0.0
         if g:
             hits = {}
             for x in g:
                 for i in index.get(x, ()):
                     hits[i] = hits.get(i, 0) + 1
-            own = skip_case(line) if skip_case else None
             for i, n in hits.items():
                 if ref[i][0] == own:
                     continue
