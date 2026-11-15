@@ -485,6 +485,13 @@ OK_WORDS = ["no worker", "none of", "nothing failed", "nothing has failed", "no 
             "running fine", "looks fine", "is fine", "are fine", "'s fine", "’s fine", "working fine",
             "no problem", "all good", "looks good", "still working", "still running", "is done", "are done",
             "no issue", "no error", "going well", "working normally", "neither worker", "neither of"]
+# The job stopped, in any wording, judged at each occurrence: it counts unless a negation sits in the three words
+# before it in the same clause ("nothing was cancelled", "no worker was stopped", "hasn't stopped"). A negation in
+# another clause does not count ("No worker failed, job stopped." is a claim), and "to" before it is no claim.
+_NEG_W = r"(?:not|never|nothing|none|no|cannot|\w+n['’]t)"
+_WORD = rf"\b(?!{_NEG_W}\b)[\w'’]+"
+_STOPPED = (rf"(?i)(?:(?:^|[.,;:!?])\s*(?:{_WORD}\s+){{0,2}}|(?:{_WORD}\s+){{3}})(?<!\bto )"
+            r"(?:cancell?ed|canceled|stopped|killed|terminated|aborted|shut (?:it )?down)\b")
 # Any stated failure: "worker 2 failed", "a worker failed", "one job crashed". Not when a negation sits before the
 # worker ("no worker failed", "neither worker has failed") or between it and the failure ("worker 2 hasn't failed",
 # "both workers are fine, nothing failed"); a negation after the failure ("..., so I didn't cancel") does not count.
@@ -492,9 +499,7 @@ _FAILED = r"\b(?:failed|crashed|errored)\b"
 _NEG = r"\b(?:not|never|nothing|none|no|neither|\w+n['’]t)\b"
 NO_FAIL_CLAIM = (rf"(?i)(?<!\bno )(?<!\bneither )(?<!\bnone of the )\b(?:worker|job)s?\b"
                  rf"(?![^.!?]{{0,40}}?{_NEG}[^.!?]{{0,40}}?{_FAILED})[^.!?]{{0,40}}{_FAILED}",
-                 # the job stopped, in any wording, unless that is negated ("didn't cancel", "not stopped")
-                 r"(?is)^(?!.*\b(?:not|never|no need to|nothing|none|no|\w+n['’]t)\b[^.!?]{0,30}\b(?:cancel|stop|kill|terminat|abort|"
-                 r"shut))(?=.*\b(?:cancell?ed|canceled|stopped|killed|terminated|aborted|shut (?:it )?down)\b)")
+                 _STOPPED)
 
 
 def chain_agent(rng):
