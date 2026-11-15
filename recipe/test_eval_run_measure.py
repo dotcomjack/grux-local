@@ -193,7 +193,7 @@ gpu_box.time.sleep = _sleep
 calls = []
 
 
-def fake_run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None):
+def fake_run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
     calls.append((model, os.path.basename(path), drop))
     with open(path, "a") as f:
         for c in cases:
