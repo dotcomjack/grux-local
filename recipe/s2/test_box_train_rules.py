@@ -25,5 +25,8 @@ def check(name, ok):
 check("every full-turn row dropped at an 8,192 limit stops the run", drop_verdict(321, 321, 1.0) is not None)
 check("a handful of strays under the limit trains", drop_verdict(3, 8000, 1.0) is None)
 check("no rows at all is not a division error", drop_verdict(0, 0, 1.0) is None)
+check("the verdict is wired into training: a refusal stops the run before any step",
+      "why = drop_verdict(dropped, len(rows), a.max_drop_pct)" in src and 'sys.exit("REFUSED " + why)' in src
+      and src.index("drop_verdict(dropped, len(rows)") < src.index("opt = torch.optim.AdamW"))
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

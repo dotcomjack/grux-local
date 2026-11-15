@@ -36,8 +36,9 @@ for name, mod in (("v1", holdout), ("v2", holdout_v2)):
     cs = [c for c in mod.cases() if len(ct.texts(c)) >= 8]
     hit = sum(caught({"id": "train-x", **{k: v for k, v in c.items() if k not in ct.SKIP}}) for c in cs)
     check(f"a training case copying a held-out {name} case is excluded ({hit} of {len(cs)})", hit == len(cs))
-v3 = [t for c in holdout_v3.cases() for t in holdout_v3.case_texts(c) if len(t.split()) >= 8][:200]
-check("a training case copying held-out v3 text is excluded", all(caught({"id": "train-x", "user": t}) for t in v3))
+v3 = [t for c in holdout_v3.cases() for t in holdout_v3.case_texts(c) if len(t.split()) >= 8]
+hit = sum(caught({"id": "train-x", "user": t}) for t in v3)
+check(f"a training case copying held-out v3 text is excluded ({hit} of {len(v3)} texts)", hit == len(v3))
 check("an unrelated sentence is not excluded",
       not caught({"id": "train-y", "user": "please water the ferns on the north balcony before the frost arrives tonight"}))
 
