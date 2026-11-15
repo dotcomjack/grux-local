@@ -19,26 +19,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import holdout_v3  # noqa: E402
 import train_bank_v3  # noqa: E402
-
-
-def first_per_family(cases, n):
-    """eval_run.py --limit n: the first n cases of each family, in bank order."""
-    seen = {}
-    return [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= n]
-
-
-def legacy_bank_ok(run_dir, bank):
-    """For rows written before job_sha: the run's manifest sha must be the sha of the bank as that run sliced it
-    (the whole bank, or the first --limit jobs of each family, the limit read from the manifest or its family
-    counts). Fails closed when the manifest is missing or matches neither."""
-    try:
-        m = json.load(open(os.path.join(run_dir, "manifest.json")))
-    except (OSError, ValueError):
-        return False
-    sha = m.get("suite_sha")
-    limits = {m.get("limit") or 0, max((m.get("families") or {}).values() or [0])}
-    return sha == holdout_v3.case_sha(bank) or any(
-        n and sha == holdout_v3.case_sha(first_per_family(bank, n)) for n in limits)
+import train_prompt  # noqa: E402
 
 
 def kept_answers(run_dir):
@@ -62,7 +43,7 @@ def rows_for(case, answer, model="teacher"):
         return []
     out = []
     for k, raw in enumerate(raws):
-        body = holdout_v3.request_v3(case, model, k)["body"]
+        body = train_prompt.student_body(case, k)
         out.append({"id": f"{case['id']}#{k}", "family": case["family"], "messages": body["messages"],
                     "tools": body["tools"], "target": {"content": raw.get("content") or "",
                                                        "tool_calls": raw.get("tool_calls") or []}})
@@ -70,20 +51,20 @@ def rows_for(case, answer, model="teacher"):
 
 
 def export(run_dir, out_path):
-    """An answer is paired only with the exact job it answered: its row's job_sha must equal the job's sha now, or,
-    for a row written before job_sha existed, the run's whole-bank sha must equal the bank's sha now."""
+    """An answer is paired only with the exact job it answered and the exact tools it was offered: its row's job_sha
+    and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported."""
     bank = train_bank_v3.kept()
     by_id = {c["id"]: c for c in bank}
-    same_bank = legacy_bank_ok(run_dir, bank)
     answers = kept_answers(run_dir)
-    fams, rows_n, short, changed, gone = {}, 0, 0, 0, 0
+    fams, rows_n, short, changed, gone, hinted = {}, 0, 0, 0, 0, 0
     with open(out_path, "w") as f:
         for cid, ans in answers.items():
             case = by_id.get(cid)
             if case is None:
                 gone += 1
                 continue
-            if (ans["job_sha"] != holdout_v3.case_sha([case])) if "job_sha" in ans else not same_bank:
+            if (ans.get("job_sha") != holdout_v3.case_sha([case])
+                    or ans.get("tools_sha") != train_prompt.tools_sha(case)):
                 changed += 1
                 continue
             rows = rows_for(case, ans)
@@ -93,12 +74,14 @@ def export(run_dir, out_path):
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             rows_n += len(rows)
+            hinted += bool(ans.get("hint"))
             fams[case["family"]] = fams.get(case["family"], 0) + 1
     total = {}
     for c in by_id.values():
         total[c["family"]] = total.get(c["family"], 0) + 1
     summary = {"jobs_kept": sum(fams.values()), "jobs_in_bank": len(by_id), "rows": rows_n,
                "dropped_short_answers": short, "dropped_job_changed": changed, "dropped_job_gone": gone,
+               "hinted_jobs": hinted,
                "families": {k: {"kept": fams.get(k, 0), "bank": n, "yield": round(fams.get(k, 0) / n, 3)}
                             for k, n in sorted(total.items())}}
     json.dump(summary, open(os.path.join(os.path.dirname(os.path.abspath(out_path)), "export.json"), "w"), indent=1)

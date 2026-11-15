@@ -61,6 +61,8 @@ class ReplayBox:
 SEEN = {}   # case id -> the request bodies the box received, step by step
 eval_run.V3 = h
 eval_run.KEEP_RAW = True
+import train_prompt  # noqa: E402
+eval_run.TRAIN_PROMPT = train_prompt   # train_v3 runs always carry the job's own tools
 rows = [eval_run.one(ReplayBox(c), "teacher", c) for c in sample]
 check("every sampled bank job passes with the perfect answers", all(r["pass"] for r in rows))
 check("each passing row keeps one raw answer per step",
@@ -104,28 +106,52 @@ check("each row's target is the teacher's raw answer",
       all(g["target"]["tool_calls"] == rows[0]["raw"][k]["tool_calls"] for k, g in enumerate(r0)))
 check("the export summary counts what it wrote", s["rows"] == len(got) and s["jobs_kept"] == len(ids))
 
-# rows written before job_sha existed: trusted only when the run's manifest names the bank as the run sliced it
-legacy = tempfile.mkdtemp()
-lim = 3
-sliced = export_v3.first_per_family(tb.kept(), lim)
-pick = sliced[0]
-eval_run.KEEP_RAW = True
-lrow = dict(eval_run.one(ReplayBox(pick), "teacher", pick))
-lrow.pop("job_sha")   # as a row written before job_sha existed
-with open(os.path.join(legacy, "t-train_v3-pass1.jsonl"), "w") as f:
-    f.write(json.dumps(lrow) + "\n")
-fams = {}
-for c in sliced:
-    fams[c["family"]] = fams.get(c["family"], 0) + 1
-json.dump({"suite_sha": h.case_sha(sliced), "families": fams}, open(os.path.join(legacy, "manifest.json"), "w"))
-s2 = export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))
-check("a legacy row from a --limit run is exported when the manifest matches that slice", s2["jobs_kept"] == 1)
-json.dump({"suite_sha": "0" * 64, "families": fams}, open(os.path.join(legacy, "manifest.json"), "w"))
-s3 = export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))
-check("a legacy row is refused when the manifest names another bank", s3["jobs_kept"] == 0 and s3["dropped_job_changed"] == 1)
-os.remove(os.path.join(legacy, "manifest.json"))
-check("a legacy row is refused when the run has no manifest",
-      export_v3.export(legacy, os.path.join(legacy, "train.jsonl"))["jobs_kept"] == 0)
+# decision 1: the short prompt; decision 2: the hint reaches the teacher only
+import train_prompt as tp  # noqa: E402
+full = len(h.wire_tools())
+ok_named, ok_size, sizes = True, True, []
+for c in tb.kept()[::40]:
+    names = tp.tool_names_for(c)
+    want = set(tp._named(c, set(h.tool_names())))
+    ok_named &= want <= set(names)
+    ok_size &= len(names) == max(tp.TOOLS_PER_JOB, len(want)) and len(set(names)) == len(names)
+    body = tp.student_body(c, 0)
+    sizes.append((len(json.dumps(body["tools"])) + sum(len(m["content"] or "") for m in body["messages"])) / 4)
+check("every tool a job names is offered, planted and forbidden ones included", ok_named)
+check(f"each job offers {tp.TOOLS_PER_JOB} distinct tools, not {full}", ok_size)
+sizes.sort()
+check(f"a training prompt is about 12,000 tokens, not 31,000 (median {int(sizes[len(sizes) // 2])}, max {int(sizes[-1])})",
+      sizes[len(sizes) // 2] < 14000 and sizes[-1] < 16000)
+inj = next(c for c in tb.kept() if c["family"] == "injection")
+other = next(c for c in tb.kept() if c["family"] == "chain")
+raw_body = h.request_v3(inj, "t", 0)["body"]
+hinted = tp.teacher_body(raw_body, inj, hint=True)
+check("the hint reaches the teacher on an injection job", hinted["messages"][0]["content"].endswith(tp.HINTS["injection"]))
+check("the hint never reaches the training row", tp.HINTS["injection"] not in json.dumps(tp.student_body(inj, 0)))
+check("a family without a hint is sent unchanged", tp.teacher_body(h.request_v3(other, "t", 0)["body"], other, hint=True)
+      ["messages"] == h.request_v3(other, "t", 0)["body"]["messages"])
+check("the tool choice is the same on every call (seeded by the job id)", tp.tool_names_for(inj) == tp.tool_names_for(inj))
+
+eval_run.TRAIN_PROMPT, eval_run.KEEP_RAW, eval_run.HINT_NOW = tp, True, True
+SEEN.clear()
+hrow = eval_run.one(ReplayBox(inj), "teacher", inj)
+check("on a hint pass the box received the hint and only this job's tools",
+      SEEN[inj["id"]][0]["messages"][0]["content"].endswith(tp.HINTS["injection"])
+      and len(SEEN[inj["id"]][0]["tools"]) == len(tp.tool_names_for(inj)))
+check("a hint-pass row records the hint and the tools it was offered", hrow["hint"] and hrow["tools_sha"] == tp.tools_sha(inj))
+hd = tempfile.mkdtemp()
+with open(os.path.join(hd, "t-train_v3-pass3.jsonl"), "w") as f:
+    f.write(json.dumps(hrow) + "\n")
+    old = dict(hrow, case=other["id"], job_sha=h.case_sha([other]))
+    old.pop("tools_sha")
+    f.write(json.dumps(old) + "\n")                      # a row taught on the full tool list
+s4 = export_v3.export(hd, os.path.join(hd, "train.jsonl"))
+got4 = [json.loads(l) for l in open(os.path.join(hd, "train.jsonl"))]
+check("a hinted job exports without the hint, on its own tools",
+      s4["jobs_kept"] == 1 and s4["hinted_jobs"] == 1 and tp.HINTS["injection"] not in json.dumps(got4)
+      and got4[0]["tools"] == tp.student_body(inj, 0)["tools"])
+check("a row taught on the full tool list is never exported", s4["dropped_job_changed"] == 1)
+eval_run.HINT_NOW = False
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
