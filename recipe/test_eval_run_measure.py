@@ -224,6 +224,8 @@ class FakeOllamaBox(FakeBox):
         return False
 
 
+_missing = eval_run.missing_models
+eval_run.missing_models = lambda models: []   # the fake model names below are served by no registry
 eval_run.run_model = fake_run_model
 eval_run.meter.Reserved = FakeReserved
 eval_run.OllamaBox = FakeOllamaBox
@@ -264,6 +266,24 @@ fin = json.load(open(os.path.join(run4, "finish.json")))
 check("with less than a useful box slice of money, no box is made", made["n"] == 0)
 check("... and the finish file says the cap stopped it with every model unrun",
       fin["stopped_by"] == "cap" and len(fin["unfinished"]) == 2)
+
+check("a library tag's manifest is read from Ollama's registry",
+      eval_run.manifest_url("qwen3.5:122b-a10b") == "https://registry.ollama.ai/v2/library/qwen3.5/manifests/122b-a10b")
+check("a host-qualified tag's manifest is read from its own host",
+      eval_run.manifest_url("gruxai.com/grux/grux-local:9b") == "https://gruxai.com/v2/grux/grux-local/manifests/9b")
+served = {"https://registry.ollama.ai/v2/library/qwen3.5/manifests/122b-a10b": 200}
+check("a tag no registry serves is found before any box exists",
+      _missing(["qwen3.5:122b-a10b", "qwen3.5:122b-a10b-q4"], fetch=lambda u: served.get(u, 404))
+      == ["qwen3.5:122b-a10b-q4"])
+
+eval_run.missing_models = lambda models: ["a:1"]
+try:
+    sys.argv = ["eval_run.py", "--run", tempfile.mkdtemp(), "--set", "holdout_v3", "--models", "a:1", "--meter", "x"]
+    made["n"] = 0
+    eval_run.main()
+    check("a run naming a tag no registry serves is refused before any box", False)
+except SystemExit as e:
+    check("a run naming a tag no registry serves is refused before any box", "REFUSED" in str(e) and made["n"] == 0)
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
