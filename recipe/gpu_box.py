@@ -16,11 +16,21 @@ from daytona import (CreateSandboxFromImageParams, Daytona, GpuType, Image, List
 from lease import LEASE_MINUTES, Lease
 
 PORT = 11434
+OLLAMA_VERSION = "0.40.8"
+# The Mac's format on a Linux GPU, proven by the S2 training boxes (train_box.py BOOT, 2026-10-22): the shipped
+# Grux Local tiers are safetensors nvfp4 on Ollama's mlx runner, which the ollama/ollama image does not carry.
+# Ollama's install.sh plus its separate MLX release download, on the cuDNN 9 image, served nvfp4 on Hopper.
+MLX_IMAGE = "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+MLX_SETUP = ("apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl zstd ca-certificates >/dev/null 2>&1 && "
+             f"curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION={OLLAMA_VERSION} sh >/tmp/ollama-install.log 2>&1 && "
+             f"curl -fsSL -o /tmp/mlx.tar.zst https://github.com/ollama/ollama/releases/download/v{OLLAMA_VERSION}/"
+             "ollama-linux-amd64-mlx.tar.zst && zstd -dc /tmp/mlx.tar.zst | tar -x -C /usr/local && rm -f /tmp/mlx.tar.zst")
+SETUP_MAX_S = 900
 
 
 class OllamaBox:
     def __init__(self, gpu_types, label, ttl_minutes, spot=True, log=print, num_parallel=4, allow_paid=False,
-                 owner="grux", image="ollama/ollama:latest", reservation=None):
+                 owner="grux", image="ollama/ollama:latest", reservation=None, setup=None, expect_version=None):
         # Every box is paid for before it exists, each with its own reservation (recipe/meter.py).
         self.reservation = reservation
         if not self.reservation:
@@ -39,6 +49,7 @@ class OllamaBox:
         self.url = self.token = None
         self.num_parallel = num_parallel
         self.owner, self.image = owner, image
+        self.setup, self.expect_version = setup, expect_version
         self.info = {}
 
     def __enter__(self):
@@ -81,6 +92,8 @@ class OllamaBox:
                      "target": m.get("target"), "spot": m.get("spot"), "cpu": m.get("cpu"),
                      "memory": m.get("memory"), "disk": m.get("disk"), "create_errors": errors,
                      "created_s": round(time.time() - t0, 1), "started_at": time.time()}
+        if self.setup:
+            self._run_setup()
         self.sb.process.create_session("ollama")
         self.sb.process.execute_session_command(
             "ollama", SessionExecuteRequest(command="ollama serve", run_async=True))
@@ -94,9 +107,31 @@ class OllamaBox:
                 time.sleep(2)
         else:
             raise RuntimeError("ollama never answered through the preview proxy")
+        version = self.get("/api/version").get("version")
+        self.info["ollama_version"] = version
+        if self.expect_version and version != self.expect_version:
+            raise RuntimeError(f"ollama {version} on the box, not {self.expect_version}: scores would not compare")
         smi = self.sb.process.exec("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")
         self.info["nvidia_smi"] = (smi.result or "").strip()
         self.log(f"box up: {self.info}")
+
+    def _run_setup(self):
+        """Install before serving. A synchronous exec dies at the proxy after about 200 s, so the setup runs detached
+        and leaves a marker; a failure or a setup past SETUP_MAX_S ends the start (and so deletes the box)."""
+        t0 = time.time()
+        self.sb.process.create_session("setup")
+        self.sb.process.execute_session_command("setup", SessionExecuteRequest(
+            command=f"( {self.setup} ) && touch /tmp/setup.ok || touch /tmp/setup.failed", run_async=True))
+        while time.time() - t0 < SETUP_MAX_S:
+            time.sleep(10)
+            r = (self.sb.process.exec("ls /tmp/setup.ok /tmp/setup.failed 2>/dev/null").result or "")
+            if "setup.ok" in r:
+                self.info["setup_s"] = round(time.time() - t0, 1)
+                return
+            if "setup.failed" in r:
+                tail = (self.sb.process.exec("tail -5 /tmp/ollama-install.log 2>/dev/null").result or "").strip()
+                raise RuntimeError("box setup failed: " + tail[-300:])
+        raise RuntimeError(f"box setup did not finish in {SETUP_MAX_S} s")
 
     def gpu_used_gb(self):
         """What the GPU itself reports in use, the ground truth when Ollama's /api/ps undercounts

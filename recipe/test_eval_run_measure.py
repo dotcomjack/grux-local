@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""eval_run.py spends GPU money only on models that load, and never past its cap. No box is made: a fake box and a
+fake meter stand in.
+
+  1. step 0: a model that does not load, or whose pulled digest is not the expected one, writes no rows;
+  2. a model whose first cases all fail is stopped early instead of run through every case;
+  3. the dollar cap binds inside a model, not only between models;
+  4. a clean model writes one scored row per case and frees its disk only after its last pass;
+  5. --passes scores each model into its own file, and the kill rule stops the run when the first pass of the named
+     model is at or above the threshold.
+
+  GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> python3 recipe/test_eval_run_measure.py
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+import types
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+try:
+    import daytona  # noqa: F401
+except ImportError:   # no box is made here, so a stand-in for the SDK is enough
+    sys.modules["daytona"] = types.SimpleNamespace(**{n: object for n in (
+        "CreateSandboxFromImageParams", "Daytona", "GpuType", "Image", "ListSandboxesQuery", "Resources",
+        "SessionExecuteRequest")})
+import eval_run  # noqa: E402
+
+fails = 0
+
+
+def check(name, ok):
+    global fails
+    print(("PASS " if ok else "FAIL ") + name)
+    fails += 0 if ok else 1
+
+
+class FakeBox:
+    def __init__(self, loads=True, digest="sha256:abc", answer_ok=True):
+        self.loads, self.digest, self.answer_ok = loads, digest, answer_ok
+        self.drops, self.posts = 0, 0
+        self.info = {"gpu_type": "H200", "id": "fake"}
+
+    def pull(self, model):
+        return "success", 0.1
+
+    def get(self, path, timeout=30):
+        if path == "/api/tags":
+            return {"models": [{"name": "m:1", "digest": self.digest}]}
+        if path == "/api/ps":
+            return {"models": [{"name": "m:1", "runner": "mlx", "size_vram": 1}]}
+        return {"version": "0.40.8"}
+
+    def post(self, path, body, timeout=600):
+        self.posts += 1
+        if path == "/api/generate":
+            if not self.loads:
+                raise RuntimeError("this model requires MLX support")
+            return {"done": True}
+        return {}
+
+    def drop(self, model):
+        self.drops += 1
+
+    def evicted(self):
+        return False
+
+
+CASES = [{"id": f"c{i}", "family": "f"} for i in range(12)]
+
+
+def fake_one(ok=True, delay=0.0):
+    def one(box, model, case):
+        time.sleep(delay)
+        if not ok:
+            return {"case": case["id"], "family": "f", "status": "error", "error": "boom", "s": 0}
+        return {"case": case["id"], "family": "f", "status": "scored", "pass": True, "s": 0}
+    return one
+
+
+def rows(path):
+    return [json.loads(l) for l in open(path)] if os.path.exists(path) else []
+
+
+run = tempfile.mkdtemp()
+eval_run.log = lambda msg, run_dir=None: None
+
+eval_run.one = fake_one()
+p = os.path.join(run, "a.jsonl")
+check("a model that does not load is not scored", eval_run.run_model(FakeBox(loads=False), "m:1", CASES, p, run, 4) is False)
+check("... and writes no rows", rows(p) == [])
+probes = [json.loads(l) for l in open(os.path.join(run, "capabilities.jsonl"))]
+check("... and its probe verdict is written down", probes[-1]["probe_verdict"] == "did not load")
+
+p = os.path.join(run, "b.jsonl")
+check("a pulled digest that is not the shipped one is not scored",
+      eval_run.run_model(FakeBox(digest="sha256:zzz"), "m:1", CASES, p, run, 4, expect_digest="sha256:abc") is False)
+check("... and writes no rows", rows(p) == [])
+
+eval_run.one = fake_one(ok=False)
+p = os.path.join(run, "c.jsonl")
+box = FakeBox()
+check("a model whose first cases all fail is stopped", eval_run.run_model(box, "m:1", CASES, p, run, 1) is False)
+check("... before it runs every case", box.posts < len(CASES))
+
+eval_run.one = fake_one(delay=0.05)
+p = os.path.join(run, "d.jsonl")
+check("the cap binds inside a model", eval_run.run_model(FakeBox(), "m:1", CASES, p, run, 2,
+                                                         deadline=time.time() - 1) == "cap")
+check("... with at most one row written", len(rows(p)) <= 1)
+
+eval_run.one = fake_one()
+p = os.path.join(run, "e.jsonl")
+box = FakeBox()
+check("a clean model finishes", eval_run.run_model(box, "m:1", CASES, p, run, 4) is True)
+check("... one scored row per case", len(rows(p)) == len(CASES) and all(r["status"] == "scored" for r in rows(p)))
+check("... and frees its disk once", box.drops == 1)
+box = FakeBox()
+eval_run.run_model(box, "m:1", CASES, os.path.join(run, "f.jsonl"), run, 4, drop=False)
+check("a model with a pass still to come keeps its disk", box.drops == 0)
+
+# main: passes and the kill rule, with a fake box and a fake meter
+calls = []
+
+
+def fake_run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None):
+    calls.append((model, os.path.basename(path), drop))
+    with open(path, "a") as f:
+        for c in cases:
+            f.write(json.dumps({"case": c["id"], "status": "scored", "pass": True}) + "\n")
+    return True
+
+
+class FakeReserved:
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return "rid"
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeOllamaBox(FakeBox):
+    def __init__(self, *a, **k):
+        super().__init__()
+        self.kw = k
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+eval_run.run_model = fake_run_model
+eval_run.meter.Reserved = FakeReserved
+eval_run.OllamaBox = FakeOllamaBox
+run2 = tempfile.mkdtemp()
+sys.argv = ["eval_run.py", "--run", run2, "--set", "holdout_v3", "--models", "a:1,b:1", "--passes", "2",
+            "--limit", "1", "--meter", "x", "--mlx"]
+eval_run.main()
+check("--passes 2 scores each model twice, each pass in its own file",
+      [c[1] for c in calls] == ["a_1-holdout_v3-pass1.jsonl", "a_1-holdout_v3-pass2.jsonl",
+                                "b_1-holdout_v3-pass1.jsonl", "b_1-holdout_v3-pass2.jsonl"])
+check("... and frees a model's disk only after its last pass", [c[2] for c in calls] == [False, True, False, True])
+
+calls.clear()
+run3 = tempfile.mkdtemp()
+sys.argv = ["eval_run.py", "--run", run3, "--set", "holdout_v3", "--models", "a:1,b:1", "--passes", "2",
+            "--limit", "1", "--meter", "x", "--kill-model", "a:1", "--kill-at", "85"]
+eval_run.main()
+check("the kill rule stops the run after the named model's first pass scores at or above the threshold",
+      [c[0] for c in calls] == ["a:1"])
+check("... and the finish file lists what was left unrun",
+      len(json.load(open(os.path.join(run3, "finish.json")))["unfinished"]) == 3)
+
+print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
+sys.exit(1 if fails else 0)
