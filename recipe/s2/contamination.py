@@ -186,6 +186,45 @@ def near_v3(lines, ref=None, skip_case=None):
     return out
 
 
+SHORT = 12   # a line under this many skeleton words also gets the short-line score
+
+
+def grams3(ws):
+    return {" ".join(ws[i:i + 3]) for i in range(len(ws) - 2)}
+
+
+def near_v3_short(lines, skip_case=None):
+    """{line: (highest containment, held-out case id)} for each line under SHORT skeleton words: the share of the
+    line's word-3-grams found in one held-out v3 text. A one-word swap in a six-word line keeps half of its 3-grams
+    and scores 0.5, where its 4-gram Jaccard reads 0.20. Longer lines score (0.0, None)."""
+    ref = []
+    for c in holdout_v3.cases():
+        for t in holdout_v3.case_texts(c):
+            g = grams3(skeleton(t))
+            if g:
+                ref.append((c["id"], g))
+    index = {}
+    for i, (_, g) in enumerate(ref):
+        for x in g:
+            index.setdefault(x, []).append(i)
+    out = {}
+    for line in lines:
+        sk = skeleton(line)
+        g = grams3(sk)
+        best, who = 0.0, None
+        if g and len(sk) < SHORT:
+            own = skip_case(line) if skip_case else None
+            hits = {}
+            for x in g:
+                for i in index.get(x, ()):
+                    hits[i] = hits.get(i, 0) + 1
+            for i, n in hits.items():
+                if ref[i][0] != own and n / len(g) > best:
+                    best, who = n / len(g), ref[i][0]
+        out[line] = (best, who)
+    return out
+
+
 def main():
     held = held_out()
     whole = {" ".join(w) for w in held}
