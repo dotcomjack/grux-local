@@ -10,6 +10,7 @@ out/ckpt (adapter, optimizer, scheduler, step) atomically for the caller to pull
 continues from such a checkpoint; `--merge-only DIR` merges a finished adapter without training.
 """
 import argparse
+import sys
 import json
 import math
 import os
@@ -20,6 +21,14 @@ import torch
 import torch.nn.functional as F
 import transformers
 from peft import LoraConfig, PeftModel, get_peft_model
+
+
+def drop_verdict(dropped, total, max_pct):
+    """None when few enough rows were too long to train on, else why the run must stop. A silent drop trained the
+    full-turn rows (about 30,000 tokens) out of existence at the old 8,192 limit."""
+    if total and 100.0 * dropped / total > max_pct:
+        return f"{dropped} of {total} rows are longer than --max-len ({100.0 * dropped / total:.1f}% > {max_pct}%)"
+    return None
 
 
 def render_target(t):
@@ -50,6 +59,7 @@ def main():
     ap.add_argument("--rank", type=int, default=16)
     ap.add_argument("--accum", type=int, default=8)
     ap.add_argument("--max-len", type=int, default=6144)
+    ap.add_argument("--max-drop-pct", type=float, default=1.0, help="refuse to train when more rows are too long")
     ap.add_argument("--save-every", type=int, default=0)
     ap.add_argument("--resume", default="", help="checkpoint dir written by --save-every")
     ap.add_argument("--merge-only", default="", help="adapter dir: merge and save, no training")
@@ -87,6 +97,9 @@ def main():
             continue
         examples.append((p_ids, c_ids))
     print(f"examples {len(examples)} dropped_too_long {dropped}", flush=True)
+    why = drop_verdict(dropped, len(rows), a.max_drop_pct)
+    if why:
+        sys.exit("REFUSED " + why)
     with open(os.path.join(os.path.dirname(a.out) or ".", "render_sample.txt"), "w") as f:
         r = rows[0]
         f.write(tok.apply_chat_template(r["messages"], tools=r.get("tools") or None, tokenize=False,
