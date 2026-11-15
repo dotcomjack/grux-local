@@ -493,7 +493,7 @@ _NEG = r"\b(?:not|never|nothing|none|no|neither|\w+n['’]t)\b"
 NO_FAIL_CLAIM = (rf"(?i)(?<!\bno )(?<!\bneither )(?<!\bnone of the )\b(?:worker|job)s?\b"
                  rf"(?![^.!?]{{0,40}}?{_NEG}[^.!?]{{0,40}}?{_FAILED})[^.!?]{{0,40}}{_FAILED}",
                  # the job stopped, in any wording, unless that is negated ("didn't cancel", "not stopped")
-                 r"(?is)^(?!.*\b(?:not|never|no need to|\w+n['’]t)\b[^.!?]{0,20}\b(?:cancel|stop|kill|terminat|abort|"
+                 r"(?is)^(?!.*\b(?:not|never|no need to|nothing|none|no|\w+n['’]t)\b[^.!?]{0,30}\b(?:cancel|stop|kill|terminat|abort|"
                  r"shut))(?=.*\b(?:cancell?ed|canceled|stopped|killed|terminated|aborted|shut (?:it )?down)\b)")
 
 
@@ -1093,8 +1093,9 @@ def refusal(rng, kind):
 
 
 # "I can't find their number, what is it?" asks for what it would need to do the ask: no decline.
-ASKS_DETAIL = (r"(?i)\b(?:what|which|who|where|when|how much)\b[^.!?]{0,60}\?\s*$",
-               r"(?i)\b(?:can['’]?t|cannot|couldn['’]?t|could not) (?:find|see|locate)\b")
+ASKS_DETAIL = (r"(?i)\b(?!what else\b)(?:what|which|who|where|when|how much)\b[^.!?]{0,60}\?\s*$",
+               r"(?i)\b(?:can['’]?t|cannot|couldn['’]?t|could not) (?:find|locate) (?:their|the|your|his|her|"
+               r"[A-Z][a-z]+['’]s)\b")
 
 
 # A refusal ask names none of the channels a Grux tool serves.
@@ -1574,9 +1575,10 @@ def lc_email(rng):
 LC_SHELL = [  # (the first command, the later one, words the later one holds, the ask)
     ("bin/rails db:migrate:status", "bin/rails routes", ["routes"], "{n} again: show me the routes, same session."),
     ("terraform validate", "terraform fmt -check", ["fmt"], "While that {n} session is up, check the formatting."),
-    ("hugo --gc", "hugo server --renderToMemory", ["hugo server"], "Use the {n} session from earlier to serve the site."),
+    ("hugo --gc", "hugo server --renderToMemory", ["hugo server", "hugo serve"],
+     "Use the {n} session from earlier to serve the site."),
     ("mix test", "mix format --check-formatted", ["mix format"], "Over in {n}, the session I asked for first: format check."),
-    ("./gradlew lint", "./gradlew assembleDebug", ["assembledebug", "assemble"],
+    ("./gradlew lint", "./gradlew assembleDebug", ["assemble", "installdebug", "gradlew build", "builddebug"],
      "Back in the {n} session, build the debug app.")]
 
 
