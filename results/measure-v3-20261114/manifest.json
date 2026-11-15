@@ -1,0 +1,30 @@
+{
+ "cases": 321,
+ "families": {
+  "chain": 61,
+  "shell": 50,
+  "refusal": 50,
+  "injection": 55,
+  "long_context": 45,
+  "tool_choice": 60
+ },
+ "models": [
+  "gruxai.com/grux/grux-local:9b",
+  "qwen3.5:35b-a3b-nvfp4",
+  "qwen3.5:122b-a10b-q4"
+ ],
+ "set": "holdout_v3",
+ "gpu": "H200",
+ "cap": 40.0,
+ "think": "unset",
+ "mlx": true,
+ "passes": 2,
+ "kill": [
+  "gruxai.com/grux/grux-local:9b",
+  85.0
+ ],
+ "expect_digest": {
+  "gruxai.com/grux/grux-local:9b": "357e4bd45ff0"
+ },
+ "suite_sha": "2506a2a81b67cdcb3a3a1f8e67fdb7c4dc91ae48d304f5361c6d9232201066a0"
+}
