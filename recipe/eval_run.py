@@ -57,7 +57,8 @@ def done_ids(path):
     return out
 
 
-V3 = None   # holdout_v3 when --set holdout_v3
+V3 = None   # holdout_v3 when --set holdout_v3 or train_v3 (its runner and scorer)
+KEEP_RAW = False   # train_v3: keep each step's raw answer, the training target when the job passes
 
 
 def one(box, model, case):
@@ -82,14 +83,26 @@ def one(box, model, case):
 def one_v3(box, model, case):
     """A held-out v3 job, step by step through the box (holdout_v3.run_case); an error is retried by the caller."""
     t0 = time.time()
+    raws = []
+
+    def post(p, b):
+        r = box.post(p, b, timeout=600)
+        m = r.get("message") or {}
+        raws.append({"content": m.get("content") or "", "tool_calls": [
+            {"name": (x.get("function") or {}).get("name"), "arguments": (x.get("function") or {}).get("arguments") or {}}
+            for x in m.get("tool_calls") or []]})
+        return r
     try:
-        ok, why, got, steps = V3.run_case(case, model, lambda p, b: box.post(p, b, timeout=600))
+        ok, why, got, steps = V3.run_case(case, model, post)
     except Exception as e:
         return {"case": case["id"], "family": case["family"], "status": "error",
                 "error": f"{type(e).__name__}: {str(e)[:200]}", "s": round(time.time() - t0, 2)}
-    return {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why, "got": got,
-            "s": round(time.time() - t0, 2), "steps": steps, "prompt_tokens": [x["prompt_tokens"] for x in steps],
-            "out_tokens": sum(x["out_tokens"] or 0 for x in steps)}
+    row = {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why, "got": got,
+           "s": round(time.time() - t0, 2), "steps": steps, "prompt_tokens": [x["prompt_tokens"] for x in steps],
+           "out_tokens": sum(x["out_tokens"] or 0 for x in steps), "seed": suite.SEED}
+    if KEEP_RAW:
+        row["raw"] = raws
+    return row
 
 
 def probe(box, model, expect_digest=None, timeout=900):
@@ -170,9 +183,24 @@ def remaining(deadline, cap_s):
     return cap_s if deadline is None else max(0.0, min(cap_s, deadline - time.time()))
 
 
-def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None):
+def passed_ids(paths):
+    """Cases a passing row exists for in any of these files (a retry pass runs only the rest)."""
+    out = set()
+    for p in paths:
+        if os.path.exists(p):
+            for line in open(p):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get("pass"):
+                    out.add(r["case"])
+    return out
+
+
+def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
     """True when the model is done, False when it could not run, "cap" when the dollar cap was reached mid-model."""
-    have = done_ids(path)
+    have = done_ids(path) | set(skip)
     todo = [c for c in cases if c["id"] not in have]
     if not todo:
         log(f"{model}: already complete ({len(have)} cases)", run_dir)
@@ -281,8 +309,12 @@ def main():
     ap.add_argument("--candidates", action="store_true", help="run candidates.json instead of the Cookbook catalog")
     ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
     ap.add_argument("--meter-lane", default="grux")
-    ap.add_argument("--set", choices=["s1", "holdout_v3"], default="s1",
-                    help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; needs --models")
+    ap.add_argument("--set", choices=["s1", "holdout_v3", "train_v3"], default="s1",
+                    help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; train_v3: the v3 training "
+                         "bank (s2/train_bank_v3.py) answered by a teacher, raw answers kept; both need --models")
+    ap.add_argument("--seed", type=int, default=None, help="request seed; with --retry-failed pass k uses seed + k - 1")
+    ap.add_argument("--retry-failed", action="store_true",
+                    help="pass 2 and later run only the cases no earlier pass of that model passed (teacher retries)")
     ap.add_argument("--mlx", action="store_true",
                     help="serve through Ollama's MLX runtime (the Mac's nvfp4 format) on the pinned version")
     ap.add_argument("--passes", type=int, default=1, help="score each model this many times (the gate's reruns)")
@@ -297,17 +329,24 @@ def main():
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
-    if a.set == "holdout_v3":
+    global KEEP_RAW
+    if a.set in ("holdout_v3", "train_v3"):
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v3
         V3 = holdout_v3
-    cases = V3.cases() if V3 else suite.cases()
+    if a.set == "train_v3":
+        import train_bank_v3
+        KEEP_RAW = True
+        cases = train_bank_v3.kept()
+    else:
+        cases = V3.cases() if V3 else suite.cases()
+    base_seed = a.seed if a.seed is not None else suite.SEED
     if a.limit:
         seen = {}
         cases = [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= a.limit]
     if V3:
         if not a.models:
-            raise SystemExit("--set holdout_v3 needs --models (the catalog is the S1 Cookbook's)")
+            raise SystemExit(f"--set {a.set} needs --models (the catalog is the S1 Cookbook's)")
         models = a.models.split(",")
     else:
         import catalog  # S1 only (the Grux tree); train_run imports this module for BOX_EXTRA, PRICE, log
@@ -358,11 +397,13 @@ def main():
                     not_run, stopped_by, pending = list(pending), "cap", []
                     break
                 model, k = pending[0]
-                path = os.path.join(run_dir, model.replace(":", "_").replace("/", "_")
-                                    + ("-holdout_v3" if V3 else "") + (f"-pass{k}" if a.passes > 1 else "") + ".jsonl")
+                stem = os.path.join(run_dir, model.replace(":", "_").replace("/", "_") + (f"-{a.set}" if V3 else ""))
+                path = stem + (f"-pass{k}" if a.passes > 1 else "") + ".jsonl"
+                suite.SEED = base_seed + (k - 1 if a.retry_failed else 0)   # scoring passes keep one seed (baseline)
+                skip = passed_ids([f"{stem}-pass{j}.jsonl" for j in range(1, k)]) if a.retry_failed and k > 1 else ()
                 last = not any(m == model for m, _ in pending[1:])
                 got = run_model(box, model, cases, path, run_dir, a.parallel, deadline=deadline, drop=last,
-                                expect_digest=expect.get(model))
+                                expect_digest=expect.get(model), skip=skip)
                 if got == "cap":
                     log(f"STOP: cap ${a.cap} reached during {model} pass {k}", run_dir)
                     not_run, stopped_by, pending = list(pending), "cap", []
