@@ -229,6 +229,12 @@ def interleave(cases):
     return out
 
 
+def todo_for(cases, have):
+    """The jobs left to run: a teacher pass (train_v3) interleaves families; a scoring run keeps bank order."""
+    todo = [c for c in cases if c["id"] not in have]
+    return interleave(todo) if KEEP_RAW else todo
+
+
 def claim_pid(run_dir):
     """Write this process's pid to <run>/eval_run.pid, the pid a stop must reach (a launcher's $! is its wrapper:
     dcj-secret, caffeinate, uv). Refused while the file names another live process: a second launch into a live run
@@ -266,9 +272,7 @@ def release_pid(run_dir):
 def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
     """True when the model is done, False when it could not run, "cap" when the dollar cap was reached mid-model."""
     have = done_ids(path) | set(skip)
-    todo = [c for c in cases if c["id"] not in have]
-    if KEEP_RAW:
-        todo = interleave(todo)
+    todo = todo_for(cases, have)
     if not todo:
         log(f"{model}: already complete ({len(have)} cases)", run_dir)
         if drop:

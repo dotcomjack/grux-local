@@ -249,6 +249,27 @@ check("the first 1,000 jobs hold each family within 1% of its bank share",
       all(abs(head.get(f, 0) / 1000 - n / len(bank)) <= 0.01 for f, n in fams.items()))
 check("bank order is kept within a family", all(
     [c["id"] for c in mixed if c["family"] == f] == [c["id"] for c in bank if c["family"] == f] for f in fams))
+keep = eval_run.KEEP_RAW
+done = {c["id"] for c in bank if c["family"] == "chain"} | {c["id"] for c in bank[::7]}
+eval_run.KEEP_RAW = False
+check("a scoring run keeps bank order", eval_run.todo_for(bank, set()) == bank)
+eval_run.KEEP_RAW = True
+left = eval_run.todo_for(bank, done)
+rest = [c for c in bank if c["id"] not in done]
+lf = {}
+for c in rest:
+    lf[c["family"]] = lf.get(c["family"], 0) + 1
+lh = {}
+for c in left[:600]:
+    lh[c["family"]] = lh.get(c["family"], 0) + 1
+check("a resumed teacher pass runs only what is left, interleaved over what is left",
+      sorted(c["id"] for c in left) == sorted(c["id"] for c in rest) and "chain" not in lh
+      and all(abs(lh.get(f, 0) / 600 - n / len(rest)) <= 0.005 for f, n in lf.items()))
+check("nothing left and one family left are handled",
+      eval_run.todo_for(bank, {c["id"] for c in bank}) == []
+      and eval_run.todo_for([c for c in bank if c["family"] == "shell"], set())
+      == [c for c in bank if c["family"] == "shell"])
+eval_run.KEEP_RAW = keep
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
