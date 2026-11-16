@@ -120,7 +120,7 @@ def score_model(client, model, run_dir, parallel, passes=1):
                     seen += 1
                     if r["status"] == "skipped":
                         skips.append(r)
-                        if len(skips) > skip_max(len(cases)) or len(skips) == seen == EARLY_ERRORS:
+                        if len(skips) > skip_max(len(cases)) or (len(todo) > EARLY_ERRORS and len(skips) == seen == EARLY_ERRORS):
                             raise SetDamaged(f"{model} {name} pass {k}: {len(skips)} of {seen} jobs errored twice "
                                              f"with the box up; last: {r['why'][:120]}")
                         continue

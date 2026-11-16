@@ -218,5 +218,61 @@ check("one job that errors in a good set is written as skipped, the rest scored"
       len(obr) == len(V3) and obr[V3[0]["id"]]["status"] == "skipped"
       and all(obr[c["id"]]["status"] == "scored" for c in V3[1:]))
 
+V12 = t.holdout.cases()[:12]
+
+
+class LateFail:
+    """The box answers; the first 4 jobs are answered, every later one errors (only skip_max can stop this)."""
+    def __init__(self):
+        self.n = 0
+
+    def post(self, path, body, timeout=None):
+        self.n += 1
+        if self.n > 4:
+            raise ConnectionError("model error")
+        return {"message": {"role": "assistant", "content": ""}}
+
+    def get(self, path, timeout=None):
+        return {"models": []}
+
+
+lf = tempfile.mkdtemp()
+t.SETS = {"holdout": (lambda: V12, t.holdout.request_holdout, t.holdout.score_holdout)}
+try:
+    t.score_model(LateFail(), MODEL, lf, 1, passes=1)
+    late = False
+except t.SetDamaged:
+    late = True
+check("past skip_max the set stops even when its first jobs were answered", late)
+check("... keeping the answered rows and writing none of the skips",
+      [x["status"] for x in rows(t.eval_path(lf, MODEL, "holdout", 1))] == ["scored"] * 4)
+four = tempfile.mkdtemp()
+t.SETS = {"holdout": (lambda: V12[:4], t.holdout.request_holdout, t.holdout.score_holdout)}
+try:
+    t.score_model(Down(), MODEL, four, 1, passes=1)
+except t.SetDamaged:
+    pass
+check("a set of only 4 jobs that all fail ends as 4 skips, not damaged",
+      [x["status"] for x in rows(t.eval_path(four, MODEL, "holdout", 1))] == ["skipped"] * 4)
+FIRST4 = {json.dumps(t.holdout.request_holdout(c, MODEL)["body"]) for c in V12[:4]}
+
+
+class FirstFour(Down):
+    """The box answers; the first 4 jobs error, the other 8 are answered: 4 skips, under skip_max (5) for 12."""
+    def post(self, path, body, timeout=None):
+        if json.dumps(body) in FIRST4:
+            raise ConnectionError("model error")
+        return {"message": {"role": "assistant", "content": ""}}
+
+
+early = tempfile.mkdtemp()
+t.SETS = {"holdout": (lambda: V12, t.holdout.request_holdout, t.holdout.score_holdout)}
+try:
+    t.score_model(FirstFour(), MODEL, early, 1, passes=1)
+    stopped = False
+except t.SetDamaged:
+    stopped = True
+check("the first 4 jobs all failing stop a 12-job set, though 4 skips are under skip_max", stopped)
+
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)
