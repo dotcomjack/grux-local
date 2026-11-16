@@ -212,6 +212,29 @@ def passed_ids(paths):
     return out
 
 
+def interleave(cases):
+    """Families in turn (bank order within each), so a teacher pass the cap stops leaves every family its share.
+    Measured 2026-11-15: in bank order the first 1,143 jobs of 8,539 were all chain, and a stop at the cap would have
+    left injection, the family the retry hint exists for, at zero."""
+    by = {}
+    for c in cases:
+        by.setdefault(c["family"], []).append(c)
+    queues = [by[f] for f in sorted(by)]
+    total = sum(len(q) for q in queues)
+    out, taken = [], [0] * len(queues)
+    while len(out) < total:   # proportional: a family with twice the jobs comes up twice as often
+        i = min(range(len(queues)), key=lambda j: (taken[j] / len(queues[j]) if taken[j] < len(queues[j]) else 2, j))
+        out.append(queues[i][taken[i]])
+        taken[i] += 1
+    return out
+
+
+def todo_for(cases, have):
+    """The jobs left to run: a teacher pass (train_v3) interleaves families; a scoring run keeps bank order."""
+    todo = [c for c in cases if c["id"] not in have]
+    return interleave(todo) if KEEP_RAW else todo
+
+
 def claim_pid(run_dir):
     """Write this process's pid to <run>/eval_run.pid, the pid a stop must reach (a launcher's $! is its wrapper:
     dcj-secret, caffeinate, uv). Refused while the file names another live process: a second launch into a live run
@@ -249,7 +272,7 @@ def release_pid(run_dir):
 def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
     """True when the model is done, False when it could not run, "cap" when the dollar cap was reached mid-model."""
     have = done_ids(path) | set(skip)
-    todo = [c for c in cases if c["id"] not in have]
+    todo = todo_for(cases, have)
     if not todo:
         log(f"{model}: already complete ({len(have)} cases)", run_dir)
         if drop:
