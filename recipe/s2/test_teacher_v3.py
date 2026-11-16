@@ -174,5 +174,30 @@ check("a hinted job exports without the hint, on its own tools",
 check("a row taught on the full tool list is never exported", s4["dropped_job_changed"] == 1)
 eval_run.HINT_NOW = False
 
+# the teacher pass's prefill setting reaches the box on every step and never the training row
+SEEN.clear()
+eval_run.NUM_BATCH = 2048
+nrow = eval_run.one(ReplayBox(c0), "teacher", c0)
+eval_run.NUM_BATCH = 0
+check("with --num-batch every step the box received carries it",
+      len(SEEN[c0["id"]]) == len(c0["steps"]) and all(b["options"].get("num_batch") == 2048 for b in SEEN[c0["id"]]))
+check("the setting keeps the request's own options (window, seed, reply length)",
+      all({k: v for k, v in b["options"].items() if k != "num_batch"} == h.request_v3(c0, "teacher", k)["body"]["options"]
+          for k, b in enumerate(SEEN[c0["id"]])))
+SEEN.clear()
+eval_run.one(ReplayBox(c0), "teacher", c0)
+check("without it no step carries num_batch", all("num_batch" not in b["options"] for b in SEEN[c0["id"]]))
+check("a row answered with it exports the same row", export_v3.rows_for(c0, nrow) == export_v3.rows_for(c0, rows[0]))
+argv, sys.argv = sys.argv, ["eval_run.py", "--run", tempfile.mkdtemp(), "--set", "holdout_v3", "--models", "m",
+                            "--num-batch", "2048"]
+try:
+    eval_run.main()
+    refused = ""
+except SystemExit as e:
+    refused = str(e.code)
+sys.argv = argv
+check("a scoring run refuses --num-batch (its gate compares the baseline's runtime)", "train_v3 only" in refused)
+eval_run.NUM_BATCH = 0
+
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
