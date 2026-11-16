@@ -61,6 +61,7 @@ V3 = None   # holdout_v3 when --set holdout_v3 or train_v3 (its runner and score
 KEEP_RAW = False   # train_v3: keep each step's raw answer, the training target when the job passes
 TRAIN_PROMPT = None   # train_v3: s2/train_prompt.py, the job's own tools (decision 1) and the retry hint (decision 2)
 HINT_NOW = False      # this pass sends the hint to the teacher
+NUM_BATCH = 0         # train_v3: llama.cpp batch size sent with every request (0 = Ollama's default, 512)
 
 
 def one(box, model, case):
@@ -92,6 +93,8 @@ def one_v3(box, model, case):
     def post(p, b):
         if TRAIN_PROMPT is not None:
             b = TRAIN_PROMPT.teacher_body(b, case, hint=hint)
+        if NUM_BATCH:   # the teacher pass is prefill bound: 3 steps of about 11,000 tokens against 85 out
+            b = dict(b, options=dict(b.get("options") or {}, num_batch=NUM_BATCH))
         r = box.post(p, b, timeout=600)
         m = r.get("message") or {}
         raws.append({"content": m.get("content") or "", "tool_calls": [
@@ -109,6 +112,7 @@ def one_v3(box, model, case):
     if KEEP_RAW:
         row["raw"] = raws
         row["job_sha"] = V3.case_sha([case])   # the exporter pairs this answer only with this exact job
+        row["num_batch"] = NUM_BATCH   # 0 is Ollama's default; the runtime that produced this answer
         if TRAIN_PROMPT is not None:
             row["tools_sha"] = TRAIN_PROMPT.tools_sha(case)   # ... and only with the tools it was offered
             row["hint"] = bool(hint and case["family"] in TRAIN_PROMPT.HINTS)
@@ -206,6 +210,40 @@ def passed_ids(paths):
                 if r.get("pass"):
                     out.add(r["case"])
     return out
+
+
+def claim_pid(run_dir):
+    """Write this process's pid to <run>/eval_run.pid, the pid a stop must reach (a launcher's $! is its wrapper:
+    dcj-secret, caffeinate, uv). Refused while the file names another live process: a second launch into a live run
+    dir would point the stop at itself and leave the live run billing."""
+    path = os.path.join(run_dir, "eval_run.pid")
+    try:
+        old = int(open(path).read().strip())
+    except (OSError, ValueError):
+        old = None
+    if old and old != os.getpid():
+        try:
+            os.kill(old, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        if alive:
+            raise SystemExit(f"REFUSED: {path} names pid {old}, still running; stop it first")
+    with open(path, "w") as f:
+        f.write(f"{os.getpid()}\n")
+    return path
+
+
+def release_pid(run_dir):
+    """Remove the pid file at the end, only when it is still this process's (a reused pid is never a target)."""
+    path = os.path.join(run_dir, "eval_run.pid")
+    try:
+        if int(open(path).read().strip()) == os.getpid():
+            os.remove(path)
+    except (OSError, ValueError):
+        pass
 
 
 def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
@@ -327,6 +365,9 @@ def main():
     ap.add_argument("--seed", type=int, default=None, help="request seed; with --retry-failed pass k uses seed + k - 1")
     ap.add_argument("--hint-from-pass", type=int, default=0,
                     help="train_v3: from this pass on, the teacher's system prompt carries the family hint (0 = never)")
+    ap.add_argument("--num-batch", type=int, default=0,
+                    help="train_v3 only: Ollama num_batch on every request (prefill throughput); scoring runs keep the "
+                         "default so a gate compares the same runtime as its baseline")
     ap.add_argument("--retry-failed", action="store_true",
                     help="pass 2 and later run only the cases no earlier pass of that model passed (teacher retries)")
     ap.add_argument("--mlx", action="store_true",
@@ -343,7 +384,10 @@ def main():
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
-    global KEEP_RAW, TRAIN_PROMPT, HINT_NOW
+    global KEEP_RAW, TRAIN_PROMPT, NUM_BATCH
+    if a.num_batch and a.set != "train_v3":
+        raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
+    NUM_BATCH = a.num_batch
     if a.set in ("holdout_v3", "train_v3"):
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v3
@@ -374,9 +418,19 @@ def main():
     gone, unsure = missing_models(models)
     if gone or unsure:
         raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
+    claim_pid(run_dir)
+    try:
+        _run(a, run_dir, models, cases, expect, base_seed)
+    finally:
+        release_pid(run_dir)
+
+
+def _run(a, run_dir, models, cases, expect, base_seed):
+    global HINT_NOW
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
                "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes, "limit": a.limit,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect, "hint_from_pass": a.hint_from_pass,
+               "num_batch": a.num_batch,
                "suite_sha": V3.case_sha(cases) if V3 else suite.fingerprint(cases)},
               open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     spent = 0.0
