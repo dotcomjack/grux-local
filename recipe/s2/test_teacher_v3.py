@@ -11,6 +11,7 @@ the target. No box: a stub box replays holdout_v3's perfect answers.
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -188,16 +189,51 @@ SEEN.clear()
 eval_run.one(ReplayBox(c0), "teacher", c0)
 check("without it no step carries num_batch", all("num_batch" not in b["options"] for b in SEEN[c0["id"]]))
 check("a row answered with it exports the same row", export_v3.rows_for(c0, nrow) == export_v3.rows_for(c0, rows[0]))
-argv, sys.argv = sys.argv, ["eval_run.py", "--run", tempfile.mkdtemp(), "--set", "holdout_v3", "--models", "m",
-                            "--num-batch", "2048"]
+
+
+def main_refusal(*args):
+    """eval_run.main's SystemExit message for these flags; the registry check is stubbed so nothing leaves the host."""
+    argv, real = sys.argv, eval_run.missing_models
+    sys.argv = ["eval_run.py", "--run", tempfile.mkdtemp(), *args]
+    eval_run.missing_models = lambda models: (_ for _ in ()).throw(SystemExit("reached the registry check"))
+    try:
+        eval_run.main()
+        return ""
+    except SystemExit as e:
+        return str(e.code)
+    finally:
+        sys.argv, eval_run.missing_models, eval_run.NUM_BATCH = argv, real, 0
+
+
+check("a held-out scoring run refuses --num-batch (its gate compares the baseline's runtime)",
+      "train_v3 only" in main_refusal("--set", "holdout_v3", "--models", "m", "--num-batch", "2048"))
+check("an s1 scoring run refuses it too", "train_v3 only" in main_refusal("--set", "s1", "--num-batch", "2048"))
+check("a held-out run without it gets past the flag check",
+      main_refusal("--set", "holdout_v3", "--models", "m") == "reached the registry check")
+
+# the pid a stop must reach: this process, never a wrapper, never a live run's
+pd = tempfile.mkdtemp()
+pf = os.path.join(pd, "eval_run.pid")
+eval_run.claim_pid(pd)
+check("the run writes its own pid", open(pf).read().strip() == str(os.getpid()))
+live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+open(pf, "w").write(f"{live.pid}\n")
 try:
-    eval_run.main()
-    refused = ""
-except SystemExit as e:
-    refused = str(e.code)
-sys.argv = argv
-check("a scoring run refuses --num-batch (its gate compares the baseline's runtime)", "train_v3 only" in refused)
-eval_run.NUM_BATCH = 0
+    eval_run.claim_pid(pd)
+    took = True
+except SystemExit:
+    took = False
+check("a second launch into a live run's dir is refused and leaves its pid", not took and open(pf).read().strip() == str(live.pid))
+live.kill()
+live.wait()
+eval_run.claim_pid(pd)
+check("a dead run's pid is replaced", open(pf).read().strip() == str(os.getpid()))
+eval_run.release_pid(pd)
+check("the end removes its own pid file", not os.path.exists(pf))
+open(pf, "w").write("1\n")
+eval_run.release_pid(pd)
+check("the end never removes another process's pid file", os.path.exists(pf))
+check("each teacher row records the batch setting it ran with", nrow.get("num_batch") == 2048 and rows[0].get("num_batch") == 0)
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

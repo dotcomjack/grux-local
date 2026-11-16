@@ -112,6 +112,7 @@ def one_v3(box, model, case):
     if KEEP_RAW:
         row["raw"] = raws
         row["job_sha"] = V3.case_sha([case])   # the exporter pairs this answer only with this exact job
+        row["num_batch"] = NUM_BATCH   # 0 is Ollama's default; the runtime that produced this answer
         if TRAIN_PROMPT is not None:
             row["tools_sha"] = TRAIN_PROMPT.tools_sha(case)   # ... and only with the tools it was offered
             row["hint"] = bool(hint and case["family"] in TRAIN_PROMPT.HINTS)
@@ -209,6 +210,40 @@ def passed_ids(paths):
                 if r.get("pass"):
                     out.add(r["case"])
     return out
+
+
+def claim_pid(run_dir):
+    """Write this process's pid to <run>/eval_run.pid, the pid a stop must reach (a launcher's $! is its wrapper:
+    dcj-secret, caffeinate, uv). Refused while the file names another live process: a second launch into a live run
+    dir would point the stop at itself and leave the live run billing."""
+    path = os.path.join(run_dir, "eval_run.pid")
+    try:
+        old = int(open(path).read().strip())
+    except (OSError, ValueError):
+        old = None
+    if old and old != os.getpid():
+        try:
+            os.kill(old, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        if alive:
+            raise SystemExit(f"REFUSED: {path} names pid {old}, still running; stop it first")
+    with open(path, "w") as f:
+        f.write(f"{os.getpid()}\n")
+    return path
+
+
+def release_pid(run_dir):
+    """Remove the pid file at the end, only when it is still this process's (a reused pid is never a target)."""
+    path = os.path.join(run_dir, "eval_run.pid")
+    try:
+        if int(open(path).read().strip()) == os.getpid():
+            os.remove(path)
+    except (OSError, ValueError):
+        pass
 
 
 def run_model(box, model, cases, path, run_dir, parallel, deadline=None, drop=True, expect_digest=None, skip=()):
@@ -349,9 +384,7 @@ def main():
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
-    with open(os.path.join(run_dir, "eval_run.pid"), "w") as f:   # the pid to stop: a launcher records its wrapper's
-        f.write(f"{os.getpid()}\n")
-    global KEEP_RAW, TRAIN_PROMPT, HINT_NOW, NUM_BATCH
+    global KEEP_RAW, TRAIN_PROMPT, NUM_BATCH
     if a.num_batch and a.set != "train_v3":
         raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
     NUM_BATCH = a.num_batch
@@ -385,6 +418,15 @@ def main():
     gone, unsure = missing_models(models)
     if gone or unsure:
         raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
+    claim_pid(run_dir)
+    try:
+        _run(a, run_dir, models, cases, expect, base_seed)
+    finally:
+        release_pid(run_dir)
+
+
+def _run(a, run_dir, models, cases, expect, base_seed):
+    global HINT_NOW
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
                "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes, "limit": a.limit,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect, "hint_from_pass": a.hint_from_pass,
