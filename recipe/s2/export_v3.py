@@ -37,19 +37,20 @@ def kept_answers(run_dir):
     return out
 
 
-HOME = re.compile(r"/(?:Users|home)/([A-Za-z0-9._-]+)")
-REAL_HOMES = {"Shared"}   # /Users/Shared is on every Mac
+HOME = re.compile(r"(?<![A-Za-z0-9._~/-])/(Users|home)/([A-Za-z0-9._-]+)")   # a path that starts there, not ~/x/home/y
+REAL_HOMES = {("Users", "Shared")}   # /Users/Shared is on every Mac
 
 
 def invented_home(rows):
     """True when a target names a home folder (/Users/<name>, /home/<name>) that no input of its step names: the
-    teacher guessed the user's account name (measured 2026-11-16: 160 of 6,735 kept jobs, /Users/username,
+    teacher guessed the user's account name (measured 2026-11-16: 158 of 6,735 kept jobs, /Users/username,
     /Users/jax, /Users/jack ...). The scorer accepts the path, but on a real Mac it points at nobody's folder."""
+    def homes(text):   # whole names (/Users/dan is not /Users/dana); a sentence's closing period is not the name's
+        return {(m.group(1), m.group(2).rstrip(".-_")) for m in HOME.finditer(text)}
     for r in rows:
-        seen = {m.group(0) for m in HOME.finditer(json.dumps(r["messages"]) + json.dumps(r["tools"]))}
-        for m in HOME.finditer(json.dumps(r["target"])):
-            if m.group(1) not in REAL_HOMES and m.group(0) not in seen:   # whole names: /Users/dan is not /Users/dana
-                return True
+        seen = homes(json.dumps(r["messages"]) + json.dumps(r["tools"]))
+        if homes(json.dumps(r["target"])) - seen - REAL_HOMES:
+            return True
     return False
 
 
@@ -69,8 +70,8 @@ def rows_for(case, answer, model="teacher"):
 
 def export(run_dir, out_path):
     """An answer is paired only with the exact job it answered and the exact tools it was offered: its row's job_sha
-    and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported, nor a job
-    whose answer invents a home folder (invented_home)."""
+    and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported. A job
+    whose answer invents a home folder (invented_home) is never exported either."""
     bank = train_bank_v3.kept()
     by_id = {c["id"]: c for c in bank}
     answers = kept_answers(run_dir)

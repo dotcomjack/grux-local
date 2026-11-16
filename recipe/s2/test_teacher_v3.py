@@ -133,6 +133,29 @@ check("a home folder the input names is kept", not export_v3.invented_home(named
 named[0]["target"]["tool_calls"][0]["arguments"]["path"] = "/Users/dan/notes.txt"
 check("a different home folder than the input names is caught", export_v3.invented_home(named))
 
+
+def one_step(inp, content="", path=None):
+    calls = [{"name": "fs_read", "arguments": {"path": path}}] if path else []
+    return [{"messages": [{"role": "user", "content": inp}], "tools": [], "target": {"content": content, "tool_calls": calls}}]
+
+
+check("a longer name than the input's is caught", export_v3.invented_home(one_step("open /Users/dan/x", path="/Users/dana/x")))
+check("the same name under /home is not the /Users folder",
+      export_v3.invented_home(one_step("open /home/dan/x", path="/Users/dan/x")))
+check("a sentence's closing period is not part of the name",
+      not export_v3.invented_home(one_step("open /Users/dan/x", "Your folder is /Users/dan.")))
+check("a folder named home or Users inside another path is not a home folder",
+      not any(export_v3.invented_home(one_step("x", t)) for t in
+              ("~/Documents/home/photos", "https://x.com/home/feed", "~/Projects/Users/Archive")))
+d6 = tempfile.mkdtemp()
+r6 = json.loads(json.dumps(rows[0]))
+r6["raw"][-1]["tool_calls"] = [{"name": "fs_read", "arguments": {"path": "/Users/jax/notes.txt"}}]
+with open(os.path.join(d6, "t-train_v3-pass1.jsonl"), "w") as f:
+    f.write(json.dumps(r6) + "\n")
+s6 = export_v3.export(d6, os.path.join(d6, "train.jsonl"))
+check("an invented home folder in a tool call is not exported",
+      s6["dropped_invented_home"] == 1 and not open(os.path.join(d6, "train.jsonl")).read())
+
 # decision 1: the short prompt; decision 2: the hint reaches the teacher only
 import train_prompt as tp  # noqa: E402
 
