@@ -115,7 +115,7 @@ def one_v3(box, model, case):
         row["num_batch"] = NUM_BATCH   # 0 is Ollama's default; the runtime that produced this answer
         if TRAIN_PROMPT is not None:
             row["tools_sha"] = TRAIN_PROMPT.tools_sha(case)   # ... and only with the tools it was offered
-            row["hint"] = bool(hint and case["family"] in TRAIN_PROMPT.HINTS)
+            row["hint"] = bool(hint and TRAIN_PROMPT.hint_for(case))
     return row
 
 
