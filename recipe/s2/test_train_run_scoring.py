@@ -73,8 +73,27 @@ class Mute:
 
 
 class Down:
+    """The model errors on every job, but the box still answers: a real skip."""
     def post(self, path, body, timeout=None):
         raise ConnectionError("stub down")
+
+    def get(self, path, timeout=None):
+        return {"models": []}
+
+
+class Evicted(Perfect):
+    """Answers `n` calls, then the box is gone: every call fails, the liveness probe too."""
+    def __init__(self, n):
+        super().__init__()
+        self.n = n
+
+    def post(self, path, body, timeout=None):
+        if self.calls >= self.n:
+            raise ConnectionError("box gone")
+        return super().post(path, body, timeout)
+
+    def get(self, path, timeout=None):
+        raise ConnectionError("box gone")
 
 
 MODULE_ORDER = list(t.SETS)
@@ -149,6 +168,22 @@ src = open(t.__file__).read()
 default_parallel = re.search(r'"--parallel", type=int, default=(\d+)', src)
 check("the box serves as many requests at once as train_run sends",
       default_parallel is not None and f"OLLAMA_NUM_PARALLEL={default_parallel.group(1)} " in train_box.BOOT)
+
+ev = tempfile.mkdtemp()
+t.SETS = {"holdout_v3": (lambda: V3, None, None)}
+try:
+    t.score_model(Evicted(2), MODEL, ev, 1, passes=1)
+    raised = False
+except t.BoxGone:
+    raised = True
+er = rows(t.eval_path(ev, MODEL, "holdout_v3", 1))
+check("a box that dies mid-set raises BoxGone", raised)
+check("... and writes no skipped row for the jobs it never ran", all(x["status"] == "scored" for x in er) and len(er) < len(V3),
+      str([(x["case"], x["status"]) for x in er]))
+t.score_model(Perfect(), MODEL, ev, 1, passes=1)
+er = rows(t.eval_path(ev, MODEL, "holdout_v3", 1))
+check("the next box finishes the set, one row per job, all scored",
+      sorted(x["case"] for x in er) == sorted(c["id"] for c in V3) and all(x["status"] == "scored" for x in er))
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)

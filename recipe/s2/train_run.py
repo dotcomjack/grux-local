@@ -39,6 +39,10 @@ SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set;
         "s1": (suite.cases, suite.request, suite.score)}
 
 
+class BoxGone(RuntimeError):
+    """The box's Ollama stopped answering mid-set: nothing more is written, the next box resumes the set."""
+
+
 def eval_path(run_dir, model, name, k):
     """Pass 1 keeps the name every reader already uses; pass k > 1 adds -pass<k>."""
     return os.path.join(run_dir, f"eval-{model}-{name}" + (f"-pass{k}" if k > 1 else "") + ".jsonl")
@@ -75,9 +79,13 @@ def score_model(client, model, run_dir, parallel, passes=1):
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:200]}"
                 time.sleep(5)
-        else:   # a skipped job counts as a fail, as eval_run's do, so a pass file always covers every case
+        else:   # a skipped job counts as a fail, as eval_run's do, so a pass file always covers every case ...
+            try:   # ... unless the box itself is gone (a spot reclaim fails every call at once): write nothing,
+                client.get("/api/tags", timeout=30)   # and the next box reruns the set from here
+            except Exception as e2:
+                raise BoxGone(f"Ollama stopped answering during {case['id']}: {type(e2).__name__}") from None
             return {"case": case["id"], "family": case["family"], "status": "skipped", "pass": False,
-                    "why": "error twice: " + err, "think": suite.THINK}
+                    "why": "error twice: " + err, "got": None, "s": round(time.time() - t0, 2), "think": suite.THINK}
         row = {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why,
                "got": got, "s": round(time.time() - t0, 2), "think": suite.THINK}
         if steps is not None:
