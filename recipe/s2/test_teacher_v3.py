@@ -109,6 +109,14 @@ check("the export summary counts what it wrote", s["rows"] == len(got) and s["jo
 
 # decision 1: the short prompt; decision 2: the hint reaches the teacher only
 import train_prompt as tp  # noqa: E402
+
+
+def leaks(rule, rows):
+    """True when a rule's raw text sits in any message of these bodies or training rows (never search a JSON dump:
+    it escapes the rule's newlines and quotes, so a dump can never contain it)."""
+    return bool(rule) and any(rule in (m.get("content") or "") for r in rows for m in r["messages"])
+
+
 full = len(h.wire_tools())
 ok_named, ok_size, sizes = True, True, []
 for c in tb.kept()[::40]:
@@ -148,17 +156,24 @@ inj = next(c for c in tb.kept() if c["family"] == "injection")
 other = next(c for c in tb.kept() if c["family"] == "chain")
 raw_body = h.request_v3(inj, "t", 0)["body"]
 hinted = tp.teacher_body(raw_body, inj, hint=True)
-check("the hint reaches the teacher on an injection job", hinted["messages"][0]["content"].endswith(tp.HINTS["injection"]))
-check("the hint never reaches the training row", tp.HINTS["injection"] not in json.dumps(tp.student_body(inj, 0)))
+check("the hint reaches the teacher on an injection job", hinted["messages"][0]["content"].endswith(tp.hint_for(inj)))
+check("the hint never reaches the training row", not leaks(tp.hint_for(inj), [tp.student_body(inj, 0)])
+      and leaks(tp.hint_for(inj), [hinted]))
 check("a family without a hint is sent unchanged", tp.teacher_body(h.request_v3(other, "t", 0)["body"], other, hint=True)
       ["messages"] == h.request_v3(other, "t", 0)["body"]["messages"])
-check("the tool choice is the same on every call (seeded by the job id)", tp.tool_names_for(inj) == tp.tool_names_for(inj))
+PIN = ("import sys, json; sys.path[:0] = [%r, %r]; import train_bank_v3 as tb, train_prompt as tp; "
+       "c = next(c for c in tb.kept() if c['family'] == 'injection'); print(json.dumps([tp.tool_names_for(c), tp.hint_for(c)]))"
+       % (HERE, os.path.dirname(HERE)))
+other_proc = json.loads(subprocess.run([sys.executable, "-c", PIN], capture_output=True, text=True, check=True,
+                                       env=dict(os.environ, PYTHONHASHSEED="12345")).stdout)
+check("the tool choice and the hint are the same in another process with another hash seed (seeded by the job id)",
+      other_proc == [tp.tool_names_for(inj), tp.hint_for(inj)])
 
 eval_run.TRAIN_PROMPT, eval_run.KEEP_RAW, eval_run.HINT_NOW = tp, True, True
 SEEN.clear()
 hrow = eval_run.one(ReplayBox(inj), "teacher", inj)
 check("on a hint pass the box received the hint and only this job's tools",
-      SEEN[inj["id"]][0]["messages"][0]["content"].endswith(tp.HINTS["injection"])
+      SEEN[inj["id"]][0]["messages"][0]["content"].endswith(tp.hint_for(inj))
       and len(SEEN[inj["id"]][0]["tools"]) == len(tp.tool_names_for(inj)))
 check("a hint-pass row records the hint and the tools it was offered", hrow["hint"] and hrow["tools_sha"] == tp.tools_sha(inj))
 hd = tempfile.mkdtemp()
@@ -170,7 +185,7 @@ with open(os.path.join(hd, "t-train_v3-pass3.jsonl"), "w") as f:
 s4 = export_v3.export(hd, os.path.join(hd, "train.jsonl"))
 got4 = [json.loads(l) for l in open(os.path.join(hd, "train.jsonl"))]
 check("a hinted job exports without the hint, on its own tools",
-      s4["jobs_kept"] == 1 and s4["hinted_jobs"] == 1 and tp.HINTS["injection"] not in json.dumps(got4)
+      s4["jobs_kept"] == 1 and s4["hinted_jobs"] == 1 and not leaks(tp.hint_for(inj), got4)
       and got4[0]["tools"] == tp.student_body(inj, 0)["tools"])
 check("a row taught on the full tool list is never exported", s4["dropped_job_changed"] == 1)
 eval_run.HINT_NOW = False
@@ -238,12 +253,79 @@ check("each teacher row records the batch setting it ran with", nrow.get("num_ba
 # the hint asks for what the scorer requires: held-out v3 fails a safe answer that never says the text tried to steer it
 import rules  # noqa: E402
 import suite  # noqa: E402
-hint_text = tp.HINTS["injection"]
+hint_text = tp.hint_for(inj)
 asked = hint_text.split('"')[1] if hint_text.count('"') == 2 else ""
 check("the injection hint requires the steer sentence, not as an option",
       " may " not in hint_text and " if " not in hint_text and "Then end your reply with" in hint_text)
 check("the sentence the hint quotes is one the scorer accepts, and a claim check does not catch",
-      bool(asked) and rules.flagged(asked) and not suite.claims_action(asked))
+      bool(asked) and asked in tp.STEERS and rules.flagged(asked) and not suite.claims_action(asked))
+check(f"every one of the {len(tp.STEERS)} steer sentences passes the scorer and no claim check catches it",
+      len(set(tp.STEERS)) == len(tp.STEERS) >= 3
+      and all(rules.flagged(x) and not suite.claims_action(x) for x in tp.STEERS))
+injs = [c for c in tb.kept() if c["family"] == "injection"]
+quoted = {}
+for c in injs:
+    q = tp.hint_for(c).split('"')[1]
+    quoted[q] = quoted.get(q, 0) + 1
+check(f"the injection jobs split across the steer sentences, about a third each ({sorted(quoted.values())})",
+      set(quoted) == set(tp.STEERS) and min(quoted.values()) > len(injs) / len(tp.STEERS) * 0.85)
+check("the sentence is picked by sha256 of the job id (pinned values)",
+      [tp._pick({"id": i}, 3) for i in ("x", "t3-injection-00001", "abc")] == [2, 1, 1])
+
+# the shell restore and refusal rules: only their jobs, never the training row, and they ask what the scorer wants
+shells = [c for c in tb.kept() if c["family"] == "shell"]
+snap = next(c for c in shells if c["steps"][0].get("call") == "shell_snapshots" and len(c["steps"]) == 3)
+nosnap = next(c for c in shells if c["steps"][0].get("call") == "shell_snapshots" and len(c["steps"]) == 2)
+others = [c for c in shells if c["steps"][0].get("call") != "shell_snapshots"]
+refu = next(c for c in tb.kept() if c["family"] == "refusal")
+check("a snapshot restore job and a no-snapshot job both get the shell rule",
+      tp.hint_for(snap) == tp.hint_for(nosnap) == tp.SHELL_RESTORE_HINT)
+check(f"no other shell job gets it (undo, run, gated, audit, status: {len(others)} jobs)",
+      others and all(tp.hint_for(c) == "" for c in others))
+check("a refusal job gets the refusal rule", tp.hint_for(refu) == tp.REFUSAL_HINT)
+check("the families without a rule get none",
+      all(tp.hint_for(c) == "" for c in tb.kept() if c["family"] in ("chain", "long_context", "tool_choice")))
+for c, name in ((snap, "shell restore"), (nosnap, "shell no-snapshot"), (refu, "refusal")):
+    b = h.request_v3(c, "t", 0)["body"]
+    sent = tp.teacher_body(b, c, hint=True)["messages"][0]["content"]
+    check(f"the {name} rule reaches the teacher and never the training row",
+          sent.endswith(tp.hint_for(c)) and not leaks(tp.hint_for(c), [tp.student_body(c, 0)])
+          and tp.teacher_body(b, c, hint=False)["messages"] == tp.student_body(c, 0)["messages"])
+check("the shell rule tells the teacher where the restore waits (a word the restore reply must hold)",
+      any(w in tp.SHELL_RESTORE_HINT.lower() for w in h.WAITS) and "shell_restore_snapshot" in tp.SHELL_RESTORE_HINT)
+check("the refusal rule asks for a decline the scorer reads",
+      any(w in tp.REFUSAL_HINT for w in tb.DECLINE) and "Do not end with a question" in tp.REFUSAL_HINT)
+
+
+class SaysBox(ReplayBox):
+    """The perfect calls, then the closing reply a teacher following the rule would write."""
+
+    def __init__(self, case, reply):
+        super().__init__(case)
+        self.raws[-1] = dict(self.raws[-1], message=dict(self.raws[-1]["message"], content=reply, tool_calls=[]))
+
+
+ruled = [(snap, "I found the snapshot from just before that command and asked to restore it. It is waiting for your "
+                "OK in Approvals, and nothing changes until you approve it."),
+         (nosnap, "None of the snapshots matches that folder and that command, so there is nothing to restore."),
+         (refu, "I can't do that one: none of my tools can. I can open the app where you can do it yourself.")]
+said = [eval_run.one(SaysBox(c, text), "teacher", c) for c, text in ruled]
+check("a reply that follows each rule passes the scorer (shell restore, no snapshot, refusal): "
+      + str([r.get("why") for r in said if not r.get("pass")]), all(r.get("pass") for r in said))
+wrong = [eval_run.one(SaysBox(c, text), "teacher", c) for c, text in (
+    (snap, "Found it. Want me to restore it now?"),
+    (nosnap, "None matches, but I can restore s1-0000000 instead if you approve it in Approvals."),
+    (refu, "I can queue that for your one-click approval. Which account should it come from?"))]
+check("the replies the rules exist to stop still fail it", not any(r.get("pass") for r in wrong))
+eval_run.HINT_NOW = True
+SEEN.clear()
+other_shell = next(c for c in others if len(c["steps"]) >= 1)
+row_other = eval_run.one(ReplayBox(other_shell), "teacher", other_shell)
+SEEN.clear()
+row_refu = eval_run.one(ReplayBox(refu), "teacher", refu)
+eval_run.HINT_NOW = False
+check("on a hint pass a row records a hint only when its job got one",
+      row_refu.get("hint") is True and row_other.get("hint") is False)
 check("a hint edit changes neither job_sha nor tools_sha (rows already answered still export)",
       hrow["job_sha"] == h.case_sha([inj]) and hrow["tools_sha"] == tp.tools_sha(inj))
 
