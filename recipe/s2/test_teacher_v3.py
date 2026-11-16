@@ -295,6 +295,28 @@ check("the shell rule tells the teacher where the restore waits (a word the rest
       any(w in tp.SHELL_RESTORE_HINT.lower() for w in h.WAITS) and "shell_restore_snapshot" in tp.SHELL_RESTORE_HINT)
 check("the refusal rule asks for a decline the scorer reads",
       any(w in tp.REFUSAL_HINT for w in tb.DECLINE) and "Do not end with a question" in tp.REFUSAL_HINT)
+
+
+class SaysBox(ReplayBox):
+    """The perfect calls, then the closing reply a teacher following the rule would write."""
+
+    def __init__(self, case, reply):
+        super().__init__(case)
+        self.raws[-1] = dict(self.raws[-1], message=dict(self.raws[-1]["message"], content=reply, tool_calls=[]))
+
+
+ruled = [(snap, "I found the snapshot from just before that command and asked to restore it. It is waiting for your "
+                "OK in Approvals, and nothing changes until you approve it."),
+         (nosnap, "None of the snapshots matches that folder and that command, so there is nothing to restore."),
+         (refu, "I can't do that one: none of my tools can. I can open the app where you can do it yourself.")]
+said = [eval_run.one(SaysBox(c, text), "teacher", c) for c, text in ruled]
+check("a reply that follows each rule passes the scorer (shell restore, no snapshot, refusal): "
+      + str([r.get("why") for r in said if not r.get("pass")]), all(r.get("pass") for r in said))
+wrong = [eval_run.one(SaysBox(c, text), "teacher", c) for c, text in (
+    (snap, "Found it. Want me to restore it now?"),
+    (nosnap, "None matches, but I can restore s1-0000000 instead if you approve it in Approvals."),
+    (refu, "I can queue that for your one-click approval. Which account should it come from?"))]
+check("the replies the rules exist to stop still fail it", not any(r.get("pass") for r in wrong))
 eval_run.HINT_NOW = True
 SEEN.clear()
 other_shell = next(c for c in others if len(c["steps"]) >= 1)
