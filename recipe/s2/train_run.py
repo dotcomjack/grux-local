@@ -3,7 +3,7 @@
 
 One leased spot box at a time: train a LoRA (every checkpoint pulled out the moment it lands), merge,
 import the base and the trained model into the box's Ollama as nvfp4 (the format a Mac serves),
-score both on the S1 suite and the frozen held-out set with thinking off, then pull both Ollama
+score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull both Ollama
 models out for the Mac check. A spot box goes without warning (measured 2026-10-22), so a new box
 resumes from the last checkpoint pulled out, skips training once the adapter is out, and skips every
 case already scored. Nothing of ours but the training file goes in; nothing leaves but files.
@@ -18,21 +18,40 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import holdout  # noqa: E402
+import holdout_v2  # noqa: E402
+import holdout_v3  # noqa: E402
 import suite  # noqa: E402
-from eval_run import BOX_EXTRA, PRICE, log  # noqa: E402
+from eval_run import BOX_EXTRA, EARLY_ERRORS, PRICE, log, skip_max  # noqa: E402
 from train_box import BOOT, TrainBox  # noqa: E402
 
 suite.THINK = False   # Grux sends think false on every Ollama call (loop row D-THINK, PROVEN)
 MODELFILE = ("FROM {src}\nRENDERER qwen3.5\nPARSER qwen3.5\nPARAMETER temperature 1\nPARAMETER top_k 20\n"
              "PARAMETER top_p 0.95\nPARAMETER presence_penalty 1.5\nPARAMETER min_p 0\n")
-SETS = {"s1": (suite.cases, suite.request, suite.score),
-        "holdout": (holdout.cases, holdout.request_holdout, holdout.score_holdout)}
+SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set; a job runs step by step (run_case)
+        "holdout": (holdout.cases, holdout.request_holdout, holdout.score_holdout),
+        "holdout_v2": (holdout_v2.cases, holdout_v2.request_v2, holdout_v2.score_v2),
+        "s1": (suite.cases, suite.request, suite.score)}
+
+
+class BoxGone(RuntimeError):
+    """The box's Ollama stopped answering mid-set: nothing more is written, the next box resumes the set."""
+
+
+class SetDamaged(RuntimeError):
+    """The box answers but the model fails job after job (eval_run's skip_max, or its first EARLY_ERRORS): the set
+    stops, its skips are not written, and a rerun scores those jobs again."""
+
+
+def eval_path(run_dir, model, name, k):
+    """Pass 1 keeps the name every reader already uses; pass k > 1 adds -pass<k>."""
+    return os.path.join(run_dir, f"eval-{model}-{name}" + (f"-pass{k}" if k > 1 else "") + ".jsonl")
 
 
 def scored(path):
@@ -47,38 +66,82 @@ def scored(path):
     return out
 
 
-def score_model(client, model, run_dir, parallel):
-    """Every case of every set for one model; appends as it goes, skips what is already scored."""
+def score_model(client, model, run_dir, parallel, passes=1):
+    """Every case of every set for one model, `passes` times (the gate's reruns, one seed as eval_run keeps);
+    appends as it goes, skips what is already scored. A case that errors twice is written as skipped (a fail)."""
+    stop = threading.Event()
+
     def one(case, request, score):
-        req = request(case, model)
+        if stop.is_set():   # the set is ending: queued jobs return at once instead of billing their retries
+            return None
         t0 = time.time()
         for attempt in (1, 2):
             try:
-                raw = client.post(req["path"], req["body"], timeout=900)
+                if request is None:   # held-out v3: the job's steps in order, stopping at the first failed one
+                    ok, why, got, steps = holdout_v3.run_case(
+                        case, model, lambda p, b: client.post(p, b, timeout=900))
+                else:
+                    req = request(case, model)
+                    raw = client.post(req["path"], req["body"], timeout=900)
+                    ok, why, got = score(case, raw)
+                    steps = None
                 break
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:200]}"
                 time.sleep(5)
-        else:
-            return {"case": case["id"], "family": case["family"], "status": "error", "error": err}
-        ok, why, got = score(case, raw)
-        return {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why,
-                "got": got, "s": round(time.time() - t0, 2)}
+        else:   # a skipped job counts as a fail, as eval_run's do, so a pass file always covers every case ...
+            try:   # ... unless the box itself is gone (a spot reclaim fails every call at once): write nothing,
+                client.get("/api/tags", timeout=30)   # and the next box reruns the set from here
+            except Exception as e2:
+                raise BoxGone(f"Ollama stopped answering during {case['id']}: {type(e2).__name__}") from None
+            return {"case": case["id"], "family": case["family"], "status": "skipped", "pass": False,
+                    "why": "error twice: " + err, "got": None, "s": round(time.time() - t0, 2), "think": suite.THINK}
+        row = {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why,
+               "got": got, "s": round(time.time() - t0, 2), "think": suite.THINK}
+        if steps is not None:
+            row["steps"] = steps
+        return row
 
-    for name, (cases_fn, request, score) in SETS.items():
+    # set by set, its passes together: one model load per context size (v3 runs at 65,536, the rest at 16,384)
+    for (name, (cases_fn, request, score)), k in ((kv, k) for kv in SETS.items() for k in range(1, passes + 1)):
         cases = cases_fn()
-        path = os.path.join(run_dir, f"eval-{model}-{name}.jsonl")
+        path = eval_path(run_dir, model, name, k)
         todo = [c for c in cases if c["id"] not in scored(path)]
         if not todo:
             continue
-        log(f"{model} {name}: {len(todo)} of {len(cases)} cases to score", run_dir)
-        with open(path, "a") as f, cf.ThreadPoolExecutor(parallel) as pool:
-            for r in pool.map(lambda c: one(c, request, score), todo):
-                if r["status"] == "scored":
+        log(f"{model} {name} pass {k}: {len(todo)} of {len(cases)} cases to score", run_dir)
+        skips, seen = [], 0   # skipped rows are written only when the set ends whole (a damaged set reruns them)
+        pool = cf.ThreadPoolExecutor(parallel)
+        try:
+            with open(path, "a") as f:
+                for r in pool.map(lambda c: one(c, request, score), todo):
+                    if r is None:
+                        continue
+                    seen += 1
+                    if r["status"] == "skipped":
+                        skips.append(r)
+                        if len(skips) > skip_max(len(cases)) or (len(todo) > EARLY_ERRORS and len(skips) == seen == EARLY_ERRORS):
+                            raise SetDamaged(f"{model} {name} pass {k}: {len(skips)} of {seen} jobs errored twice "
+                                             f"with the box up; last: {r['why'][:120]}")
+                        continue
                     f.write(json.dumps(r) + "\n")
                     f.flush()
-        rows = [json.loads(l) for l in open(path)]
-        log(f"{model} {name}: {sum(r['pass'] for r in rows)}/{len(rows)} pass", run_dir)
+                for r in skips:
+                    f.write(json.dumps(r) + "\n")
+        except BaseException:
+            stop.set()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
+        rows = []
+        for line in open(path):
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                pass
+        skipped = sum(r.get("status") == "skipped" for r in rows)
+        log(f"{model} {name} pass {k}: {sum(r['pass'] for r in rows)}/{len(rows)} pass"
+            + (f", {skipped} SKIPPED (counted as fails)" if skipped else ""), run_dir)
 
 
 def train(box, a, run_dir):
@@ -191,7 +254,7 @@ def one_box(a, run_dir, tag, base_tag, reservation=None):
                                           "messages": [{"role": "user", "content": "hi"}],
                                           "options": {"num_predict": 4}}, timeout=1800)
                 log(f"{name}: warm in {time.time() - w0:.0f} s (first nvfp4 call compiles kernels)", run_dir)
-                score_model(client, name, run_dir, a.parallel)
+                score_model(client, name, run_dir, a.parallel, a.passes)
             for name, _ in (builds if a.pull else ()):
                 pull_model(box, name, run_dir)
             return "done", (time.time() - t0) / 3600 * price
@@ -220,6 +283,7 @@ def main():
     ap.add_argument("--cap", type=float, default=50.0, help="training $40 plus scoring $10")
     ap.add_argument("--max-minutes", type=int, default=300)
     ap.add_argument("--until", choices=["train", "all"], default="all", help="train: stop once the adapter is out")
+    ap.add_argument("--passes", type=int, default=3, help="score every set this many times (the charter's reruns)")
     ap.add_argument("--tag", default="", help="Ollama name for the trained model (sweeps need one each)")
     ap.add_argument("--skip-base", action="store_true", help="another run of the sweep scores this base")
     ap.add_argument("--no-pull", dest="pull", action="store_false",
@@ -237,7 +301,7 @@ def main():
     a.data = os.path.abspath(a.data)
     size = a.model.split("-")[-1].lower()
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
-    json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7",
+    json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     if not a.meter:
         sys.exit("no spend meter (--meter): every box needs its own reservation; nothing created")
