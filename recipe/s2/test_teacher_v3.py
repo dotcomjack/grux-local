@@ -235,5 +235,20 @@ eval_run.release_pid(pd)
 check("the end never removes another process's pid file", os.path.exists(pf))
 check("each teacher row records the batch setting it ran with", nrow.get("num_batch") == 2048 and rows[0].get("num_batch") == 0)
 
+# a stopped teacher pass leaves every family its share
+bank = tb.kept()
+mixed = eval_run.interleave(bank)
+check("interleave keeps every job exactly once", sorted(c["id"] for c in mixed) == sorted(c["id"] for c in bank))
+fams = {}
+for c in bank:
+    fams[c["family"]] = fams.get(c["family"], 0) + 1
+head = {}
+for c in mixed[:1000]:
+    head[c["family"]] = head.get(c["family"], 0) + 1
+check("the first 1,000 jobs hold each family within 1% of its bank share",
+      all(abs(head.get(f, 0) / 1000 - n / len(bank)) <= 0.01 for f, n in fams.items()))
+check("bank order is kept within a family", all(
+    [c["id"] for c in mixed if c["family"] == f] == [c["id"] for c in bank if c["family"] == f] for f in fams))
+
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
