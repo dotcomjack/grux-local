@@ -33,10 +33,10 @@ from train_box import BOOT, TrainBox  # noqa: E402
 suite.THINK = False   # Grux sends think false on every Ollama call (loop row D-THINK, PROVEN)
 MODELFILE = ("FROM {src}\nRENDERER qwen3.5\nPARSER qwen3.5\nPARAMETER temperature 1\nPARAMETER top_k 20\n"
              "PARAMETER top_p 0.95\nPARAMETER presence_penalty 1.5\nPARAMETER min_p 0\n")
-SETS = {"s1": (suite.cases, suite.request, suite.score),
+SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set; a job runs step by step (run_case)
         "holdout": (holdout.cases, holdout.request_holdout, holdout.score_holdout),
         "holdout_v2": (holdout_v2.cases, holdout_v2.request_v2, holdout_v2.score_v2),
-        "holdout_v3": (holdout_v3.cases, None, None)}   # a v3 job runs step by step (holdout_v3.run_case)
+        "s1": (suite.cases, suite.request, suite.score)}
 
 
 def eval_path(run_dir, model, name, k):
@@ -58,7 +58,7 @@ def scored(path):
 
 def score_model(client, model, run_dir, parallel, passes=1):
     """Every case of every set for one model, `passes` times (the gate's reruns, one seed as eval_run keeps);
-    appends as it goes, skips what is already scored."""
+    appends as it goes, skips what is already scored. A case that errors twice is written as skipped (a fail)."""
     def one(case, request, score):
         t0 = time.time()
         for attempt in (1, 2):
@@ -75,15 +75,17 @@ def score_model(client, model, run_dir, parallel, passes=1):
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:200]}"
                 time.sleep(5)
-        else:
-            return {"case": case["id"], "family": case["family"], "status": "error", "error": err}
+        else:   # a skipped job counts as a fail, as eval_run's do, so a pass file always covers every case
+            return {"case": case["id"], "family": case["family"], "status": "skipped", "pass": False,
+                    "why": "error twice: " + err, "think": suite.THINK}
         row = {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why,
-               "got": got, "s": round(time.time() - t0, 2)}
+               "got": got, "s": round(time.time() - t0, 2), "think": suite.THINK}
         if steps is not None:
             row["steps"] = steps
         return row
 
-    for k, (name, (cases_fn, request, score)) in ((k, kv) for k in range(1, passes + 1) for kv in SETS.items()):
+    # set by set, its passes together: one model load per context size (v3 runs at 65,536, the rest at 16,384)
+    for (name, (cases_fn, request, score)), k in ((kv, k) for kv in SETS.items() for k in range(1, passes + 1)):
         cases = cases_fn()
         path = eval_path(run_dir, model, name, k)
         todo = [c for c in cases if c["id"] not in scored(path)]
@@ -92,11 +94,17 @@ def score_model(client, model, run_dir, parallel, passes=1):
         log(f"{model} {name} pass {k}: {len(todo)} of {len(cases)} cases to score", run_dir)
         with open(path, "a") as f, cf.ThreadPoolExecutor(parallel) as pool:
             for r in pool.map(lambda c: one(c, request, score), todo):
-                if r["status"] == "scored":
-                    f.write(json.dumps(r) + "\n")
-                    f.flush()
-        rows = [json.loads(l) for l in open(path)]
-        log(f"{model} {name} pass {k}: {sum(r['pass'] for r in rows)}/{len(rows)} pass", run_dir)
+                f.write(json.dumps(r) + "\n")
+                f.flush()
+        rows = []
+        for line in open(path):
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                pass
+        skipped = sum(r.get("status") == "skipped" for r in rows)
+        log(f"{model} {name} pass {k}: {sum(r['pass'] for r in rows)}/{len(rows)} pass"
+            + (f", {skipped} SKIPPED (counted as fails)" if skipped else ""), run_dir)
 
 
 def train(box, a, run_dir):
@@ -256,7 +264,7 @@ def main():
     a.data = os.path.abspath(a.data)
     size = a.model.split("-")[-1].lower()
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
-    json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7",
+    json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     if not a.meter:
         sys.exit("no spend meter (--meter): every box needs its own reservation; nothing created")

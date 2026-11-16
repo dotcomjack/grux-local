@@ -6,7 +6,7 @@ No model and no box: every answer here is scripted.
      carries its per-step facts;
   2. a client that answers nothing useful fails every sampled v3 job (the stub is not a fake pass);
   3. each pass writes its own file: pass 1 keeps the name readers use (eval-<model>-<set>.jsonl), pass k adds -pass<k>;
-  4. a rerun skips what is already scored, and a client error is retried once, then recorded as an error, not a row;
+  4. a rerun skips what is already scored; a client error is retried once, then written as skipped (a fail);
   5. v1 and v2 are scored with their own request and scorer;
   6. the box's Ollama serves as many requests at once as train_run sends (--parallel).
 Prints PASS or FAIL per check; exit 1 on any FAIL.
@@ -77,9 +77,12 @@ class Down:
         raise ConnectionError("stub down")
 
 
-t.SETS = {"holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),
-          "holdout_v2": (lambda: V2, t.holdout_v2.request_v2, t.holdout_v2.score_v2),
-          "holdout_v3": (lambda: V3, None, None)}
+MODULE_ORDER = list(t.SETS)
+check("the module scores v3 first", MODULE_ORDER[0] == "holdout_v3", str(MODULE_ORDER))
+STUB = {"holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),
+        "holdout_v2": (lambda: V2, t.holdout_v2.request_v2, t.holdout_v2.score_v2),
+        "holdout_v3": (lambda: V3, None, None)}
+t.SETS = {n: STUB[n] for n in MODULE_ORDER if n in STUB}   # the module's order, with small samples
 t.time.sleep = lambda s: None
 
 
@@ -103,12 +106,22 @@ check("each v3 row carries one fact per step it ran",
 for name, cs in (("holdout", V1), ("holdout_v2", V2)):
     for k in (1, 2, 3):
         check(f"{name} pass {k}: every case scored", len(rows(t.eval_path(run, MODEL, name, k))) == len(cs))
+check("every row records the think setting it was scored with",
+      all(x.get("think") is t.suite.THINK and "think" in x for x in rows(p1)))
 check("v1 and v2 rows carry no step facts",
       all("steps" not in x for n in ("holdout", "holdout_v2") for x in rows(t.eval_path(run, MODEL, n, 1))))
 
 again = Perfect()
 t.score_model(again, MODEL, run, 2, passes=3)
 check("a rerun skips everything already scored", again.calls == 0)
+
+order, real_path = [], t.eval_path
+t.eval_path = lambda r, m, n, k: order.append((n, k)) or real_path(r, m, n, k)
+t.score_model(Mute(), MODEL, tempfile.mkdtemp(), 2, passes=2)
+t.eval_path = real_path
+check("v3 first, then each set with its passes together (one model load per context size)",
+      order == [("holdout_v3", 1), ("holdout_v3", 2), ("holdout", 1), ("holdout", 2), ("holdout_v2", 1), ("holdout_v2", 2)],
+      str(order))
 
 mute = tempfile.mkdtemp()
 t.score_model(Mute(), MODEL, mute, 2, passes=1)
@@ -123,7 +136,12 @@ t.score_model(Perfect(fail_first=1), MODEL, flaky, 1, passes=1)
 check("a client error is retried once", [x["pass"] for x in rows(t.eval_path(flaky, MODEL, "holdout_v3", 1))] == [True])
 down = tempfile.mkdtemp()
 t.score_model(Down(), MODEL, down, 1, passes=1)
-check("a job that errors twice writes no scored row", rows(t.eval_path(down, MODEL, "holdout_v3", 1)) == [])
+dr = rows(t.eval_path(down, MODEL, "holdout_v3", 1))
+check("a job that errors twice is written as skipped, a fail, so the pass file covers every case",
+      [(x["status"], x["pass"]) for x in dr] == [("skipped", False)])
+again = Perfect()
+t.score_model(again, MODEL, down, 1, passes=1)
+check("a skipped job is not rerun into a second row", again.calls == 0 and len(rows(t.eval_path(down, MODEL, "holdout_v3", 1))) == 1)
 
 import re  # noqa: E402
 import train_box  # noqa: E402
