@@ -147,6 +147,10 @@ check("a sentence's closing period is not part of the name",
 check("a folder named home or Users inside another path is not a home folder",
       not any(export_v3.invented_home(one_step("x", t)) for t in
               ("~/Documents/home/photos", "https://x.com/home/feed", "~/Projects/Users/Archive")))
+check("a home folder on its own line is caught", export_v3.invented_home(one_step("x", "Done.\n/Users/jax/notes.txt")))
+check("a home folder the input names on its own line is kept",
+      not export_v3.invented_home(one_step("files:\n/Users/dan/a", "Read /Users/dan/b too.")))
+check("/Users/.. names no account", not export_v3.invented_home(one_step("x", "cd /Users/.. then ls")))
 d6 = tempfile.mkdtemp()
 r6 = json.loads(json.dumps(rows[0]))
 r6["raw"][-1]["tool_calls"] = [{"name": "fs_read", "arguments": {"path": "/Users/jax/notes.txt"}}]

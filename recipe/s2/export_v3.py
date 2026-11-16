@@ -45,11 +45,27 @@ def invented_home(rows):
     """True when a target names a home folder (/Users/<name>, /home/<name>) that no input of its step names: the
     teacher guessed the user's account name (measured 2026-11-16: 158 of 6,735 kept jobs, /Users/username,
     /Users/jax, /Users/jack ...). The scorer accepts the path, but on a real Mac it points at nobody's folder."""
-    def homes(text):   # whole names (/Users/dan is not /Users/dana); a sentence's closing period is not the name's
-        return {(m.group(1), m.group(2).rstrip(".-_")) for m in HOME.finditer(text)}
+    def strings(x):   # the decoded text, never a JSON dump: a dump writes a newline as \n and hides the path after it
+        if isinstance(x, str):
+            yield x
+        elif isinstance(x, dict):
+            for k, v in x.items():
+                yield from strings(k)
+                yield from strings(v)
+        elif isinstance(x, (list, tuple)):
+            for v in x:
+                yield from strings(v)
+
+    def homes(x):   # whole names (/Users/dan is not /Users/dana); a sentence's closing period is not the name's
+        out = set()
+        for text in strings(x):
+            for m in HOME.finditer(text):
+                name = m.group(2).rstrip(".-_")
+                if name:   # /Users/.. names no account
+                    out.add((m.group(1), name))
+        return out
     for r in rows:
-        seen = homes(json.dumps(r["messages"]) + json.dumps(r["tools"]))
-        if homes(json.dumps(r["target"])) - seen - REAL_HOMES:
+        if homes(r["target"]) - homes([r["messages"], r["tools"]]) - REAL_HOMES:
             return True
     return False
 
