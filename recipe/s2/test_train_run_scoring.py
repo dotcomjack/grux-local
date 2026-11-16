@@ -185,5 +185,38 @@ er = rows(t.eval_path(ev, MODEL, "holdout_v3", 1))
 check("the next box finishes the set, one row per job, all scored",
       sorted(x["case"] for x in er) == sorted(c["id"] for c in V3) and all(x["status"] == "scored" for x in er))
 
+dm = tempfile.mkdtemp()
+t.SETS = {"holdout_v3": (lambda: V3, None, None)}
+try:
+    t.score_model(Down(), MODEL, dm, 1, passes=1)
+    damaged = False
+except t.SetDamaged:
+    damaged = True
+check("a live box whose model fails job after job stops the set (SetDamaged)", damaged)
+check("... and writes none of those skips, so a rerun scores them", rows(t.eval_path(dm, MODEL, "holdout_v3", 1)) == [])
+t.score_model(Perfect(), MODEL, dm, 1, passes=1)
+check("the rerun finishes the set, all scored",
+      len(rows(t.eval_path(dm, MODEL, "holdout_v3", 1))) == len(V3)
+      and all(x["status"] == "scored" for x in rows(t.eval_path(dm, MODEL, "holdout_v3", 1))))
+
+
+class OneBad(Perfect):
+    """The box answers; the model errors on one job only."""
+    def post(self, path, body, timeout=None):
+        if json.dumps(body.get("messages")) == json.dumps(h.request_v3(V3[0], MODEL, 0)["body"]["messages"]):
+            raise ConnectionError("model error")
+        return super().post(path, body, timeout)
+
+    def get(self, path, timeout=None):
+        return {"models": []}
+
+
+ob = tempfile.mkdtemp()
+t.score_model(OneBad(), MODEL, ob, 1, passes=1)
+obr = {x["case"]: x for x in rows(t.eval_path(ob, MODEL, "holdout_v3", 1))}
+check("one job that errors in a good set is written as skipped, the rest scored",
+      len(obr) == len(V3) and obr[V3[0]["id"]]["status"] == "skipped"
+      and all(obr[c["id"]]["status"] == "scored" for c in V3[1:]))
+
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)

@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +28,7 @@ import holdout  # noqa: E402
 import holdout_v2  # noqa: E402
 import holdout_v3  # noqa: E402
 import suite  # noqa: E402
-from eval_run import BOX_EXTRA, PRICE, log  # noqa: E402
+from eval_run import BOX_EXTRA, EARLY_ERRORS, PRICE, log, skip_max  # noqa: E402
 from train_box import BOOT, TrainBox  # noqa: E402
 
 suite.THINK = False   # Grux sends think false on every Ollama call (loop row D-THINK, PROVEN)
@@ -41,6 +42,11 @@ SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set;
 
 class BoxGone(RuntimeError):
     """The box's Ollama stopped answering mid-set: nothing more is written, the next box resumes the set."""
+
+
+class SetDamaged(RuntimeError):
+    """The box answers but the model fails job after job (eval_run's skip_max, or its first EARLY_ERRORS): the set
+    stops, its skips are not written, and a rerun scores those jobs again."""
 
 
 def eval_path(run_dir, model, name, k):
@@ -63,7 +69,11 @@ def scored(path):
 def score_model(client, model, run_dir, parallel, passes=1):
     """Every case of every set for one model, `passes` times (the gate's reruns, one seed as eval_run keeps);
     appends as it goes, skips what is already scored. A case that errors twice is written as skipped (a fail)."""
+    stop = threading.Event()
+
     def one(case, request, score):
+        if stop.is_set():   # the set is ending: queued jobs return at once instead of billing their retries
+            return None
         t0 = time.time()
         for attempt in (1, 2):
             try:
@@ -100,10 +110,29 @@ def score_model(client, model, run_dir, parallel, passes=1):
         if not todo:
             continue
         log(f"{model} {name} pass {k}: {len(todo)} of {len(cases)} cases to score", run_dir)
-        with open(path, "a") as f, cf.ThreadPoolExecutor(parallel) as pool:
-            for r in pool.map(lambda c: one(c, request, score), todo):
-                f.write(json.dumps(r) + "\n")
-                f.flush()
+        skips, seen = [], 0   # skipped rows are written only when the set ends whole (a damaged set reruns them)
+        pool = cf.ThreadPoolExecutor(parallel)
+        try:
+            with open(path, "a") as f:
+                for r in pool.map(lambda c: one(c, request, score), todo):
+                    if r is None:
+                        continue
+                    seen += 1
+                    if r["status"] == "skipped":
+                        skips.append(r)
+                        if len(skips) > skip_max(len(cases)) or len(skips) == seen == EARLY_ERRORS:
+                            raise SetDamaged(f"{model} {name} pass {k}: {len(skips)} of {seen} jobs errored twice "
+                                             f"with the box up; last: {r['why'][:120]}")
+                        continue
+                    f.write(json.dumps(r) + "\n")
+                    f.flush()
+                for r in skips:
+                    f.write(json.dumps(r) + "\n")
+        except BaseException:
+            stop.set()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
         rows = []
         for line in open(path):
             try:
