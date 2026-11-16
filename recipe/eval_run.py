@@ -349,6 +349,8 @@ def main():
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "eval_run.pid"), "w") as f:   # the pid to stop: a launcher records its wrapper's
+        f.write(f"{os.getpid()}\n")
     global KEEP_RAW, TRAIN_PROMPT, HINT_NOW, NUM_BATCH
     if a.num_batch and a.set != "train_v3":
         raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
