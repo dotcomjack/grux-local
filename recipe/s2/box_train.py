@@ -72,6 +72,7 @@ def main():
     cfg = transformers.AutoConfig.from_pretrained(a.model)
     cls = getattr(transformers, cfg.architectures[0])
     model = cls.from_pretrained(a.model, torch_dtype=torch.bfloat16, device_map="cuda")
+    mem("after load")
     if a.merge_only:
         return save_merged(PeftModel.from_pretrained(model, a.merge_only), tok, a)
     model.gradient_checkpointing_enable()
@@ -110,6 +111,9 @@ def main():
     lm_head = model.get_output_embeddings()
     if a.micro > 1:
         check_fast_loss(model, lm_head, examples[:3])
+        mem("after the fast-loss check")
+        torch.cuda.empty_cache()   # the check's full-vocabulary pass leaves about 70 GB cached on a 35B (measured
+        mem("after releasing the check's cache")   # 2026-11-16): Triton's first-backward autotune then had none
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=a.lr, weight_decay=0.0)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / 10) * max(0.0, 1 - s / max(1, total)))
     start = 0
@@ -136,8 +140,16 @@ def main():
             else:
                 if not queue:
                     queue = buckets(examples, a.micro, a.micro_tokens)
-                loss = fast_loss(model, lm_head, [examples[i] for i in queue.pop()])
+                batch = [examples[i] for i in queue.pop()]
+                if step < start + 2:   # the first steps' shapes and memory: what an OOM report needs
+                    print(f"batch rows {len(batch)} padded {max(len(p) + len(c) for p, c in batch)} "
+                          f"answer tokens {sum(len(c) for _, c in batch)}", flush=True)
+                loss = fast_loss(model, lm_head, batch)
+            if step < start + 2:
+                mem("after forward")
             (loss / a.accum).backward()
+            if step < start + 2:
+                mem("after backward")
             loss_sum += loss.item() / a.accum
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
@@ -150,6 +162,14 @@ def main():
     model.save_pretrained(os.path.join(a.out, "adapter"))
     print("ADAPTER DONE", flush=True)
     save_merged(model, tok, a)
+
+
+def mem(where):
+    """CUDA memory at a point in the run, in GB (allocated, reserved, peak allocated, total)."""
+    g = 1024 ** 3
+    print(f"MEM {where}: allocated {torch.cuda.memory_allocated() / g:.1f} reserved {torch.cuda.memory_reserved() / g:.1f} "
+          f"peak {torch.cuda.max_memory_allocated() / g:.1f} of {torch.cuda.get_device_properties(0).total_memory / g:.1f}",
+          flush=True)
 
 
 def buckets(examples, micro, max_tokens):

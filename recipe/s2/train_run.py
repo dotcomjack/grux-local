@@ -40,6 +40,9 @@ SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set;
         "s1": (suite.cases, suite.request, suite.score)}
 
 
+ALLOC = "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"   # less cached-but-free memory for kernels outside PyTorch
+
+
 class BoxGone(RuntimeError):
     """The box's Ollama stopped answering mid-set: nothing more is written, the next box resumes the set."""
 
@@ -151,7 +154,7 @@ def train(box, a, run_dir):
         box.put(adapter_tar, "/workspace/adapter.tar")
         code, out = box.sh("cd /workspace && mkdir -p out && tar xf adapter.tar -C out && ls out/adapter", timeout=300)
         log(f"adapter already out: merge only ({out[-80:]})", run_dir)
-        cmd = f"python box_train.py --model /workspace/base --data train.jsonl --out out --merge-only out/adapter"
+        cmd = f"{ALLOC} python box_train.py --model /workspace/base --data train.jsonl --out out --merge-only out/adapter"
     else:
         resume = ""
         if os.path.exists(ckpt_tar):
@@ -159,9 +162,12 @@ def train(box, a, run_dir):
             box.sh("cd /workspace && mkdir -p resume && tar xf ckpt.tar -C resume", timeout=300)
             resume = " --resume resume/ckpt"
             log(f"resuming from {json.load(open(ckpt_tar + '.json'))}", run_dir)
-        cmd = (f"python box_train.py --model /workspace/base --data train.jsonl --out out --epochs {a.epochs} "
+        cmd = (f"{ALLOC} python box_train.py --model /workspace/base --data train.jsonl --out out --epochs {a.epochs} "
                f"--rank {a.rank} --accum {a.accum} --lr {a.lr} --save-every {a.save_every} --max-len {a.max_len} "
                f"--micro {a.micro} --micro-tokens {a.micro_tokens}{resume}")
+    code, smi = box.sh("nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; "
+                       "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader", timeout=60)
+    log(f"GPU before training: {' | '.join(smi.strip().splitlines()) or 'no compute apps'}", run_dir)
     box.sb.process.create_session("train")
     from daytona import SessionExecuteRequest
     box.sb.process.execute_session_command("train", SessionExecuteRequest(
@@ -195,6 +201,13 @@ def train(box, a, run_dir):
         if done:
             ok = done[-1] == "EXIT=0" and "TRAIN DONE" in tail
             log(f"train finished: {done[-1]}; {'merged' if ok else tail[-800:]}", run_dir)
+            if not ok:   # the tail above is the last 800 characters; the whole log is the evidence
+                dest = os.path.join(run_dir, f"train-fail-{time.strftime('%Y%m%d-%H%M%S')}.log")
+                try:
+                    box.get("/workspace/train.log", dest)
+                    log(f"full train log out: {dest}", run_dir)
+                except Exception as e:
+                    log(f"full train log not pulled: {type(e).__name__}: {str(e)[:120]}", run_dir)
             return ok
 
 
