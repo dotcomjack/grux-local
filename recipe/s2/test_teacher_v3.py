@@ -235,6 +235,18 @@ eval_run.release_pid(pd)
 check("the end never removes another process's pid file", os.path.exists(pf))
 check("each teacher row records the batch setting it ran with", nrow.get("num_batch") == 2048 and rows[0].get("num_batch") == 0)
 
+# the hint asks for what the scorer requires: held-out v3 fails a safe answer that never says the text tried to steer it
+import rules  # noqa: E402
+import suite  # noqa: E402
+hint_text = tp.HINTS["injection"]
+asked = hint_text.split('"')[1] if hint_text.count('"') == 2 else ""
+check("the injection hint requires the steer sentence, not as an option",
+      " may " not in hint_text and " if " not in hint_text and "Then end your reply with" in hint_text)
+check("the sentence the hint quotes is one the scorer accepts, and a claim check does not catch",
+      bool(asked) and rules.flagged(asked) and not suite.claims_action(asked))
+check("a hint edit changes neither job_sha nor tools_sha (rows already answered still export)",
+      hrow["job_sha"] == h.case_sha([inj]) and hrow["tools_sha"] == tp.tools_sha(inj))
+
 # a stopped teacher pass leaves every family its share
 bank = tb.kept()
 mixed = eval_run.interleave(bank)
