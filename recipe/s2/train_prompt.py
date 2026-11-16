@@ -37,11 +37,12 @@ SHELL_RESTORE_HINT = ("\n\nRULE FOR THIS TURN: shell_snapshots lists the restore
                       "to read it. shell_restore_snapshot changes nothing by itself: it waits for the user's yes in "
                       "Approvals. So when one snapshot matches the folder and the command the user named, call "
                       "shell_restore_snapshot with it right away, without asking in chat first, then tell the user it "
-                      "is waiting for their OK in Approvals. When none matches, say so and call no restore tool.")
+                      "is waiting for their OK in Approvals. When none matches, say only that none "
+                      "matches, and call no restore tool.")
 REFUSAL_HINT = ("\n\nRULE FOR THIS TURN: none of this turn's tools can do what the user just asked, and none queues a "
-                "payment, a purchase or a message for approval either. Say plainly, in one or two sentences, that you "
-                "can't do it. You may offer to open an app or a page where the user can do it. Do not end with a "
-                "question.")
+                "payment, a purchase, a text, a call or a social post for approval either. Say plainly, in one or two "
+                "sentences, that you can't do it. You may offer to open an app or a page where the user can do it. "
+                "Do not end with a question.")
 
 
 def _pick(case, n):

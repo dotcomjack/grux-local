@@ -109,6 +109,14 @@ check("the export summary counts what it wrote", s["rows"] == len(got) and s["jo
 
 # decision 1: the short prompt; decision 2: the hint reaches the teacher only
 import train_prompt as tp  # noqa: E402
+
+
+def leaks(rule, rows):
+    """True when a rule's raw text sits in any message of these bodies or training rows (never search a JSON dump:
+    it escapes the rule's newlines and quotes, so a dump can never contain it)."""
+    return bool(rule) and any(rule in (m.get("content") or "") for r in rows for m in r["messages"])
+
+
 full = len(h.wire_tools())
 ok_named, ok_size, sizes = True, True, []
 for c in tb.kept()[::40]:
@@ -149,10 +157,17 @@ other = next(c for c in tb.kept() if c["family"] == "chain")
 raw_body = h.request_v3(inj, "t", 0)["body"]
 hinted = tp.teacher_body(raw_body, inj, hint=True)
 check("the hint reaches the teacher on an injection job", hinted["messages"][0]["content"].endswith(tp.hint_for(inj)))
-check("the hint never reaches the training row", tp.hint_for(inj) not in json.dumps(tp.student_body(inj, 0)))
+check("the hint never reaches the training row", not leaks(tp.hint_for(inj), [tp.student_body(inj, 0)])
+      and leaks(tp.hint_for(inj), [hinted]))
 check("a family without a hint is sent unchanged", tp.teacher_body(h.request_v3(other, "t", 0)["body"], other, hint=True)
       ["messages"] == h.request_v3(other, "t", 0)["body"]["messages"])
-check("the tool choice is the same on every call (seeded by the job id)", tp.tool_names_for(inj) == tp.tool_names_for(inj))
+PIN = ("import sys, json; sys.path[:0] = [%r, %r]; import train_bank_v3 as tb, train_prompt as tp; "
+       "c = next(c for c in tb.kept() if c['family'] == 'injection'); print(json.dumps([tp.tool_names_for(c), tp.hint_for(c)]))"
+       % (HERE, os.path.dirname(HERE)))
+other_proc = json.loads(subprocess.run([sys.executable, "-c", PIN], capture_output=True, text=True, check=True,
+                                       env=dict(os.environ, PYTHONHASHSEED="12345")).stdout)
+check("the tool choice and the hint are the same in another process with another hash seed (seeded by the job id)",
+      other_proc == [tp.tool_names_for(inj), tp.hint_for(inj)])
 
 eval_run.TRAIN_PROMPT, eval_run.KEEP_RAW, eval_run.HINT_NOW = tp, True, True
 SEEN.clear()
@@ -170,7 +185,7 @@ with open(os.path.join(hd, "t-train_v3-pass3.jsonl"), "w") as f:
 s4 = export_v3.export(hd, os.path.join(hd, "train.jsonl"))
 got4 = [json.loads(l) for l in open(os.path.join(hd, "train.jsonl"))]
 check("a hinted job exports without the hint, on its own tools",
-      s4["jobs_kept"] == 1 and s4["hinted_jobs"] == 1 and tp.hint_for(inj) not in json.dumps(got4)
+      s4["jobs_kept"] == 1 and s4["hinted_jobs"] == 1 and not leaks(tp.hint_for(inj), got4)
       and got4[0]["tools"] == tp.student_body(inj, 0)["tools"])
 check("a row taught on the full tool list is never exported", s4["dropped_job_changed"] == 1)
 eval_run.HINT_NOW = False
@@ -254,7 +269,8 @@ for c in injs:
     quoted[q] = quoted.get(q, 0) + 1
 check(f"the injection jobs split across the steer sentences, about a third each ({sorted(quoted.values())})",
       set(quoted) == set(tp.STEERS) and min(quoted.values()) > len(injs) / len(tp.STEERS) * 0.85)
-check("a job always gets the same sentence (seeded by its id)", all(tp.hint_for(c) == tp.hint_for(c) for c in injs[:50]))
+check("the sentence is picked by sha256 of the job id (pinned values)",
+      [tp._pick({"id": i}, 3) for i in ("x", "t3-injection-00001", "abc")] == [2, 1, 1])
 
 # the shell restore and refusal rules: only their jobs, never the training row, and they ask what the scorer wants
 shells = [c for c in tb.kept() if c["family"] == "shell"]
@@ -273,7 +289,7 @@ for c, name in ((snap, "shell restore"), (nosnap, "shell no-snapshot"), (refu, "
     b = h.request_v3(c, "t", 0)["body"]
     sent = tp.teacher_body(b, c, hint=True)["messages"][0]["content"]
     check(f"the {name} rule reaches the teacher and never the training row",
-          sent.endswith(tp.hint_for(c)) and tp.hint_for(c) not in json.dumps(tp.student_body(c, 0))
+          sent.endswith(tp.hint_for(c)) and not leaks(tp.hint_for(c), [tp.student_body(c, 0)])
           and tp.teacher_body(b, c, hint=False)["messages"] == tp.student_body(c, 0)["messages"])
 check("the shell rule tells the teacher where the restore waits (a word the restore reply must hold)",
       any(w in tp.SHELL_RESTORE_HINT.lower() for w in h.WAITS) and "shell_restore_snapshot" in tp.SHELL_RESTORE_HINT)
