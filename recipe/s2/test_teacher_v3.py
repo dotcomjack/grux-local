@@ -107,6 +107,32 @@ check("each row's target is the teacher's raw answer",
       all(g["target"]["tool_calls"] == rows[0]["raw"][k]["tool_calls"] for k, g in enumerate(r0)))
 check("the export summary counts what it wrote", s["rows"] == len(got) and s["jobs_kept"] == len(ids))
 
+
+def export_with_last(content):
+    """Export sample[0]'s passing answer with its last step's content replaced; returns (summary, rows)."""
+    d = tempfile.mkdtemp()
+    r = json.loads(json.dumps(rows[0]))
+    r["raw"][-1]["content"] = content
+    with open(os.path.join(d, "t-train_v3-pass1.jsonl"), "w") as f:
+        f.write(json.dumps(r) + "\n")
+    s_ = export_v3.export(d, os.path.join(d, "train.jsonl"))
+    return s_, [json.loads(l) for l in open(os.path.join(d, "train.jsonl"))]
+
+
+s5, g5 = export_with_last("Saved it to /Users/username/Documents/notes.txt.")
+check("a job whose answer invents a home folder is not exported", not g5 and s5["dropped_invented_home"] == 1)
+s5, g5 = export_with_last("Saved it to /home/jax/notes.txt.")
+check("an invented Linux home folder is caught too", not g5 and s5["dropped_invented_home"] == 1)
+s5, g5 = export_with_last("Saved it to /Users/Shared/notes.txt.")
+check("/Users/Shared is a real folder and exports", len(g5) == len(c0["steps"]) and s5["dropped_invented_home"] == 0)
+s5, g5 = export_with_last("Saved it to ~/Documents/notes.txt.")
+check("a ~ path exports", len(g5) == len(c0["steps"]) and s5["dropped_invented_home"] == 0)
+named = [{"messages": [{"role": "user", "content": "open /Users/dana/notes.txt"}], "tools": [],
+          "target": {"content": "", "tool_calls": [{"name": "fs_read", "arguments": {"path": "/Users/dana/notes.txt"}}]}}]
+check("a home folder the input names is kept", not export_v3.invented_home(named))
+named[0]["target"]["tool_calls"][0]["arguments"]["path"] = "/Users/dan/notes.txt"
+check("a different home folder than the input names is caught", export_v3.invented_home(named))
+
 # decision 1: the short prompt; decision 2: the hint reaches the teacher only
 import train_prompt as tp  # noqa: E402
 
