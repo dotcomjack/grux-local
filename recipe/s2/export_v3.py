@@ -12,6 +12,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,39 @@ def kept_answers(run_dir):
     return out
 
 
+HOME = re.compile(r"(?<![A-Za-z0-9._~/-])/(Users|home)/([A-Za-z0-9._-]+)")   # a path that starts there, not ~/x/home/y
+REAL_HOMES = {("Users", "Shared")}   # /Users/Shared is on every Mac
+
+
+def invented_home(rows):
+    """True when a target names a home folder (/Users/<name>, /home/<name>) that no input of its step names: the
+    teacher guessed the user's account name (measured 2026-11-16: 158 of 6,735 kept jobs, /Users/username,
+    /Users/jax, /Users/jack ...). The scorer accepts the path, but on a real Mac it points at nobody's folder."""
+    def strings(x):   # the decoded text, never a JSON dump: a dump writes a newline as \n and hides the path after it
+        if isinstance(x, str):
+            yield x
+        elif isinstance(x, dict):
+            for k, v in x.items():
+                yield from strings(k)
+                yield from strings(v)
+        elif isinstance(x, (list, tuple)):
+            for v in x:
+                yield from strings(v)
+
+    def homes(x):   # whole names (/Users/dan is not /Users/dana); a sentence's closing period is not the name's
+        out = set()
+        for text in strings(x):
+            for m in HOME.finditer(text):
+                name = m.group(2).rstrip(".-_")
+                if name:   # /Users/.. names no account
+                    out.add((m.group(1), name))
+        return out
+    for r in rows:
+        if homes(r["target"]) - homes([r["messages"], r["tools"]]) - REAL_HOMES:
+            return True
+    return False
+
+
 def rows_for(case, answer, model="teacher"):
     """One training row per step, or [] when the answer does not cover every step."""
     raws = answer["raw"]
@@ -52,11 +86,12 @@ def rows_for(case, answer, model="teacher"):
 
 def export(run_dir, out_path):
     """An answer is paired only with the exact job it answered and the exact tools it was offered: its row's job_sha
-    and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported."""
+    and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported. A job
+    whose answer invents a home folder (invented_home) is never exported either."""
     bank = train_bank_v3.kept()
     by_id = {c["id"]: c for c in bank}
     answers = kept_answers(run_dir)
-    fams, rows_n, short, changed, gone, hinted = {}, 0, 0, 0, 0, 0
+    fams, rows_n, short, changed, gone, hinted, invented = {}, 0, 0, 0, 0, 0, 0
     with open(out_path, "w") as f:
         for cid, ans in answers.items():
             case = by_id.get(cid)
@@ -71,6 +106,9 @@ def export(run_dir, out_path):
             if not rows:
                 short += 1
                 continue
+            if invented_home(rows):
+                invented += 1
+                continue
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             rows_n += len(rows)
@@ -81,6 +119,7 @@ def export(run_dir, out_path):
         total[c["family"]] = total.get(c["family"], 0) + 1
     summary = {"jobs_kept": sum(fams.values()), "jobs_in_bank": len(by_id), "rows": rows_n,
                "dropped_short_answers": short, "dropped_job_changed": changed, "dropped_job_gone": gone,
+               "dropped_invented_home": invented,
                "hinted_jobs": hinted,
                "families": {k: {"kept": fams.get(k, 0), "bank": n, "yield": round(fams.get(k, 0) / n, 3)}
                             for k, n in sorted(total.items())}}
