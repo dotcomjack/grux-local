@@ -117,6 +117,10 @@ show["modelfile"] = mf
 show["details"] = {"format": "gguf", "quantization_level": "Q8_0"}
 check("an import of the wrong quant is refused", "quantization Q8_0" in (g.check_import(Show(), "m", mf, "Q4_K_M") or ""))
 
+PS = type("PS", (), {"get": lambda self, p, timeout=None: {"models": [{"name": "gguf-m:latest", "size": 10, "size_vram": 6}]}})
+check("the GPU check finds a local model under its :latest name, and sees a partial load",
+      g.on_gpu_whole(PS(), "gguf-m") == (False, {"size": 10, "size_vram": 6}), str(g.on_gpu_whole(PS(), "gguf-m")))
+
 # --------------------------------------------------------------------------- 1. kill rule
 LIM = g.limited_v3(2)
 PROBE = next(c for c in h.cases() if "call" in c["steps"][0])

@@ -382,7 +382,8 @@ def serial_chat(client, model, tier_dir):
 def on_gpu_whole(client, model):
     """(whole, ps entry): True when the loaded model sits in GPU memory entirely (size_vram == size), None when it
     is not loaded right now."""
-    ps = next((x for x in client.get("/api/ps").get("models", []) if model in (x.get("name"), x.get("model"))), {})
+    names = (model, model + ":latest")   # Ollama lists a local name with its implicit tag (measured on 0.40.8)
+    ps = next((x for x in client.get("/api/ps").get("models", []) if {x.get("name"), x.get("model")} & set(names)), {})
     if not ps:
         return None, {}
     return ps.get("size_vram", 0) >= ps.get("size", 1), {k: ps.get(k) for k in ("size", "size_vram")}
@@ -500,7 +501,7 @@ def run_tier(box, client, tier, a, facts, host_info, root):
         return "stopped"
     update_manifest(tier_dir, **built)
     why = check_import(client, model, facts["modelfile"][tier], quant)
-    info, why_not = probe(client, model)
+    info, why_not = probe(client, model + ":latest")   # probe matches /api/tags names exactly
     whole, ps = on_gpu_whole(client, model)
     update_manifest(tier_dir, import_check=why or "ok", probe=info, gpu_whole=whole, ps=ps)
     log(f"{tier}: {model} imported: {why or 'matches the library'}; probe {info} -> {why_not or 'ok'}; "
