@@ -258,6 +258,13 @@ os.environ.pop("GRUX_SWING_CHARTER")
 bad_, facts = g.preflight(PA, fetch=fetch)
 check("preflight refuses without a charter", any("GRUX_SWING_CHARTER" in x for x in bad_), str(bad_))
 os.environ["GRUX_SWING_CHARTER"] = charter
+PA.gpu_of = {"pro": "RTX-5090", "shipped": "H200"}
+bad_, facts = g.preflight(PA, fetch=fetch)
+check("preflight accepts RTX-5090 and H200 as Daytona GPU types", not any(x.startswith("GPU ") for x in bad_), str(bad_))
+PA.gpu_of = {"pro": "RTX-5900"}
+bad_, facts = g.preflight(PA, fetch=fetch)
+check("... and refuses a GPU type the SDK does not have", any("RTX-5900" in x and "GpuType" in x for x in bad_), str(bad_))
+PA.gpu_of = {"shipped": "H200"}
 g.SHIPPED.clear()
 g.SHIPPED.update(saved)
 

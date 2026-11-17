@@ -55,6 +55,9 @@ HOST_NEEDS = {"2b": (16, 60), "4b": (24, 80), "9b": (40, 120), "pro": (80, 250)}
 SHIPPED = {"2b": "601cd23c66ef", "4b": "1de6472396f2", "9b": "357e4bd45ff0"}
 SHIPPED_TAG = "gruxai.com/grux/grux-local:{}"
 SHIPPED_SETS = ("holdout", "holdout_v2", "s1")   # their v3 is scored on its own (eval_run --set holdout_v3)
+# daytona 0.231.1's GpuType values (read 2026-11-17); preflight uses the SDK's own enum when it is installed.
+GPU_TYPES_SDK = "0.231.1"
+GPU_TYPES = ("H100", "H200", "B200", "B300", "L40S", "RTX-PRO-6000", "RTX-4090", "RTX-5090", "MI355X")
 FINAL = ("scored", "killed", "stopped")   # a tier in one of these is not built again by a rerun
 CPU_HOUR, GB_HOUR = 0.0504, 0.0162   # what a GPU box bills beside the GPU (eval_run.BOX_EXTRA at 16 vCPU, 192 GB)
 GGUF_SETUP = (
@@ -291,8 +294,9 @@ def preflight(a, fetch=default_fetch):
             GpuType(g)
         except ValueError:
             bad.append(f"GPU {g}: not a Daytona GpuType")
-        except Exception as e:   # no SDK here (a test stub): the box create is the check
-            facts.setdefault("notes", []).append(f"GPU {g}: GpuType unverified here ({type(e).__name__})")
+        except Exception:   # no SDK here (a test stub): the values the SDK listed when this was written
+            if g not in GPU_TYPES:
+                bad.append(f"GPU {g}: not one of the GpuType values of daytona {GPU_TYPES_SDK}")
     return bad, facts
 
 
