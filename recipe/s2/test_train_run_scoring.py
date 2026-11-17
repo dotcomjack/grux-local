@@ -143,28 +143,30 @@ def main_with(env_over, until="all"):
     run = os.path.join(d, "run")
     st = open(os.path.join(run, "status.json")).read() if os.path.exists(os.path.join(run, "status.json")) else ""
     lg = open(os.path.join(run, "run.log")).read() if os.path.exists(os.path.join(run, "run.log")) else ""
-    return p.returncode, st, lg
+    return p.returncode, st, lg, p.stderr
 
 
 empty = tempfile.mkdtemp()
-rc, st, lg = main_with({"GRUX_SRC": empty, "GRUX_SRC_V3": empty})
+rc, st, lg, err = main_with({"GRUX_SRC": empty, "GRUX_SRC_V3": empty})
 check("main refuses with exit 4 before any box when no source tree is there", rc == 4, f"rc {rc}")
-check("... naming v3 (its SystemExit) and v1, v2 and s1 in status.json",
+check("... naming v3, v1, v2 and s1 in status.json",
       all(n + ":" in st for n in ("holdout_v3", "holdout", "holdout_v2", "s1")) and "scoring preflight refused" in st, st[:300])
 check("... and in run.log", "REFUSED scoring preflight" in lg)
 if os.environ.get("GRUX_SRC"):   # v3 pointed at the 3.1.0 tree: files exist, wire_tools exits (SystemExit)
-    rc, st, lg = main_with({"GRUX_SRC_V3": os.environ["GRUX_SRC"]})
+    rc, st, lg, err = main_with({"GRUX_SRC_V3": os.environ["GRUX_SRC"]})
     check("v3 on the 3.1.0 source tree is refused with exit 4 and named",
           rc == 4 and "holdout_v3: " in st, f"rc {rc} {st[:200]}")
 else:
     check("GRUX_SRC is set for the wrong-tree check", False)
-rc, st, lg = main_with({"GRUX_SRC": empty}, until="train")
-check("--until train runs no scoring preflight", "scoring preflight" not in st + lg)
+rc, st, lg, err = main_with({"GRUX_SRC": empty}, until="train")
+check("--until train runs no scoring preflight: it gets past it to the meter check",
+      rc == 1 and "no spend meter" in err and "scoring preflight" not in st + lg, f"rc {rc} {err[-160:]}")
 import sweep  # noqa: E402
 sw = tempfile.mkdtemp()
 os.makedirs(os.path.join(sw, "r"))
 json.dump({"status": "scoring preflight refused: holdout: x"}, open(os.path.join(sw, "r", "status.json"), "w"))
-check("a sweep treats a scoring preflight refusal as final, not a retry", sweep.done(sw, "r"))
+check("a sweep does not count a scoring preflight refusal as done (it is the environment, not the data)",
+      not sweep.done(sw, "r"))
 MODULE_ORDER = list(t.SETS)
 check("the module scores v3 first", MODULE_ORDER[0] == "holdout_v3", str(MODULE_ORDER))
 STUB = {"holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),

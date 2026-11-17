@@ -40,13 +40,12 @@ def live_runs(root):
 
 
 def done(root, n):
-    """Finished, or finished for good: a data scan or scoring preflight refusal refuses on every relaunch, so it is
-    final too."""
+    """Finished, or finished for good: a data scan refusal will refuse on every relaunch, so it is final too."""
     st = os.path.join(root, n, "status.json")
     if not os.path.exists(st):
         return False
     status = json.load(open(st)).get("status", "")
-    return status == "done" or status.startswith(("data scan refused", "scoring preflight refused"))
+    return status == "done" or status.startswith("data scan refused")
 
 
 def launches(root, n, add=False):
