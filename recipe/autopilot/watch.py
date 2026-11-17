@@ -249,6 +249,19 @@ def judge_ollama_build(name, size, build, cfg):
 
 # --------------------------------------------------------------------------- the run
 
+def link_hf(hf_cands, ollama_by_key, report):
+    """A new Hugging Face base is linked to the Ollama build of the same family and size, or waits for one. An old
+    back-catalog build is never that link: it is not the new weights, so the new base keeps waiting (review
+    2026-11-17, finding 1)."""
+    for rec in hf_cands:
+        key = (family_key(rec["id"]), hf_size_key(rec["id"]))
+        o = ollama_by_key.get(key)
+        if o and not o.get("backfill"):
+            o["hf_id"] = rec["id"]
+        else:
+            report["waiting"].append({**rec, "reason": rec["reason"] + "; no Ollama library build yet (rechecked weekly)"})
+
+
 def load_state():
     if os.path.exists(STATE_PATH):
         return json.load(open(STATE_PATH))
@@ -321,13 +334,7 @@ def run(out_path, use_state=True):
                 report["filtered"].append(rec)
             else:
                 hf_cands.append(rec)
-    for rec in hf_cands:
-        key = (family_key(rec["id"]), hf_size_key(rec["id"]))
-        o = ollama_by_key.get(key)
-        if o:
-            o["hf_id"] = rec["id"]
-        else:
-            report["waiting"].append({**rec, "reason": rec["reason"] + "; no Ollama library build yet (rechecked weekly)"})
+    link_hf(hf_cands, ollama_by_key, report)
 
     done = decided_digests()
     for key, rec in list(ollama_by_key.items()):

@@ -67,5 +67,22 @@ check("a back-catalog win is never trained by the lane", not run.may_train({"id"
 check("--no-train still stops a new build's win", not run.may_train({"id": "n"}, "win", no_train=True))
 check("a lose never trains", not run.may_train({"id": "n"}, "lose", no_train=False))
 
+hf = [{"id": "Qwen/Qwen3-4B-Instruct-2507", "reason": "apache-2.0"}]
+key = (watch.family_key(hf[0]["id"]), watch.hf_size_key(hf[0]["id"]))
+rep = {"waiting": []}
+back = {"id": "qwen3:4b", "backfill": True}
+watch.link_hf(hf, {key: back}, rep)
+check("a new HF base never links to an old back-catalog build; it keeps waiting",
+      "hf_id" not in back and len(rep["waiting"]) == 1, f"{back} {rep}")
+rep = {"waiting": []}
+fresh = {"id": "qwen3:4b"}
+watch.link_hf(hf, {key: fresh}, rep)
+check("a new HF base still links to a new Ollama build", fresh.get("hf_id") == hf[0]["id"] and not rep["waiting"],
+      f"{fresh} {rep}")
+
+check("only back-catalog builds incomplete: a quiet retry, no page",
+      not run.backfill_retry_is_alert([{"id": "a", "backfill": True}, {"id": "b", "backfill": True}]))
+check("a new build incomplete still pages", run.backfill_retry_is_alert([{"id": "a", "backfill": True}, {"id": "n"}]))
+
 print("ALL PASS" if not FAILS else f"{len(FAILS)} FAIL")
 sys.exit(1 if FAILS else 0)
