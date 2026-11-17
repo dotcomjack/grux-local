@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,7 @@ GPU_TYPES = ("H100", "H200", "B200", "B300", "L40S", "RTX-PRO-6000", "RTX-4090",
 # train_run.SetDamaged) and "refused" (the box was too small) are not final: a rerun tries again.
 FINAL = ("scored", "killed", "stopped")
 TEARDOWN_HOURS = 0.05   # about 3 minutes of delete and in-flight work kept out of the cap (eval_run.TEARDOWN_USD)
+MIN_BOX_HOURS = 0.25    # no box is bought for less than this (eval_run.MIN_BOX_HOURS): setup alone takes minutes
 CPU_HOUR, GB_HOUR = 0.0504, 0.0162   # what a GPU box bills beside the GPU (eval_run.BOX_EXTRA at 16 vCPU, 192 GB)
 GGUF_SETUP = (
     "apt-get install -y -qq build-essential >/dev/null 2>&1; "
@@ -362,7 +364,7 @@ def evaluate(client, model, tier_dir, mlx_tag, a):
         return "damaged"
     gpu_sample(client, model, tier_dir, "v3_limit")   # loaded at v3's 65,536 tokens: where a 32 GB card spills
     kill, why, g, m = kill_verdict(rows(train_run.eval_path(tier_dir, label, "holdout_v3", 1)),
-                                   [train_run.eval_path(tier_dir, mlx_tag, "holdout_v3", k) for k in range(1, 4)],
+                                   [train_run.eval_path(tier_dir, mlx_tag, "holdout_v3", k) for k in range(1, a.passes + 1)],
                                    a.kill_points)
     log(f"{model}: kill rule {'KILL' if kill else 'pass'}: {why}", tier_dir)
     update_manifest(tier_dir, kill_rule={"kill": kill, "why": why, "gguf_pct": g, "mlx_pct": m,
@@ -607,6 +609,35 @@ def mark_shipped(d, label, stage, why, **extra):
         json.dump(all_, open(p, "w"), indent=1)
 
 
+def shipped_todo(a):
+    """The shipped labels not yet in a final stage."""
+    done = status(a.shipped_run) if os.path.exists(os.path.join(a.shipped_run, "gguf-status.json")) else {}
+    return [t for t in SHIPPED if done.get(f"shipped-{t}", {}).get("stage") not in FINAL]
+
+
+def has_work(a, tiers, shipped):
+    """True while a group has a tier not in a final stage, or shipped tags still to score. A group without work
+    buys no box (a rerun after the Pro scored must not pay 20 minutes of setup to skip it)."""
+    return any(status(os.path.join(a.train_root, t)).get("stage") not in FINAL for t in tiers) or bool(
+        shipped and shipped_todo(a))
+
+
+def install_stop(signals=(signal.SIGINT, signal.SIGTERM, signal.SIGHUP)):
+    """On each signal, set STOP first, then run the handler installed before (lease's, which deletes every box).
+    STOP first: a worker that sees its box deleted must find STOP already set, or it reads an eviction and buys
+    another box. Main thread only, after lease.install()."""
+    for sig in signals:
+        prior = signal.getsignal(sig)
+
+        def handler(signum, frame, prior=prior):
+            STOP.set()
+            if callable(prior):
+                prior(signum, frame)
+            else:
+                raise SystemExit(128 + signum)
+        signal.signal(sig, handler)
+
+
 def close_box(box):
     """Delete the box now (the cap timer): its Lease when it has one, else its own exit."""
     try:
@@ -638,6 +669,15 @@ def one_box(a, gpu, tiers, shipped, facts, rid, root):
         timer = threading.Timer(max(0.0, deadline - time.time()), at_cap)
         timer.daemon = True
         timer.start()
+        done = threading.Event()
+
+        def watch():   # a box whose Lease formed after the signal handler ran is closed here
+            while not done.wait(1):
+                if STOP.is_set():
+                    log(f"STOP: closing {gpu} box {box.info.get('id', '')[:8]}", root)
+                    close_box(box)
+                    return
+        threading.Thread(target=watch, daemon=True).start()
         log(f"box {box.info['id'][:8]} {g}, {box.info.get('cpu')} vCPU, {box.info.get('memory')} GB RAM, "
             f"{box.info.get('disk')} GB disk at ${price:.4f}/h; closes at the cap in "
             f"{(deadline - t0) / 60:.0f} min", root)
@@ -645,6 +685,11 @@ def one_box(a, gpu, tiers, shipped, facts, rid, root):
         def ended():
             return "stopped" if STOP.is_set() else "cap" if capped.is_set() or time.time() >= deadline else None
         try:
+            if ended():   # STOP was set while the box was being created
+                return ended(), cost()
+            if not has_work(a, tiers, shipped):   # backstop: run_group checks this before buying the box
+                log(f"{gpu}: nothing left to do", root)
+                return "done", cost()
             box.sh("mkdir -p /workspace", timeout=60)
             host = host_of(box)   # before any setup: a box too small for every tier it holds costs no setup
             todo = [t for t in tiers if status(os.path.join(a.train_root, t)).get("stage") not in FINAL]
@@ -675,7 +720,7 @@ def one_box(a, gpu, tiers, shipped, facts, rid, root):
                     log(f"{gpu}: {ended()} before the shipped tags", root)
                     return ended(), cost()
                 run_shipped(client, a, root)
-            return ended() or "done", cost()
+            return "done", cost()   # the work finished: past the deadline or not, it is done
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:300]}"
             if ended():   # the cap timer or a signal closed the box: that, not an eviction, ended it
@@ -686,6 +731,7 @@ def one_box(a, gpu, tiers, shipped, facts, rid, root):
             return ("evicted" if gone else "failed: " + why), cost()
         finally:
             timer.cancel()
+            done.set()
 
 
 def meter_call(a, args):
@@ -715,8 +761,13 @@ def run_group(a, gpu, tiers, shipped, facts, root):
         if STOP.is_set():
             status_ = "stopped"
             break
-        if a.spent_of(gpu) >= a.cap_of(gpu):
-            log(f"STOP: {gpu} cap ${a.cap_of(gpu)} reached (${a.spent_of(gpu):.2f})", root)
+        if not has_work(a, tiers, shipped):
+            log(f"{gpu}: every tier and tag is final; no box", root)
+            status_ = "done"
+            break
+        if a.spent_of(gpu) + rate(gpu) * (TEARDOWN_HOURS + MIN_BOX_HOURS) >= a.cap_of(gpu):
+            log(f"STOP: {gpu} cap ${a.cap_of(gpu)}: ${a.cap_of(gpu) - a.spent_of(gpu):.2f} left, under one useful "
+                "box slice; no box", root)
             status_ = "cap"
             break
         hours = max(0.25, (a.cap_of(gpu) - a.spent_of(gpu)) / rate(gpu))
@@ -754,11 +805,15 @@ def run_group(a, gpu, tiers, shipped, facts, root):
     return status_
 
 
-def verdict(result, tiers):
-    """What keeps the run from exiting 0: a group that did not finish, or a tier refused for its box."""
+def verdict(result, tiers, shipped=None):
+    """What keeps the run from exiting 0: a group that did not finish, a tier or shipped tag that was not scored.
+    "killed" is a result (the kill rule did its job, its reason is recorded) and exits 0; "stopped" (a failed build,
+    import or probe), "refused", "damaged" and never reached do not."""
     bad = [f"{g}: {r}" for g, r in result.items() if r != "done"]
     bad += [f"{t}: {st.get('stage')} ({st.get('why', '')[:120]})" for t, st in tiers.items()
-            if st.get("stage") in ("refused", "damaged") or not st]
+            if st.get("stage") not in ("scored", "killed")]
+    bad += [f"{label}: {st.get('stage')} ({st.get('why', '')[:120]})" for label, st in (shipped or {}).items()
+            if st.get("stage") != "scored"]
     return bad
 
 
@@ -844,8 +899,10 @@ def main(argv=None):
         groups.setdefault(a.gpu_of[t], []).append(t)
     if a.shipped:
         groups.setdefault(a.gpu, [])
+    groups = {g: ts for g, ts in groups.items() if has_work(a, ts, a.shipped and g == a.gpu)}   # $0: no box for done work
     lease.install()   # boxes are leased in pool threads; only the main thread can install the signal handlers
-    with cf.ThreadPoolExecutor(len(groups)) as pool:   # one box per GPU type, side by side
+    install_stop()    # ... and STOP is set before lease's handler deletes the boxes
+    with cf.ThreadPoolExecutor(max(1, len(groups))) as pool:   # one box per GPU type, side by side
         futs = {g: pool.submit(run_group, a, g, ts, a.shipped and g == a.gpu, facts, a.run) for g, ts in groups.items()}
         try:
             result = {g: f.result() for g, f in futs.items()}
@@ -861,7 +918,8 @@ def main(argv=None):
             if n.startswith("gguf-") and n.endswith(".part"):
                 os.remove(os.path.join(a.train_root, t, n))
     log(f"FINISHED: {result}; spent {[(g, round(a.spent_of(g), 2)) for g in groups]}", a.run)
-    bad = verdict(result, tiers)
+    shipped_st = status(a.shipped_run)
+    bad = verdict(result, tiers, {f"shipped-{t}": shipped_st.get(f"shipped-{t}", {}) for t in SHIPPED} if a.shipped else {})
     if bad:
         log("NOT DONE: " + " | ".join(bad), a.run)
         sys.exit(5)

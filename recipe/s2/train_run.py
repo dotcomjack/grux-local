@@ -340,8 +340,11 @@ def one_box(a, run_dir, tag, base_tag, reservation=None):
                 log(f"{name}: warm in {time.time() - w0:.0f} s (first nvfp4 call compiles kernels)", run_dir)
                 score_model(client, name, run_dir, a.parallel, a.passes)
             if a.pull:   # only the trained model: a base pack is the public base, never worth the disk (Pro, 2026-11-17)
-                json.dump({"model": tag, "pull": pull_model(box, tag, run_dir)},
-                          open(os.path.join(run_dir, "pull.json"), "w"))
+                pulled = pull_model(box, tag, run_dir)
+                try:   # a record of the pull must never fail a scored run either
+                    json.dump({"model": tag, "pull": pulled}, open(os.path.join(run_dir, "pull.json"), "w"))
+                except OSError as e:
+                    log(f"pull.json not written ({e}); pull: {pulled}", run_dir)
             return "done", (time.time() - t0) / 3600 * price
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:300]}"

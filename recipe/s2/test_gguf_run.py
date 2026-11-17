@@ -214,6 +214,11 @@ even = tier_with_mlx(pass_rate=False)   # the MLX build failed these jobs too: a
 st = g.evaluate(probe_only, MODEL, even, "grux-m", A)
 check("a limited pass as low as its MLX build is not killed", st == "scored", str(g.status(even)))
 
+one = tier_with_mlx()
+with open(t.eval_path(one, "grux-m", "holdout_v3", 2), "w") as f:   # pass 2 cut short: not read with --passes 1
+    f.write(json.dumps({"case": h.cases()[0]["id"], "pass": True}) + "\n")
+st = g.evaluate(Perfect(), MODEL, one, "grux-m", A)
+check("with --passes 1 the kill rule reads only MLX pass 1, as preflight checks it", st == "scored", str(g.status(one)))
 nomlx = tempfile.mkdtemp()
 st = g.evaluate(Perfect(), MODEL, nomlx, "grux-m", A)
 check("no MLX rows to compare refuses the comparison (killed, not scored unchecked)",
@@ -500,6 +505,14 @@ check("a download that fails after scoring leaves the run done, with no partial 
       st == "done" and not [n for n in os.listdir(rd) if n.startswith("ollama-")], f"{st} {os.listdir(rd)}")
 check("... and the failure is in the log", "FAILED, the scores stand" in open(os.path.join(rd, "run.log")).read())
 check("... and pull.json records it", json.load(open(os.path.join(rd, "pull.json")))["pull"].startswith("failed:"))
+box = Box()
+rd_ = tempfile.mkdtemp()
+os.makedirs(os.path.join(rd_, "pull.json"))   # writing pull.json raises IsADirectoryError, an OSError
+saved_mk = tempfile.mkdtemp
+tempfile.mkdtemp = lambda: rd_
+st, rd = run_one_box(box, floor=0)
+tempfile.mkdtemp = saved_mk
+check("a pull.json that cannot be written leaves a scored run done", st == "done", st)
 box = Box(sizes={"list": "0.1 GB", "stat": 10 ** 18})
 st, rd = run_one_box(box, floor=0)
 check("a pack that turns out bigger than the free disk is skipped after packing, not downloaded",
@@ -591,7 +604,7 @@ SMALL = "16\n64000000000\nmax\n200000000000\n240000000000"
 
 
 class StubTB:
-    made, host, gone_ = [], BIG, False
+    made, host, gone_, stop_on_enter, stop_in_boot = [], BIG, False, False, False
 
     def __init__(self, gpus, label, max_minutes, log=None, owner=None, reservation=None):
         self.info = {"id": f"box{len(StubTB.made)}-0000", "gpu_type": "GpuType.H200", "cpu": 16, "memory": 192,
@@ -605,6 +618,8 @@ class StubTB:
         self.released = True
 
     def __enter__(self):
+        if StubTB.stop_on_enter:   # Ctrl-C while the box was being created
+            g.STOP.set()
         return self
 
     def __exit__(self, *e):
@@ -622,6 +637,11 @@ class StubTB:
     def run_long(self, name, cmd, max_s=0, poll_s=0):
         self._alive()
         self.runs.append(name)
+        if StubTB.stop_in_boot and name == "boot":   # Ctrl-C during BOOT: only the watcher can close this box
+            g.STOP.set()
+            for _ in range(500):
+                self._alive()
+                __import__("threading").Event().wait(0.01)
         return 0, "ok\nEXIT=0"
 
     def put(self, *x):
@@ -639,7 +659,7 @@ def meter_calls():
     return sum(l.startswith("reserve") for l in lines), sum(l.startswith("settle") for l in lines)
 
 
-def group(run_tier, tiers=("2b",), cap=30.0, host=BIG, gone=False, shipped=False):
+def group(run_tier, tiers=("2b",), cap=30.0, host=BIG, gone=False, shipped=False, final=()):
     open(METER_LOG, "w").close()
     StubTB.made, StubTB.host, StubTB.gone_ = [], host, gone
     a = argparse.Namespace(run=tempfile.mkdtemp(), train_root=tempfile.mkdtemp(), shipped_run=tempfile.mkdtemp(),
@@ -648,6 +668,8 @@ def group(run_tier, tiers=("2b",), cap=30.0, host=BIG, gone=False, shipped=False
     for tier in tiers:
         os.makedirs(os.path.join(a.train_root, tier))
         json.dump({"tag": "grux-m"}, open(os.path.join(a.train_root, tier, "manifest.json"), "w"))
+        if tier in final:
+            g.set_status(os.path.join(a.train_root, tier), "scored", "every set scored")
     g.attach_spend(a)
     saved_ = (g.TrainBox, g.run_tier, g.run_shipped)
     g.TrainBox, g.run_tier, g.run_shipped = StubTB, run_tier, (lambda *x: None)
@@ -708,9 +730,42 @@ def slow(box, *x):
     return "scored"
 
 
-st, a_ = group(slow, cap=0.01)
+g.MIN_BOX_HOURS = 0   # a cap that leaves about 2 seconds of box after teardown
+st, a_ = group(slow, cap=0.33)
+g.MIN_BOX_HOURS = 0.25
 check("the cap timer closes the box mid-tier; the group stops at 'cap' without another box, and settles",
       st == "cap" and StubTB.made[0].released and meter_calls() == (1, 1), f"{st} {meter_calls()}")
+st, a_ = group(lambda *x: "scored", cap=1.0)
+check("a cap with less than one useful box slice left (teardown plus 15 minutes) buys no box",
+      st == "cap" and meter_calls() == (0, 0), f"{st} {meter_calls()}")
+StubTB.stop_on_enter = True
+st, a_ = group(lambda *x: "scored")
+StubTB.stop_on_enter = False
+g.STOP.clear()
+check("Ctrl-C while the box is being created: no setup runs, the box is closed, and the group settles",
+      st == "stopped" and StubTB.made[0].runs == [] and StubTB.made[0].exited and meter_calls() == (1, 1),
+      f"{st} {StubTB.made[0].runs} {meter_calls()}")
+StubTB.stop_in_boot = True
+st, a_ = group(lambda *x: "scored")
+StubTB.stop_in_boot = False
+g.STOP.clear()
+check("Ctrl-C during BOOT: the STOP watcher closes the box, the group stops and settles, no second box",
+      st == "stopped" and StubTB.made[0].released and meter_calls() == (1, 1), f"{st} {meter_calls()}")
+st, a_ = group(lambda *x: "scored", final=("2b",))
+check("a group whose every tier is final buys no box", st == "done" and meter_calls() == (0, 0) and StubTB.made == [],
+      f"{st} {meter_calls()}")
+import inspect  # noqa: E402
+import signal  # noqa: E402
+order = []
+signal.signal(signal.SIGUSR1, lambda n, f: order.append(("prior", g.STOP.is_set())))
+g.install_stop((signal.SIGUSR1,))
+os.kill(os.getpid(), signal.SIGUSR1)
+g.STOP.clear()
+check("on a signal STOP is set first, then the earlier handler (lease's box delete) runs",
+      order == [("prior", True)], str(order))
+src = inspect.getsource(g.main)
+check("main installs lease's handlers, then the STOP handler, before any group starts",
+      -1 < src.find("lease.install()") < src.find("install_stop()") < src.find("pool.submit("))
 st, a_ = group(lambda *x: "scored", tiers=("pro",), host=SMALL)
 check("a 5090 too small for the Pro is refused before any setup, settled, and not bought again",
       st == "refused" and StubTB.made[0].runs == [] and meter_calls() == (1, 1)
@@ -732,7 +787,9 @@ check("the run is not done when a group or a tier did not finish",
       len(g.verdict({"H200": "done", "RTX-5090": "refused"}, {"2b": {"stage": "scored"},
                                                           "pro": {"stage": "refused", "why": "host"}})) == 2
       and g.verdict({"H200": "done"}, {"2b": {"stage": "killed"}}) == []
-      and g.verdict({"H200": "done"}, {"4b": {}}) != [])
+      and g.verdict({"H200": "done"}, {"4b": {}}) != []
+      and g.verdict({"H200": "done"}, {"2b": {"stage": "stopped", "why": "import"}}) != []
+      and g.verdict({"H200": "done"}, {}, {"shipped-2b": {"stage": "refused", "why": "digest"}}) != [])
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)
