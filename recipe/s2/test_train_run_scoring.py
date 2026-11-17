@@ -121,7 +121,8 @@ check("preflight names a SystemExit from v3 instead of exiting", any(x.startswit
 
 
 def main_with(env_over, until="all"):
-    """train_run's main as a fresh process: (exit code, status.json text, run.log text). No box: it must stop first."""
+    """train_run's main as a fresh process: (exit code, status.json text, run.log text, stderr). No box: it must stop
+    first."""
     import subprocess
     d = tempfile.mkdtemp()
     data = os.path.join(d, "train.jsonl")
