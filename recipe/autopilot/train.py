@@ -26,6 +26,19 @@ import common  # noqa: E402
 TRAIN_CAP_USD = 50.0   # train_run's own cap: training $40 plus scoring $10
 
 
+def pack_refusal(run_dir, tag):
+    """None when train_run brought the trained model's Ollama pack here, else why not. train_run ends "done" when
+    scoring finished even if the pack was skipped for disk or its download failed (pull.json says which), so "done"
+    alone no longer means the gate's tar exists."""
+    if os.path.exists(os.path.join(run_dir, f"ollama-{tag}.tar")):
+        return None
+    try:
+        why = json.load(open(os.path.join(run_dir, "pull.json"))).get("pull") or "no outcome recorded"
+    except (OSError, ValueError):
+        why = "no pull.json"
+    return f"scores stand; pack not pulled: {why}; log {run_dir}/run.log"
+
+
 def hf_id_for(model):
     for p in sorted(glob.glob(os.path.join(common.RESULTS, "watch-*.json")), reverse=True):
         for c in json.load(open(p)).get("candidates", []):
@@ -150,6 +163,9 @@ def main():
         os.path.join(run_dir, "status.json")) else "no status"
     if r.returncode != 0 or status != "done":
         refuse(f"train_run.py ended {status} (exit {r.returncode}); log {run_dir}/run.log")
+    why = pack_refusal(run_dir, tag)
+    if why:   # no gate request for a tar that is not here: the gate's first step would fail far from the cause
+        refuse(why)
     rows = [json.loads(l) for l in open(os.path.join(run_dir, f"eval-{tag}-holdout.jsonl"))]
     if len({x["case"] for x in rows if x.get("status") == "scored"}) != 464:
         refuse(f"the trained model scored {len(rows)} of 464 held-out v1 tasks on the box; no gate request for a partial score")

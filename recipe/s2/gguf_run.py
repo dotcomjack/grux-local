@@ -346,7 +346,8 @@ def tool_probe(client, model):
 
 
 def evaluate(client, model, tier_dir, mlx_tag, a):
-    """The kill rule, then (if it passes) the full scoring. Returns the stage written to gguf-status.json. BoxGone
+    """The kill rule, then (if it passes) the full scoring. Returns the stage: "killed" and "damaged" are written to
+    gguf-status.json here; "scored" is written by run_tier after the rest of the tier's work. BoxGone
     propagates (a new box reruns the tier); SetDamaged in the limited pass stops the tier (the model, not the box)."""
     ok, detail = tool_probe(client, model)
     log(f"{model}: tool-call probe {'ok' if ok else 'FAILED'}: {detail}", tier_dir)
@@ -394,8 +395,7 @@ def evaluate(client, model, tier_dir, mlx_tag, a):
     log(f"{model}: chat p95 {p['gguf']['p95_s']} s over {p['gguf']['n']} requests at parallel {a.parallel} "
         f"(MLX build {p['mlx']['p95_s']} s)", tier_dir)
     update_manifest(tier_dir, scores=summary, chat_p95=p)
-    set_status(tier_dir, "scored", "every set scored", passes=a.passes)
-    return "scored"
+    return "scored"   # run_tier writes the final "scored" once the tier's serial chat pass is in too
 
 
 def serial_chat(client, model, tier_dir):
@@ -563,7 +563,10 @@ def run_tier(box, client, tier, a, facts, host_info, root):
         return "stopped"
     stage = evaluate(client, model, tier_dir, mlx_tag, a)
     if stage == "scored" and tier in a.serial_chat:
-        serial_chat(client, model, tier_dir)
+        serial_chat(client, model, tier_dir)   # a box lost here leaves the tier unfinished: a new box redoes it
+    if stage == "scored":   # final only now: every scored row is already written, so a rerun rescoring costs a rebuild
+        set_status(tier_dir, "scored", "every set scored" + (", serial chat pass in" if tier in a.serial_chat else ""),
+                   passes=a.passes)
     pulled = (fetch_gguf(box, tier, tier_dir, built["gguf"], built["gguf_sha256"], a) if stage == "scored"
               else f"not pulled: the tier is {stage}")
     open(os.path.join(tier_dir, f"Modelfile.{model}"), "w").write(
@@ -575,7 +578,9 @@ def run_tier(box, client, tier, a, facts, host_info, root):
 
 
 def run_shipped(client, a, root):
-    """The shipped tags on v1, v2 and S1, digest checked on the box too (refused on a mismatch, nothing scored)."""
+    """The shipped tags on v1, v2 and S1, digest checked on the box too (refused on a mismatch, nothing scored).
+    A pull or probe that fails for any reason (a box evicted or capped mid-pull included) marks that tag "refused"
+    with the reason and this box moves on: "refused" is not final, so the run exits 5 and a rerun scores it."""
     d = a.shipped_run
     sets = {k: train_run.SETS[k] for k in SHIPPED_SETS}
     for t, want in SHIPPED.items():

@@ -23,6 +23,7 @@ Prints PASS or FAIL per check; exit 1 on any FAIL.
 import argparse
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -32,9 +33,7 @@ import types
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
-try:
-    import daytona  # noqa: F401
-except ImportError:   # the box SDK is not needed with stub boxes
+if importlib.util.find_spec("daytona") is None:   # the box SDK is not needed with stub boxes
     sys.modules["daytona"] = types.SimpleNamespace(**{n: object for n in (
         "CreateSandboxFromImageParams", "Daytona", "GpuType", "Image", "ListSandboxesQuery", "Resources",
         "SessionExecuteRequest")})
@@ -186,7 +185,9 @@ t.SETS = {"holdout_v3": (lambda: V3, None, None),
           "s1": (lambda: S1, t.suite.request, t.suite.score)}
 good = tier_with_mlx()
 st = g.evaluate(Perfect(), MODEL, good, "grux-m", A)
-check("a good limited pass goes on to full scoring", st == "scored" and g.status(good)["stage"] == "scored", str(g.status(good)))
+check("a good limited pass goes on to full scoring", st == "scored", str(g.status(good)))
+check("... and evaluate leaves the final 'scored' to run_tier (the serial chat pass is not in yet)",
+      g.status(good) == {}, str(g.status(good)))
 check("... which writes every set's rows under the GGUF's own name",
       all(len(g.rows(t.eval_path(good, MODEL, n, 1))) == len(cs) for n, cs in (("holdout_v3", V3), ("holdout", V1),
                                                                                  ("holdout_v2", V2), ("s1", S1))))
@@ -790,6 +791,40 @@ check("the run is not done when a group or a tier did not finish",
       and g.verdict({"H200": "done"}, {"4b": {}}) != []
       and g.verdict({"H200": "done"}, {"2b": {"stage": "stopped", "why": "import"}}) != []
       and g.verdict({"H200": "done"}, {}, {"shipped-2b": {"stage": "refused", "why": "digest"}}) != [])
+
+
+# --------------------------------------------------------------------------- scored is final only when the tier is
+tr3 = tempfile.mkdtemp()
+os.makedirs(os.path.join(tr3, "pro"))
+json.dump({"tag": "grux-m"}, open(os.path.join(tr3, "pro", "manifest.json"), "w"))
+TA = argparse.Namespace(train_root=tr3, quant={"pro": "Q4_K_M"}, serial_chat=["pro"], pull_pro=False, passes=1)
+saved_fns = (g.build_tier, g.check_import, g.probe, g.evaluate, g.serial_chat)
+g.build_tier = lambda *x: {"gguf": "/w/g.gguf", "gguf_sha256": "0" * 64}
+g.check_import = lambda *x: None
+g.probe = lambda *x, **k: ({"runner": "llamacpp"}, None)
+g.evaluate = lambda *x: "scored"
+
+
+def lost_in_serial(*x):
+    raise t.BoxGone("Ollama stopped answering during the serial chat pass")
+
+
+g.serial_chat = lost_in_serial
+bigbox = ConvertFails()
+try:
+    g.run_tier(bigbox, Perfect(), "pro", TA, {"library": {}, "modelfile": {"pro": mf}}, {}, root)
+    raised = False
+except t.BoxGone:
+    raised = True
+st_ = g.status(os.path.join(tr3, "pro"))
+check("a box lost during the Pro's serial chat pass leaves the tier unfinished, not final", raised
+      and st_.get("stage") not in g.FINAL and g.has_work(TA, ["pro"], False), str(st_))
+check("... so the run does not exit 0", g.verdict({"RTX-5090": "done"}, {"pro": st_}) != [])
+g.serial_chat = lambda *x: None
+st = g.run_tier(ConvertFails(), Perfect(), "pro", TA, {"library": {}, "modelfile": {"pro": mf}}, {}, root)
+check("... and once the serial chat pass is in, the tier is scored and final",
+      st == "scored" and g.status(os.path.join(tr3, "pro"))["stage"] == "scored", str(g.status(os.path.join(tr3, "pro"))))
+g.build_tier, g.check_import, g.probe, g.evaluate, g.serial_chat = saved_fns
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)
