@@ -80,9 +80,14 @@ watch.link_hf(hf, {key: fresh}, rep)
 check("a new HF base still links to a new Ollama build", fresh.get("hf_id") == hf[0]["id"] and not rep["waiting"],
       f"{fresh} {rep}")
 
-check("only back-catalog builds incomplete: a quiet retry, no page",
-      not run.backfill_retry_is_alert([{"id": "a", "backfill": True}, {"id": "b", "backfill": True}]))
-check("a new build incomplete still pages", run.backfill_retry_is_alert([{"id": "a", "backfill": True}, {"id": "n"}]))
+bf = [{"id": "a", "backfill": True}, {"id": "b", "backfill": True}]
+check("only back-catalog builds incomplete, each box ran, no base rescored: a quiet retry",
+      not run.backfill_retry_is_alert(bf, {"a", "b"}, False))
+check("a new build incomplete still pages",
+      run.backfill_retry_is_alert([bf[0], {"id": "n"}], {"a", "n"}, False))
+check("nothing incomplete but score.py exited 1 (a base box failed): pages", run.backfill_retry_is_alert([], set(), False))
+check("a base was rescored this run: pages", run.backfill_retry_is_alert(bf, {"a", "b"}, True))
+check("the lane died before any box ran: pages", run.backfill_retry_is_alert(bf, set(), False))
 
 print("ALL PASS" if not FAILS else f"{len(FAILS)} FAIL")
 sys.exit(1 if FAILS else 0)

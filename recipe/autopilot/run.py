@@ -47,10 +47,14 @@ def may_train(c, verdict, no_train):
     return verdict == "win" and not no_train and not c.get("backfill")
 
 
-def backfill_retry_is_alert(incomplete):
-    """score.py exits 1 when any build came back incomplete, which the lane retries (a lose after two runs). That is a
-    failure worth a page only when a new build is among them; back-catalog builds alone retry quietly."""
-    return any(not c.get("backfill") for c in incomplete)
+def backfill_retry_is_alert(incomplete, box_ran, base_rescored):
+    """score.py exits 1 when any build came back incomplete, which the lane retries (a lose after two runs). It is a
+    quiet retry ONLY when something did come back incomplete, every one of them is a back-catalog build, a box really
+    ran for each (its result file exists), and no base was rescored this run. Anything else pages: a new build
+    incomplete, a base rescore that may have failed, or a lane that died before any box (review round 2)."""
+    if not incomplete or base_rescored:
+        return True
+    return any(not c.get("backfill") or c["id"] not in box_ran for c in incomplete)
 
 
 def complete_result(digest, model):
@@ -213,12 +217,14 @@ def week_run():
             if r.returncode == common.BACKLOGGED:
                 week["backlogged"] = models
         _BASE_CURRENT.clear()                             # a base rescored just now may be current
-    incomplete = []
+    incomplete, box_ran = [], set()
     for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")
         done = complete_result(c["digest"], c["id"])
         if not done:
             incomplete.append(c)
+            if os.path.exists(res):
+                box_ran.add(c["id"])
         if done:
             to_decide.append((c, done))
             continue
@@ -235,7 +241,8 @@ def week_run():
         else:
             week["decisions"].append({"candidate": c["id"], "verdict": None,
                                       "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
-    if week["steps"] and week["steps"][-1].get("score_exit") == 1 and not backfill_retry_is_alert(incomplete):
+    if week["steps"] and week["steps"][-1].get("score_exit") == 1 and not backfill_retry_is_alert(incomplete, box_ran,
+                                                                                            bool(added_rescores)):
         week["steps"][-1]["backfill_retry"] = [c["id"] for c in incomplete]   # retried next run: not a failure
     common.write_json(watch.STATE_PATH, state)
     for c, res in to_decide:
@@ -260,7 +267,7 @@ def week_run():
                 f"A back-catalog build ({c['id']}) scored above today's {c['tier']} base on the held-out sets. The lane "
                 "trains only new bases, so training this one waits on a person.",
                 [dpath.replace(os.path.expanduser("~"), "~", 1), res.replace(os.path.expanduser("~"), "~", 1)],
-                "", [])
+                None, [])
             print(f"BACK-CATALOG WIN: {c['id']}; wrote {item}", flush=True)
             week.setdefault("backfill_wins", []).append(c["id"])
         if may_train(c, d.get("verdict"), a.no_train):
