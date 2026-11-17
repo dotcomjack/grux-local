@@ -11,7 +11,7 @@ No model and no box: every answer here is scripted.
   6. the box's Ollama serves as many requests at once as train_run sends (--parallel).
 Prints PASS or FAIL per check; exit 1 on any FAIL.
 
-  GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> python3 recipe/s2/test_train_run_scoring.py
+  GRUX_SRC=<Grux v3.1.0 Sources/Grux> GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> python3 recipe/s2/test_train_run_scoring.py
 """
 import json
 import os
@@ -96,6 +96,78 @@ class Evicted(Perfect):
         raise ConnectionError("box gone")
 
 
+check("preflight passes when every set builds here", t.preflight_sets() == [], str(t.preflight_sets()))
+saved = dict(t.SETS)
+t.SETS["holdout"] = (t.holdout.cases, lambda c, m: open("/nonexistent/Sources/Grux/Prompts.swift").read(), None)
+pre = t.preflight_sets()
+check("preflight names a set whose request cannot be built (a missing source tree)",
+      len(pre) == 1 and pre[0].startswith("holdout: FileNotFoundError"), str(pre))
+t.SETS["holdout_v2"] = (lambda: [], None, None)
+check("preflight names a set with no cases", "holdout_v2: no cases" in t.preflight_sets())
+real_v3 = t.holdout_v3.request_v3
+
+
+def exits(*a, **k):
+    raise SystemExit("Grux source is not 3.3.1")   # what holdout_v3.wire_tools does on a wrong tree
+
+
+t.SETS.clear()
+t.SETS.update(saved)
+t.holdout_v3.request_v3 = exits
+pre = t.preflight_sets()
+t.holdout_v3.request_v3 = real_v3
+check("preflight names a SystemExit from v3 instead of exiting", any(x.startswith("holdout_v3: SystemExit") for x in pre),
+      str(pre))
+
+
+def main_with(env_over, until="all"):
+    """train_run's main as a fresh process: (exit code, status.json text, run.log text, stderr). No box: it must stop
+    first."""
+    import subprocess
+    d = tempfile.mkdtemp()
+    data = os.path.join(d, "train.jsonl")
+    open(data, "w").write(json.dumps({"messages": [{"role": "user", "content": "hi"}], "tools": [],
+                                      "target": {"content": "ok", "tool_calls": []}}) + "\n")
+    env = dict(os.environ, **env_over)
+    for k, v in env_over.items():
+        if v is None:
+            env.pop(k, None)
+    boot = ("import runpy, sys, types\n"
+            "try:\n    import daytona\nexcept ImportError:\n"
+            "    sys.modules['daytona'] = types.SimpleNamespace(**{n: object for n in ('CreateSandboxFromImageParams', "
+            "'Daytona', 'GpuType', 'Image', 'ListSandboxesQuery', 'Resources', 'SessionExecuteRequest')})\n"
+            f"sys.argv = {[os.path.join(HERE, 'train_run.py')]!r} + sys.argv[1:]\n"
+            f"runpy.run_path({os.path.join(HERE, 'train_run.py')!r}, run_name='__main__')\n")
+    p = subprocess.run([sys.executable, "-I", "-c", boot, "--run", os.path.join(d, "run"),
+                        "--model", "Qwen/Qwen3.5-2B", "--data", data, "--until", until],
+                       env={k: v for k, v in env.items() if v is not None}, capture_output=True, text=True, timeout=300)
+    run = os.path.join(d, "run")
+    st = open(os.path.join(run, "status.json")).read() if os.path.exists(os.path.join(run, "status.json")) else ""
+    lg = open(os.path.join(run, "run.log")).read() if os.path.exists(os.path.join(run, "run.log")) else ""
+    return p.returncode, st, lg, p.stderr
+
+
+empty = tempfile.mkdtemp()
+rc, st, lg, err = main_with({"GRUX_SRC": empty, "GRUX_SRC_V3": empty})
+check("main refuses with exit 4 before any box when no source tree is there", rc == 4, f"rc {rc}")
+check("... naming v3, v1, v2 and s1 in status.json",
+      all(n + ":" in st for n in ("holdout_v3", "holdout", "holdout_v2", "s1")) and "scoring preflight refused" in st, st[:300])
+check("... and in run.log", "REFUSED scoring preflight" in lg)
+if os.environ.get("GRUX_SRC"):   # v3 pointed at the 3.1.0 tree: files exist, wire_tools exits (SystemExit)
+    rc, st, lg, err = main_with({"GRUX_SRC_V3": os.environ["GRUX_SRC"]})
+    check("v3 on the 3.1.0 source tree is refused with exit 4 and named",
+          rc == 4 and "holdout_v3: " in st, f"rc {rc} {st[:200]}")
+else:
+    check("GRUX_SRC is set for the wrong-tree check", False)
+rc, st, lg, err = main_with({"GRUX_SRC": empty}, until="train")
+check("--until train runs no scoring preflight: it gets past it to the meter check",
+      rc == 1 and "no spend meter" in err and "scoring preflight" not in st + lg, f"rc {rc} {err[-160:]}")
+import sweep  # noqa: E402
+sw = tempfile.mkdtemp()
+os.makedirs(os.path.join(sw, "r"))
+json.dump({"status": "scoring preflight refused: holdout: x"}, open(os.path.join(sw, "r", "status.json"), "w"))
+check("a sweep does not count a scoring preflight refusal as done (it is the environment, not the data)",
+      not sweep.done(sw, "r"))
 MODULE_ORDER = list(t.SETS)
 check("the module scores v3 first", MODULE_ORDER[0] == "holdout_v3", str(MODULE_ORDER))
 STUB = {"holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),

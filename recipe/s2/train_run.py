@@ -52,6 +52,28 @@ class SetDamaged(RuntimeError):
     stops, its skips are not written, and a rerun scores those jobs again."""
 
 
+def preflight_sets():
+    """Build every scoring set's cases and the first case's request on this machine, before any box exists.
+    Returns the problems (empty when every set can be scored). Measured 2026-11-17: v1 needs Grux 3.1.0's source
+    (GRUX_SRC) and the launcher had none, so a 2B scoring box ran 17 minutes of setup before v1's first request
+    failed; this check fails in seconds for $0."""
+    bad = []
+    for name, (cases_fn, request, _score) in SETS.items():
+        try:
+            cases = cases_fn()
+            if not cases:
+                bad.append(f"{name}: no cases")
+                continue
+            for case in {c["family"]: c for c in cases}.values():   # one per family: each reads its own files
+                if request is None:
+                    holdout_v3.request_v3(case, "preflight")
+                else:
+                    request(case, "preflight")
+        except (Exception, SystemExit) as e:   # holdout_v3.wire_tools exits on a source tree that is not 3.3.1
+            bad.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
+    return bad
+
+
 def eval_path(run_dir, model, name, k):
     """Pass 1 keeps the name every reader already uses; pass k > 1 adds -pass<k>."""
     return os.path.join(run_dir, f"eval-{model}-{name}" + (f"-pass{k}" if k > 1 else "") + ".jsonl")
@@ -316,6 +338,13 @@ def main():
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
+    if a.until == "all":   # scoring runs on this machine against the box: prove every set builds before paying
+        bad = preflight_sets()
+        if bad:
+            log("REFUSED scoring preflight: " + " | ".join(bad), run_dir)
+            json.dump({"status": "scoring preflight refused: " + " | ".join(bad)},
+                      open(os.path.join(run_dir, "status.json"), "w"))
+            sys.exit(4)
     if not a.meter:
         sys.exit("no spend meter (--meter): every box needs its own reservation; nothing created")
     import data_scan   # no secret shape or identity term goes into a box (s2/data_scan.py), checked before any create
