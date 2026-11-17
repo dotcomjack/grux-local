@@ -96,6 +96,16 @@ class Evicted(Perfect):
         raise ConnectionError("box gone")
 
 
+check("preflight passes when every set builds here", t.preflight_sets() == [], str(t.preflight_sets()))
+saved = dict(t.SETS)
+t.SETS["holdout"] = (t.holdout.cases, lambda c, m: open("/nonexistent/Sources/Grux/Prompts.swift").read(), None)
+pre = t.preflight_sets()
+check("preflight names a set whose request cannot be built (a missing source tree)",
+      len(pre) == 1 and pre[0].startswith("holdout: FileNotFoundError"), str(pre))
+t.SETS["holdout_v2"] = (lambda: [], None, None)
+check("preflight names a set with no cases", "holdout_v2: no cases" in t.preflight_sets())
+t.SETS.clear()
+t.SETS.update(saved)
 MODULE_ORDER = list(t.SETS)
 check("the module scores v3 first", MODULE_ORDER[0] == "holdout_v3", str(MODULE_ORDER))
 STUB = {"holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),
