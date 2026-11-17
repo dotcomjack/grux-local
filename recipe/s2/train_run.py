@@ -63,11 +63,13 @@ def preflight_sets():
             cases = cases_fn()
             if not cases:
                 bad.append(f"{name}: no cases")
-            elif request is None:
-                holdout_v3.request_v3(cases[0], "preflight")
-            else:
-                request(cases[0], "preflight")
-        except Exception as e:
+                continue
+            for case in {c["family"]: c for c in cases}.values():   # one per family: each reads its own files
+                if request is None:
+                    holdout_v3.request_v3(case, "preflight")
+                else:
+                    request(case, "preflight")
+        except (Exception, SystemExit) as e:   # holdout_v3.wire_tools exits on a source tree that is not 3.3.1
             bad.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
     return bad
 
