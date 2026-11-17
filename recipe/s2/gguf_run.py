@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -36,6 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import holdout_v3  # noqa: E402
+import lease  # noqa: E402
 import suite  # noqa: E402
 import train_run  # noqa: E402  (sets suite.THINK = False: Grux sends think false on every call)
 from eval_run import BOX_EXTRA, PRICE, log, manifest_url, probe  # noqa: E402
@@ -58,7 +60,10 @@ SHIPPED_SETS = ("holdout", "holdout_v2", "s1")   # their v3 is scored on its own
 # daytona 0.231.1's GpuType values (read 2026-11-17); preflight uses the SDK's own enum when it is installed.
 GPU_TYPES_SDK = "0.231.1"
 GPU_TYPES = ("H100", "H200", "B200", "B300", "L40S", "RTX-PRO-6000", "RTX-4090", "RTX-5090", "MI355X")
-FINAL = ("scored", "killed", "stopped")   # a tier in one of these is not built again by a rerun
+# A tier in one of these is not built again by a rerun. "damaged" (the model failed job after job on a live box,
+# train_run.SetDamaged) and "refused" (the box was too small) are not final: a rerun tries again.
+FINAL = ("scored", "killed", "stopped")
+TEARDOWN_HOURS = 0.05   # about 3 minutes of delete and in-flight work kept out of the cap (eval_run.TEARDOWN_USD)
 CPU_HOUR, GB_HOUR = 0.0504, 0.0162   # what a GPU box bills beside the GPU (eval_run.BOX_EXTRA at 16 vCPU, 192 GB)
 GGUF_SETUP = (
     "apt-get install -y -qq build-essential >/dev/null 2>&1; "
@@ -75,6 +80,8 @@ GGUF_SETUP = (
     "python -c 'import torch; assert torch.__version__.startswith(\"2.11.\"), torch.__version__; "
     "print(\"llama.cpp ready, torch\", torch.__version__)'")
 LOCK = threading.Lock()
+RESERVE_LOCK = threading.Lock()   # one meter call at a time: two box groups must not race on its ledger
+STOP = threading.Event()          # set by main on Ctrl-C or a signal: no group buys another box or starts a tier
 
 
 # --------------------------------------------------------------------------- pure parts (tested without a box)
@@ -235,7 +242,7 @@ def registry_digest(tag, fetch):
 
 def preflight(a, fetch=default_fetch):
     """(problems, facts). Every check here is free; a box is created only when problems is empty."""
-    bad, facts = [], {"modelfile": {}, "library": {}}
+    bad, facts, lim = [], {"modelfile": {}, "library": {}}, None
     for tier in a.tiers:
         d = os.path.join(a.train_root, tier)
         if not os.path.exists(os.path.join(d, "adapter.tar")):
@@ -248,9 +255,18 @@ def preflight(a, fetch=default_fetch):
             continue
         if man.get("model") != TIERS[tier][0]:
             bad.append(f"{tier}: trained from {man.get('model')}, expected {TIERS[tier][0]}")
-        mlx = [train_run.eval_path(d, man.get("tag", ""), "holdout_v3", k) for k in range(1, 4)]
-        if not any(os.path.exists(p) for p in mlx):
-            bad.append(f"{tier}: no MLX held-out v3 rows ({os.path.basename(mlx[0])}) for the kill rule")
+        missing = [os.path.basename(train_run.eval_path(d, man.get("tag", ""), name, k))
+                   for name in train_run.SETS for k in range(1, a.passes + 1)
+                   if not os.path.exists(train_run.eval_path(d, man.get("tag", ""), name, k))]
+        if missing:
+            bad.append(f"{tier}: {len(missing)} MLX row files missing to compare with (first {missing[0]})")
+        lim = lim or [c["id"] for c in limited_v3(a.kill_jobs)]
+        for k in range(1, a.passes + 1):
+            p = train_run.eval_path(d, man.get("tag", ""), "holdout_v3", k)
+            have = {r.get("case") for r in rows(p)}
+            gap = [i for i in lim if i not in have] if os.path.exists(p) else []
+            if gap:
+                bad.append(f"{tier}: {os.path.basename(p)} has no row for {len(gap)} kill-rule jobs (first {gap[0]})")
         lib = TIERS[tier][1]
         try:
             config, params, template = library_parts(lib, fetch)
@@ -307,17 +323,22 @@ def tool_probe(client, model):
     call. A renderer or parser mismatch shows here as plain text where a call should be."""
     case = next(c for c in holdout_v3.cases() if "call" in c["steps"][0])
     req = holdout_v3.request_v3(case, model, 0)
-    try:
-        raw = client.post(req["path"], req["body"], timeout=1800)
-    except Exception as e:
+    for attempt in (1, 2):   # retried once, as score_model retries every request (a cold load or a proxy 502)
+        try:
+            raw = client.post(req["path"], req["body"], timeout=1800)
+            break
+        except Exception as e:
+            err = f"{type(e).__name__}: {str(e)[:160]}"
+            time.sleep(5)
+    else:
         try:   # a box that is gone is not a verdict on the model: the next box probes again
             client.get("/api/tags", timeout=30)
         except Exception as e2:
             raise train_run.BoxGone(f"Ollama stopped answering during the tool-call probe: {type(e2).__name__}") from None
-        return False, f"{case['id']}: {type(e).__name__}: {str(e)[:160]}"
+        return False, f"{case['id']}: error twice: {err}"
     m = raw.get("message") or {}
     names = [(x.get("function") or {}).get("name") for x in m.get("tool_calls") or []]
-    if not names:
+    if not any(names):
         return False, f"{case['id']}: no tool call; reply began {str(m.get('content') or '')[:120]!r}"
     return True, f"{case['id']}: called {names}"
 
@@ -337,8 +358,9 @@ def evaluate(client, model, tier_dir, mlx_tag, a):
         train_run.score_model(client, model, tier_dir, a.parallel, 1,
                               sets={"holdout_v3": (lambda: lim, None, None)}, label=label)
     except train_run.SetDamaged as e:
-        set_status(tier_dir, "stopped", f"limited pass: {e}")
-        return "stopped"
+        set_status(tier_dir, "damaged", f"limited pass: {e}")
+        return "damaged"
+    gpu_sample(client, model, tier_dir, "v3_limit")   # loaded at v3's 65,536 tokens: where a 32 GB card spills
     kill, why, g, m = kill_verdict(rows(train_run.eval_path(tier_dir, label, "holdout_v3", 1)),
                                    [train_run.eval_path(tier_dir, mlx_tag, "holdout_v3", k) for k in range(1, 4)],
                                    a.kill_points)
@@ -348,11 +370,15 @@ def evaluate(client, model, tier_dir, mlx_tag, a):
     if kill:
         set_status(tier_dir, "killed", why)
         return "killed"
-    try:
-        train_run.score_model(client, model, tier_dir, a.parallel, a.passes)
+    try:   # v3 first and on its own, so the GPU is sampled while its 65,536-token load is still the loaded one
+        train_run.score_model(client, model, tier_dir, a.parallel, a.passes,
+                              sets={k: v for k, v in train_run.SETS.items() if k == "holdout_v3"})
+        gpu_sample(client, model, tier_dir, "v3_full")
+        train_run.score_model(client, model, tier_dir, a.parallel, a.passes,
+                              sets={k: v for k, v in train_run.SETS.items() if k != "holdout_v3"})
     except train_run.SetDamaged as e:
-        set_status(tier_dir, "stopped", f"full scoring: {e}")
-        return "stopped"
+        set_status(tier_dir, "damaged", f"full scoring: {e}")
+        return "damaged"
     summary = {}
     for name in train_run.SETS:
         for k in range(1, a.passes + 1):
@@ -381,6 +407,16 @@ def serial_chat(client, model, tier_dir):
     p = chat_p95([train_run.eval_path(tier_dir, model + "-serial", "s1", 1)])
     log(f"{model}: serial chat p95 {p['p95_s']} s over {p['n']} requests", tier_dir)
     update_manifest(tier_dir, chat_p95_serial=dict(p, parallel=1))
+
+
+def gpu_sample(client, model, tier_dir, when):
+    """Record whether the loaded model is wholly in GPU memory now; warn when it is not (its seconds are then
+    partly host seconds, not a GPU number)."""
+    whole, ps = on_gpu_whole(client, model)
+    update_manifest(tier_dir, **{f"gpu_whole_{when}": whole, f"ps_{when}": ps})
+    if whole is False:
+        log(f"{model}: WARNING not wholly in GPU memory at {when} ({ps}): its seconds are not a GPU number", tier_dir)
+    return whole
 
 
 def on_gpu_whole(client, model):
@@ -437,8 +473,8 @@ def build_tier(box, tier, tier_dir, mlx_tag, modelfile, quant):
     step(box, f"base-{tier}", "python -c \"from huggingface_hub import snapshot_download as s; "
          f"s('{hf_id}', local_dir='/workspace/base')\"", tier_dir, 3600)
     out = step(box, f"merge-{tier}", "python /workspace/gguf_box.py --base /workspace/base --adapter "
-               "/workspace/out/adapter --out /workspace/out", tier_dir, 5400, marker="TRAIN DONE")
-    merged_on = next((l for l in out.splitlines() if l.startswith("MERGE on")), "")
+               "/workspace/out/adapter --out /workspace/out", tier_dir, 5400, marker="MERGE FACTS ")
+    merge = json.loads(next(l for l in out.splitlines() if l.startswith("MERGE FACTS "))[len("MERGE FACTS "):])
     box.sh("rm -rf /workspace/base", timeout=600)
     bf16 = f"/workspace/gguf/{model}-bf16.gguf"
     step(box, f"convert-{tier}", f"python /workspace/llama.cpp/convert_hf_to_gguf.py /workspace/out/merged "
@@ -455,7 +491,7 @@ def build_tier(box, tier, tier_dir, mlx_tag, modelfile, quant):
     os.remove(f.name)
     step(box, f"create-{tier}", f"ollama create {model} -f /workspace/gguf/Modelfile", tier_dir, 3600)
     return {"gguf": gguf, "gguf_sha256": sha.strip(), "gguf_bytes": int(size.strip() or 0), "quant": quant,
-            "merged_on": merged_on, "modelfile": modelfile}
+            "merge": merge, "modelfile": modelfile}
 
 
 def check_import(client, model, modelfile, quant):
@@ -477,6 +513,17 @@ def check_import(client, model, modelfile, quant):
     return ("does not match the library: " + "; ".join(bad)) if bad else None
 
 
+def host_of(box):
+    """The box's measured host; RAM is also capped at what Daytona says the box has (under cgroup v1 there is no
+    memory.max, and MemTotal is the machine's RAM, not the box's)."""
+    code, out = box.sh(HOST_CMD, timeout=60)
+    host = parse_host(out)
+    mem = box.info.get("memory")
+    if isinstance(mem, (int, float)) and mem > 0:
+        host["ram_gb"] = min(host["ram_gb"], float(mem))
+    return host
+
+
 def run_tier(box, client, tier, a, facts, host_info, root):
     tier_dir = os.path.join(a.train_root, tier)
     st = status(tier_dir)
@@ -485,8 +532,7 @@ def run_tier(box, client, tier, a, facts, host_info, root):
         return st["stage"]
     mlx_tag = json.load(open(os.path.join(tier_dir, "manifest.json")))["tag"]
     model, quant = gguf_model(mlx_tag), a.quant[tier]
-    code, out = box.sh(HOST_CMD, timeout=60)
-    host = parse_host(out)
+    host = host_of(box)
     short = host_short(host, tier)
     update_manifest(tier_dir, box=host_info, host_measured=host, llama_cpp={"tag": LLAMA_CPP_TAG, "commit": LLAMA_CPP_COMMIT},
                     ollama_version=OLLAMA_VERSION, library=facts["library"].get(tier), think=suite.THINK)
@@ -506,8 +552,8 @@ def run_tier(box, client, tier, a, facts, host_info, root):
     update_manifest(tier_dir, **built)
     why = check_import(client, model, facts["modelfile"][tier], quant)
     info, why_not = probe(client, model + ":latest")   # probe matches /api/tags names exactly
-    whole, ps = on_gpu_whole(client, model)
-    update_manifest(tier_dir, import_check=why or "ok", probe=info, gpu_whole=whole, ps=ps)
+    whole, ps = on_gpu_whole(client, model)   # loaded by the probe at 4,096 tokens
+    update_manifest(tier_dir, import_check=why or "ok", probe=info, gpu_whole_probe=whole, ps_probe=ps)
     log(f"{tier}: {model} imported: {why or 'matches the library'}; probe {info} -> {why_not or 'ok'}; "
         f"on GPU whole: {whole} {ps}", tier_dir)
     if why or why_not:
@@ -516,11 +562,8 @@ def run_tier(box, client, tier, a, facts, host_info, root):
     stage = evaluate(client, model, tier_dir, mlx_tag, a)
     if stage == "scored" and tier in a.serial_chat:
         serial_chat(client, model, tier_dir)
-    whole, ps = on_gpu_whole(client, model)   # after the 65,536-token sets: still whole, or spilled to the host
-    update_manifest(tier_dir, gpu_whole_after=whole, ps_after=ps)
-    if whole is False:
-        log(f"{tier}: WARNING the model was not wholly in GPU memory ({ps}): its seconds are not a GPU number", tier_dir)
-    pulled = fetch_gguf(box, tier, tier_dir, built["gguf"], built["gguf_sha256"], a)
+    pulled = (fetch_gguf(box, tier, tier_dir, built["gguf"], built["gguf_sha256"], a) if stage == "scored"
+              else f"not pulled: the tier is {stage}")
     open(os.path.join(tier_dir, f"Modelfile.{model}"), "w").write(
         facts["modelfile"][tier].replace("{gguf}", "./" + os.path.basename(built["gguf"])))
     update_manifest(tier_dir, gguf_download=pulled)
@@ -564,73 +607,159 @@ def mark_shipped(d, label, stage, why, **extra):
         json.dump(all_, open(p, "w"), indent=1)
 
 
+def close_box(box):
+    """Delete the box now (the cap timer): its Lease when it has one, else its own exit."""
+    try:
+        if getattr(box, "lease", None) is not None:
+            box.lease.release()
+        else:
+            box.__exit__(None, None, None)
+    except Exception as e:
+        log(f"close at the cap: {type(e).__name__}: {str(e)[:120]} (the box TTL still ends it)")
+
+
 def one_box(a, gpu, tiers, shipped, facts, rid, root):
-    """One leased box for a group of tiers (and the shipped tags when `shipped`). Returns (status, dollars)."""
+    """One leased box for a group of tiers (and the shipped tags when `shipped`). Returns (status, dollars).
+    A timer closes the box at the cap's deadline (eval_run's: cap less spend less teardown, at this box's rate), so a
+    long tier cannot run past the cap; STOP (main's Ctrl-C or signal) ends the box before its next tier."""
     with TrainBox([gpu], "gguf-" + os.path.basename(root), max_minutes=a.max_minutes,
                   log=lambda m: log(m, root), owner=a.owner, reservation=rid) as box:
         g = gpu_name(box.info)
         price = rate(g, box.info.get("cpu"), box.info.get("memory"))
         t0 = time.time()
         cost = lambda: (time.time() - t0) / 3600 * price  # noqa: E731
+        deadline = t0 + max(0.0, a.cap_of(gpu) - a.spent_of(gpu) - price * TEARDOWN_HOURS) / price * 3600
+        capped = threading.Event()
+
+        def at_cap():
+            capped.set()
+            log(f"STOP: {gpu} cap ${a.cap_of(gpu)} reached mid-box: closing it", root)
+            close_box(box)
+        timer = threading.Timer(max(0.0, deadline - time.time()), at_cap)
+        timer.daemon = True
+        timer.start()
         log(f"box {box.info['id'][:8]} {g}, {box.info.get('cpu')} vCPU, {box.info.get('memory')} GB RAM, "
-            f"{box.info.get('disk')} GB disk at ${price:.4f}/h", root)
+            f"{box.info.get('disk')} GB disk at ${price:.4f}/h; closes at the cap in "
+            f"{(deadline - t0) / 60:.0f} min", root)
+
+        def ended():
+            return "stopped" if STOP.is_set() else "cap" if capped.is_set() or time.time() >= deadline else None
         try:
             box.sh("mkdir -p /workspace", timeout=60)
+            host = host_of(box)   # before any setup: a box too small for every tier it holds costs no setup
+            todo = [t for t in tiers if status(os.path.join(a.train_root, t)).get("stage") not in FINAL]
+            short = {t: host_short(host, t) for t in todo}
+            if todo and not shipped and all(short.values()):
+                for t in todo:
+                    log(f"{t}: REFUSED before any setup or download: this box has {short[t]}", root)
+                    set_status(os.path.join(a.train_root, t), "refused", f"host: {short[t]}", host=host)
+                return "refused", cost()
             for name, cmd in (("boot", BOOT), ("llama", GGUF_SETUP)):
                 code, out = box.run_long(name, cmd, max_s=2400, poll_s=15)
                 log(f"{name} exit {code}: {out.strip().splitlines()[-2:] if out.strip() else ''}", root)
                 if code != 0:
-                    return f"{name} failed", cost()
+                    return ended() or f"{name} failed", cost()
             box.put(os.path.join(HERE, "gguf_box.py"), "/workspace/gguf_box.py")
             box.put(os.path.join(HERE, "box_train.py"), "/workspace/box_train.py")
-            code, host_out = box.sh(HOST_CMD, timeout=60)
-            host_info = dict(box.info, host=parse_host(host_out), gpu=g, rate_per_h=round(price, 4))
+            host_info = dict(box.info, host=host, gpu=g, rate_per_h=round(price, 4))
             host_info.pop("started_at", None)
-            log(f"box measured: {host_info['host']}; {box.info.get('nvidia_smi')}", root)
+            log(f"box measured: {host}; {box.info.get('nvidia_smi')}", root)
             client = box.ollama()
             for tier in tiers:
-                if a.spent_of(gpu) + cost() >= a.cap_of(gpu):
-                    log(f"STOP: {gpu} cap ${a.cap_of(gpu)} reached before {tier}", root)
-                    return "cap", cost()
+                if ended():
+                    log(f"{gpu}: {ended()} before {tier}", root)
+                    return ended(), cost()
                 log(f"{tier}: {run_tier(box, client, tier, a, facts, host_info, root)}", root)
             if shipped:
+                if ended():
+                    log(f"{gpu}: {ended()} before the shipped tags", root)
+                    return ended(), cost()
                 run_shipped(client, a, root)
-            return "done", cost()
+            return ended() or "done", cost()
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:300]}"
-            log(f"box lost or step failed: {why}; gone={box.gone()}", root)
-            return ("evicted" if box.gone() else "failed: " + why), cost()
+            if ended():   # the cap timer or a signal closed the box: that, not an eviction, ended it
+                log(f"box closed ({ended()}): {why}", root)
+                return ended(), cost()
+            gone = box.gone()
+            log(f"box lost or step failed: {why}; gone={gone}", root)
+            return ("evicted" if gone else "failed: " + why), cost()
+        finally:
+            timer.cancel()
+
+
+def meter_call(a, args):
+    """One meter subprocess at a time (RESERVE_LOCK); returns the CompletedProcess."""
+    with RESERVE_LOCK:
+        return subprocess.run([sys.executable, a.meter] + args, capture_output=True, text=True)
+
+
+def progress(a, tiers, shipped):
+    """Rows and tier verdicts written so far for this group: a box that changes neither made no progress."""
+    n = 0
+    dirs = [os.path.join(a.train_root, t) for t in tiers] + ([a.shipped_run] if shipped else [])
+    for d in dirs:
+        if os.path.isdir(d):
+            for f in os.listdir(d):
+                if f.startswith(("eval-gguf-", "eval-shipped-")) or f == "gguf-status.json":
+                    n += sum(1 for _ in open(os.path.join(d, f)))
+    return n
 
 
 def run_group(a, gpu, tiers, shipped, facts, root):
-    status_ = "not started"
+    """Boxes for one GPU type until the group is done: a new box only after an eviction, never after a stop, the cap
+    or a refusal, and never a third after two evictions in a row that wrote nothing. Every reservation is settled,
+    whatever ends the box."""
+    status_, stale = "not started", 0
     for attempt in range(4):
+        if STOP.is_set():
+            status_ = "stopped"
+            break
         if a.spent_of(gpu) >= a.cap_of(gpu):
             log(f"STOP: {gpu} cap ${a.cap_of(gpu)} reached (${a.spent_of(gpu):.2f})", root)
+            status_ = "cap"
             break
         hours = max(0.25, (a.cap_of(gpu) - a.spent_of(gpu)) / rate(gpu))
-        cmd = [sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
-               "--gpu", gpu.replace("-", ""), "--purpose", "measure"]
         charter = os.path.expanduser(os.environ.get("GRUX_SWING_CHARTER", ""))
-        r = __import__("subprocess").run(cmd + ["--charter", charter], capture_output=True, text=True)
+        r = meter_call(a, ["reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}", "--gpu",
+                           gpu.replace("-", ""), "--purpose", "measure", "--charter", charter])
         rid = r.stdout.strip()
         if r.returncode != 0 or not rid:
             log(f"STOP: the spend meter refused the {gpu} box (exit {r.returncode}): {r.stderr.strip()[:200]}", root)
             return "meter refused"
-        t_box = time.time()
+        t_box, before, cost = time.time(), progress(a, tiers, shipped), None
         try:
             status_, cost = one_box(a, gpu, tiers, shipped, facts, rid, root)
         except Exception as e:   # a box reclaimed while it starts raises from create
             log(f"{gpu} box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", root)
             status_, cost = "evicted", 0.0
-            time.sleep(30)
-        __import__("subprocess").run([sys.executable, a.meter, "settle", rid, "--hours",
-                                      f"{(time.time() - t_box) / 3600:.4f}"], capture_output=True, text=True)
-        a.add_spent(gpu, cost)
+            if not STOP.is_set():
+                time.sleep(30)
+        finally:   # settled on every way out, a SystemExit or a full disk included
+            held = (time.time() - t_box) / 3600
+            s_ = meter_call(a, ["settle", rid, "--hours", f"{held:.4f}"])
+            a.add_spent(gpu, cost if cost is not None else held * rate(gpu))
+            try:
+                log(f"{gpu} settle {rid}: exit {s_.returncode} {(s_.stdout or s_.stderr).strip()[:160]}", root)
+            except OSError:
+                pass
         log(f"{gpu} box {attempt + 1}: {status_}, spent about ${a.spent_of(gpu):.2f}", root)
         if status_ != "evicted":
             break
+        stale = stale + 1 if progress(a, tiers, shipped) == before else 0
+        if stale >= 2:
+            log(f"STOP: two {gpu} boxes in a row ended with no new rows; not buying another", root)
+            status_ = "evicted twice without progress"
+            break
     return status_
+
+
+def verdict(result, tiers):
+    """What keeps the run from exiting 0: a group that did not finish, or a tier refused for its box."""
+    bad = [f"{g}: {r}" for g, r in result.items() if r != "done"]
+    bad += [f"{t}: {st.get('stage')} ({st.get('why', '')[:120]})" for t, st in tiers.items()
+            if st.get("stage") in ("refused", "damaged") or not st]
+    return bad
 
 
 def parse_args(argv=None):
@@ -650,8 +779,8 @@ def parse_args(argv=None):
                     help="stop a tier whose limited pass is more than this many points under its MLX build")
     ap.add_argument("--serial-chat", default="pro", help="tiers that also get a one-at-a-time chat latency pass")
     ap.add_argument("--pull-pro", action="store_true", help="also download the Pro GGUF (about 21 GB)")
-    ap.add_argument("--cap", type=float, default=35.0, help="dollars for the --gpu box group")
-    ap.add_argument("--pro-cap", type=float, default=25.0, help="dollars for the --pro-gpu box group")
+    ap.add_argument("--cap", type=float, default=30.0, help="dollars for the --gpu box group (plan: about $28)")
+    ap.add_argument("--pro-cap", type=float, default=15.0, help="dollars for the --pro-gpu box group (plan: about $14)")
     ap.add_argument("--max-minutes", type=int, default=480)
     ap.add_argument("--meter", default="", help="spend meter CLI (reserve/settle) called around every box")
     ap.add_argument("--meter-lane", default="grux-local")
@@ -715,9 +844,15 @@ def main(argv=None):
         groups.setdefault(a.gpu_of[t], []).append(t)
     if a.shipped:
         groups.setdefault(a.gpu, [])
+    lease.install()   # boxes are leased in pool threads; only the main thread can install the signal handlers
     with cf.ThreadPoolExecutor(len(groups)) as pool:   # one box per GPU type, side by side
         futs = {g: pool.submit(run_group, a, g, ts, a.shipped and g == a.gpu, facts, a.run) for g, ts in groups.items()}
-        result = {g: f.result() for g, f in futs.items()}
+        try:
+            result = {g: f.result() for g, f in futs.items()}
+        except BaseException:   # Ctrl-C or a signal (the lease handler has deleted every box): no group buys
+            STOP.set()          # another, and the pool waits for each to settle its reservation
+            log("STOP: interrupted; every box is deleted, waiting for the meter to settle", a.run)
+            raise
     tiers = {t: status(os.path.join(a.train_root, t)) for t in a.tiers}
     json.dump({"status": result, "tiers": tiers, "spent": {g: a.spent_of(g) for g in groups}},
               open(os.path.join(a.run, "status.json"), "w"), indent=1)
@@ -726,6 +861,10 @@ def main(argv=None):
             if n.startswith("gguf-") and n.endswith(".part"):
                 os.remove(os.path.join(a.train_root, t, n))
     log(f"FINISHED: {result}; spent {[(g, round(a.spent_of(g), 2)) for g in groups]}", a.run)
+    bad = verdict(result, tiers)
+    if bad:
+        log("NOT DONE: " + " | ".join(bad), a.run)
+        sys.exit(5)
 
 
 if __name__ == "__main__":

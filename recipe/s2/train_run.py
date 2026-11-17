@@ -3,8 +3,9 @@
 
 One leased spot box at a time: train a LoRA (every checkpoint pulled out the moment it lands), merge,
 import the base and the trained model into the box's Ollama as nvfp4 (the format a Mac serves),
-score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull both Ollama
-models out for the Mac check. A spot box goes without warning (measured 2026-10-22), so a new box
+score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull the
+trained model's Ollama pack out for the Mac check when the disk here allows (pull.json says what happened; the base
+is public and never pulled). A spot box goes without warning (measured 2026-10-22), so a new box
 resumes from the last checkpoint pulled out, skips training once the adapter is out, and skips every
 case already scored. Nothing of ours but the training file goes in; nothing leaves but files.
 
@@ -339,7 +340,8 @@ def one_box(a, run_dir, tag, base_tag, reservation=None):
                 log(f"{name}: warm in {time.time() - w0:.0f} s (first nvfp4 call compiles kernels)", run_dir)
                 score_model(client, name, run_dir, a.parallel, a.passes)
             if a.pull:   # only the trained model: a base pack is the public base, never worth the disk (Pro, 2026-11-17)
-                pull_model(box, tag, run_dir)
+                json.dump({"model": tag, "pull": pull_model(box, tag, run_dir)},
+                          open(os.path.join(run_dir, "pull.json"), "w"))
             return "done", (time.time() - t0) / 3600 * price
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:300]}"
