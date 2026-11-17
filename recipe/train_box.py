@@ -67,6 +67,7 @@ class TrainBox:
             self.lease = Lease(self.d, self.sb)
             m = self.sb.model_dump()
             self.info = {"id": m.get("id"), "gpu_type": str(m.get("gpu_type")), "spot": m.get("spot"),
+                         "cpu": m.get("cpu"), "memory": m.get("memory"), "disk": m.get("disk"),
                          "created_s": round(time.time() - t0, 1), "started_at": time.time()}
             self.info["nvidia_smi"] = self.sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")[1]
         except BaseException:

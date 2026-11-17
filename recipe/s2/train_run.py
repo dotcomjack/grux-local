@@ -3,8 +3,9 @@
 
 One leased spot box at a time: train a LoRA (every checkpoint pulled out the moment it lands), merge,
 import the base and the trained model into the box's Ollama as nvfp4 (the format a Mac serves),
-score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull both Ollama
-models out for the Mac check. A spot box goes without warning (measured 2026-10-22), so a new box
+score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull the
+trained model's Ollama pack out for the Mac check when the disk here allows (pull.json says what happened; the base
+is public and never pulled). A spot box goes without warning (measured 2026-10-22), so a new box
 resumes from the last checkpoint pulled out, skips training once the adapter is out, and skips every
 case already scored. Nothing of ours but the training file goes in; nothing leaves but files.
 
@@ -75,7 +76,9 @@ def preflight_sets():
 
 
 def eval_path(run_dir, model, name, k):
-    """Pass 1 keeps the name every reader already uses; pass k > 1 adds -pass<k>."""
+    """Pass 1 keeps the name every reader already uses; pass k > 1 adds -pass<k>. A registry tag's `/` and `:` become
+    `_`, as eval_run names its files (a local tag has neither, so its name is unchanged)."""
+    model = model.replace(":", "_").replace("/", "_")
     return os.path.join(run_dir, f"eval-{model}-{name}" + (f"-pass{k}" if k > 1 else "") + ".jsonl")
 
 
@@ -91,9 +94,11 @@ def scored(path):
     return out
 
 
-def score_model(client, model, run_dir, parallel, passes=1):
+def score_model(client, model, run_dir, parallel, passes=1, sets=None, label=None):
     """Every case of every set for one model, `passes` times (the gate's reruns, one seed as eval_run keeps);
-    appends as it goes, skips what is already scored. A case that errors twice is written as skipped (a fail)."""
+    appends as it goes, skips what is already scored. A case that errors twice is written as skipped (a fail).
+    `sets` scores a subset (default SETS, every set); `label` names the row files instead of the model (s2/gguf_run.py
+    keeps a limited pass and a registry tag's rows apart from every other file in the run)."""
     stop = threading.Event()
 
     def one(case, request, score):
@@ -128,9 +133,10 @@ def score_model(client, model, run_dir, parallel, passes=1):
         return row
 
     # set by set, its passes together: one model load per context size (v3 runs at 65,536, the rest at 16,384)
-    for (name, (cases_fn, request, score)), k in ((kv, k) for kv in SETS.items() for k in range(1, passes + 1)):
+    sets = SETS if sets is None else sets
+    for (name, (cases_fn, request, score)), k in ((kv, k) for kv in sets.items() for k in range(1, passes + 1)):
         cases = cases_fn()
-        path = eval_path(run_dir, model, name, k)
+        path = eval_path(run_dir, label or model, name, k)
         todo = [c for c in cases if c["id"] not in scored(path)]
         if not todo:
             continue
@@ -233,22 +239,65 @@ def train(box, a, run_dir):
             return ok
 
 
+DISK_FLOOR = 10e9   # a download leaves at least this much free on this machine
+
+
+def disk_short(dest_dir, nbytes, floor=None):
+    """None when `nbytes` fit in dest_dir with `floor` (default DISK_FLOOR) left over, else why not. Measured
+    2026-11-17: the Pro run scored every set, then lost its result writing a 22 GB base pack into 23 GB of free space
+    (Errno 28)."""
+    floor = DISK_FLOOR if floor is None else floor
+    free = __import__("shutil").disk_usage(dest_dir).free
+    if nbytes + floor > free:
+        return f"needs {nbytes / 1e9:.2f} GB plus a {floor / 1e9:.0f} GB floor, {free / 1e9:.2f} GB free"
+    return None
+
+
+def model_bytes(box, name):
+    """The model's size as the box's Ollama lists it (0 when it is not listed)."""
+    code, out = box.sh(f"ollama list | awk '$1 == \"{name}:latest\" || $1 == \"{name}\" {{print $3, $4}}'", timeout=60)
+    try:
+        n, unit = out.split()[:2]
+        return int(float(n) * {"KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}[unit.upper()])
+    except (ValueError, KeyError):
+        return 0
+
+
 def pull_model(box, name, run_dir):
     """The Ollama model as one tar rooted at ~/.ollama/models (s2/pack_ollama.py: Ollama 0.40.8 keeps a
     manifests-v2 symlink to a manifest blob, not the old manifests/ tree), so `tar xf` there on a Mac
-    makes `ollama list` show it."""
+    makes `ollama list` show it. Returns what happened in words. Free disk here is checked before the pack (a pack
+    of a model that cannot land is box time for nothing) and again with the pack's real size before the download;
+    short of space it skips with the reason. Never raises: the scores are already out, a pack is an extra."""
     dest = os.path.join(run_dir, f"ollama-{name}.tar")
     if os.path.exists(dest):
-        return
-    box.put(os.path.join(HERE, "pack_ollama.py"), "/workspace/pack_ollama.py")
-    code, out = box.sh(f"python /workspace/pack_ollama.py {name} /workspace/{name}.tar", timeout=900)
-    log(f"pack {name}: exit {code} {out[-80:]}", run_dir)
-    if code != 0:
-        raise RuntimeError(f"pack {name} failed: {out[-200:]}")
-    t0 = time.time()
-    box.get(f"/workspace/{name}.tar", dest + ".part")
-    os.replace(dest + ".part", dest)
-    log(f"pulled {name}: {os.path.getsize(dest) / 1e9:.2f} GB in {time.time() - t0:.0f} s", run_dir)
+        return "already here"
+    try:
+        short = disk_short(run_dir, model_bytes(box, name))
+        if short:
+            log(f"pack {name} SKIPPED before packing: {short}", run_dir)
+            return "skipped: " + short
+        box.put(os.path.join(HERE, "pack_ollama.py"), "/workspace/pack_ollama.py")
+        code, out = box.sh(f"python /workspace/pack_ollama.py {name} /workspace/{name}.tar", timeout=900)
+        log(f"pack {name}: exit {code} {out[-80:]}", run_dir)
+        if code != 0:
+            return f"pack failed: {out[-200:]}"
+        code, size = box.sh(f"stat -c %s /workspace/{name}.tar", timeout=60)
+        short = disk_short(run_dir, int(size)) if code == 0 and size.strip().isdigit() else "pack size unreadable"
+        if short:
+            log(f"pull {name} SKIPPED: {short}", run_dir)
+            return "skipped: " + short
+        t0 = time.time()
+        box.get(f"/workspace/{name}.tar", dest + ".part")
+        os.replace(dest + ".part", dest)
+        log(f"pulled {name}: {os.path.getsize(dest) / 1e9:.2f} GB in {time.time() - t0:.0f} s", run_dir)
+        return "pulled"
+    except Exception as e:
+        if os.path.exists(dest + ".part"):
+            os.remove(dest + ".part")
+        why = f"{type(e).__name__}: {str(e)[:200]}"
+        log(f"pull {name} FAILED, the scores stand: {why}", run_dir)
+        return "failed: " + why
 
 
 def one_box(a, run_dir, tag, base_tag, reservation=None):
@@ -290,8 +339,12 @@ def one_box(a, run_dir, tag, base_tag, reservation=None):
                                           "options": {"num_predict": 4}}, timeout=1800)
                 log(f"{name}: warm in {time.time() - w0:.0f} s (first nvfp4 call compiles kernels)", run_dir)
                 score_model(client, name, run_dir, a.parallel, a.passes)
-            for name, _ in (builds if a.pull else ()):
-                pull_model(box, name, run_dir)
+            if a.pull:   # only the trained model: a base pack is the public base, never worth the disk (Pro, 2026-11-17)
+                pulled = pull_model(box, tag, run_dir)
+                try:   # a record of the pull must never fail a scored run either
+                    json.dump({"model": tag, "pull": pulled}, open(os.path.join(run_dir, "pull.json"), "w"))
+                except OSError as e:
+                    log(f"pull.json not written ({e}); pull: {pulled}", run_dir)
             return "done", (time.time() - t0) / 3600 * price
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:300]}"
