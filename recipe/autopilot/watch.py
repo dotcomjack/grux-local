@@ -8,6 +8,8 @@ Hard filters, each logged with its reason when it drops a model:
   - Ollama builds must carry the `tools` badge (Grux calls tools) and not be cloud-only;
   - Hugging Face repos must be a chat model (text-generation or image-text-to-text with a chat template), not a
     quantized copy, a pretrain-only base or another kind of model.
+With base.json's backfill on, a library build last updated before `since` (the back catalog) passes the same filters
+and is scored too, after every new build; a back-catalog win is reported and never trained by the lane.
 A candidate is scored as the Mac runs it: the default Ollama library build of that size. A Hugging Face base with
 no Ollama library build yet waits (rechecked every week). The seen state is keyed by (source, id, digest) and
 records when each build was first seen; a build stays new until a verdict for its digest exists in
@@ -196,7 +198,8 @@ def judge_ollama_entry(e, cfg, since, base_family):
     """Listing-level filters (no network). Returns (verdict, reason, sizes to look at)."""
     if family_key(e["name"]) == family_key(base_family):
         return "baseline", f"the current base family ({base_family})", []
-    if e["updated"] and e["updated"] < since:
+    back = bool(e["updated"] and e["updated"] < since)
+    if back and not (cfg.get("backfill") or {}).get("enabled"):
         return "baseline", f"last updated {e['updated']}, before the {since} field sweep", []
     if "embedding" in e["caps"]:
         return "filtered", "an embedding model", []
@@ -207,7 +210,7 @@ def judge_ollama_entry(e, cfg, since, base_family):
     sizes = [s for s in e["sizes"] if common.tier_for(common.params_from_tag(s)) is not None]
     if not sizes:
         return "filtered", f"sizes {e['sizes'] or 'none listed'}, none in 1B to 10.5B", []
-    return "check", "", sizes
+    return "check", (f"backfill: last updated {e['updated']}, before the {since} field sweep" if back else ""), sizes
 
 
 def judge_ollama_build(name, size, build, cfg):
@@ -291,7 +294,7 @@ def run(out_path, use_state=True):
                 continue
             v, why, rec = judge_ollama_build(e["name"], size, build, cfg)
             rec.update({"updated": e["updated"], "pulls": e["pulls"], "pulls_n": pulls_number(e["pulls"]),
-                        "description": e["description"], "reason": why})
+                        "description": e["description"], "reason": why, "backfill": reason.startswith("backfill")})
             if v == "filtered":
                 report["filtered"].append(rec)
                 continue

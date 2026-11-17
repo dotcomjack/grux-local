@@ -32,6 +32,21 @@ MAX_INCOMPLETE_RUNS = 2    # a build still not scored completely after this many
 MAX_BASE_RESCORES = 2      # base rescores per registry build; past it the lane says so loudly and stops paying
 
 
+def order_to_score(cands, headline):
+    """New builds first, newest first, the headline tier ahead; the back catalog (backfill) after every new build,
+    in the same order among themselves, so a week's cap never spends a new base's slot on an old one."""
+    out = sorted(cands, key=lambda c: c.get("updated") or "", reverse=True)
+    out.sort(key=lambda c: c["tier"] != headline)
+    out.sort(key=lambda c: bool(c.get("backfill")))
+    return out
+
+
+def may_train(c, verdict, no_train):
+    """Only a new base's win trains. A back-catalog win is an alert for a person: training spend was never part of
+    the backfill the owner approved (about $2 a scored build)."""
+    return verdict == "win" and not no_train and not c.get("backfill")
+
+
 def complete_result(digest, model):
     """The newest complete, fully scored result for this build, or None. A result whose box listed no digest is
     matched by model name, and only from today's run (the watch's digest for today's build is then the only one
@@ -155,8 +170,7 @@ def week_run():
             to_decide.append((c, res))                           # scored earlier, never decided (killed, base failed)
         else:
             to_score.append(c)
-    to_score.sort(key=lambda c: c.get("updated") or "", reverse=True)             # newest first ...
-    to_score.sort(key=lambda c: c["tier"] != common.base_config()["headline_tier"])  # ... headline tier ahead (stable)
+    to_score = order_to_score(to_score, common.base_config()["headline_tier"])
     week["carried_over"] = [c["id"] for c in to_score[MAX_PER_RUN:]]
     to_score = to_score[:MAX_PER_RUN]
     models = [c["id"] for c in to_score]
@@ -221,7 +235,12 @@ def week_run():
             d = {}
         week["decisions"].append({"candidate": c["id"], "verdict": d.get("verdict"),
                                   "line": d.get("line") or (r.stdout + r.stderr).strip()[-300:]})
-        if d.get("verdict") == "win" and not a.no_train:
+        if d.get("verdict") == "win" and c.get("backfill"):
+            msg = (f"BACK-CATALOG WIN: {c['id']} beat the {c['tier']} base; the lane trains only new bases, so a "
+                   "person decides whether to train it")
+            print(msg, flush=True)
+            week.setdefault("alerts", []).append(msg)
+        if may_train(c, d.get("verdict"), a.no_train):
             t = subprocess.run([sys.executable, os.path.join(HERE, "train.py"), dpath])
             week["steps"].append({"train": c["id"], "exit": t.returncode})
     common.write_json(os.path.join(common.RESULTS, f"week-{date}.json"), week)
