@@ -489,7 +489,15 @@ def run_tier(box, client, tier, a, facts, host_info, root):
         log(f"{tier}: REFUSED before downloading anything: this box has {short}", root)
         set_status(tier_dir, "refused", f"host: {short}", host=host)
         return "refused"
-    built = build_tier(box, tier, tier_dir, mlx_tag, facts["modelfile"][tier], quant)
+    try:
+        built = build_tier(box, tier, tier_dir, mlx_tag, facts["modelfile"][tier], quant)
+    except RuntimeError as e:   # a failed merge, convert, quantize or import is this tier's, not the box's
+        if box.gone():
+            raise
+        log(f"{tier}: build STOPPED: {e}", root)
+        set_status(tier_dir, "stopped", f"build: {e}")
+        box.sh(f"ollama rm {model}; rm -rf /workspace/base /workspace/out /workspace/gguf", timeout=600)
+        return "stopped"
     update_manifest(tier_dir, **built)
     why = check_import(client, model, facts["modelfile"][tier], quant)
     info, why_not = probe(client, model)

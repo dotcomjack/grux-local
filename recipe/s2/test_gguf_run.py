@@ -428,5 +428,31 @@ check("a box without 80 GB RAM and 250 GB disk refuses the Pro before any upload
 check("... recording both numbers for the lead", "64.0 GB RAM, needs 80" in g.status(os.path.join(tr, "pro"))["why"]
       and "200.0 GB free disk, needs 250" in g.status(os.path.join(tr, "pro"))["why"], str(g.status(os.path.join(tr, "pro"))))
 
+
+
+class ConvertFails(SmallBox):
+    """A big enough box whose converter exits 1: the tier stops, the box (and the next tier) goes on."""
+    def sh(self, cmd, timeout=None):
+        if cmd == g.HOST_CMD:
+            self.cmds.append(cmd)
+            return 0, "32\n400000000000\nmax\n500000000000\n512000000000"
+        return Box.sh(self, cmd, timeout)
+
+    def run_long(self, name, cmd, max_s=0, poll_s=0):
+        self.cmds.append(cmd)
+        if name.startswith("convert"):
+            return 1, "KeyError: model.layers.0.mtp\nEXIT=1"
+        return 0, "MERGE on cuda\nTRAIN DONE\nEXIT=0"
+
+
+os.makedirs(os.path.join(tr, "2b"))
+json.dump({"tag": "grux-qwen35-2b"}, open(os.path.join(tr, "2b", "manifest.json"), "w"))
+RA.quant["2b"] = "Q4_K_M"
+cb = ConvertFails()
+st = g.run_tier(cb, Perfect(), "2b", RA, {"library": {}, "modelfile": {"2b": mf}}, {}, root)
+check("a converter that fails stops that tier with its error, not the box", st == "stopped"
+      and "convert-2b failed" in g.status(os.path.join(tr, "2b"))["why"] and not any("create" in c for c in cb.cmds),
+      f"{st} {g.status(os.path.join(tr, '2b'))}")
+
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)
