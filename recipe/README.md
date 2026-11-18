@@ -97,16 +97,30 @@ The models trained on the v3 training bank score 84 to 87 on held-out v3, and th
 similar templates, so a v3 score cannot tell a learned skill from a memorized template. Held-out v4 is 323 jobs
 (`s2/holdout_v4.py`) in v3's six families and close to v3's family proportions, sent and scored by v3's own code
 (`holdout_v3.request_v3`, `run_case`, `score_v3`, unchanged), with new scenarios, wording, names and tool sequences:
-none of its 11 chain call sequences appears in v3 or the v3 bank. `s2/contamination.py` (`v4_overlap`, `v4_clones`)
-proves it shares no whole text, no 8-word run, no template clone and no sentence frame (`v4_frames`: every noun
-masked, within one token edit, two when both frames have 10 or more tokens (a merged masked run is free), or a 3-gram Jaccard of 0.5, so a v3 ask on a new subject, or with one small word
-changed, is caught; lines with fewer than 5 fixed words are not frame-scored, and tool results are held to the 8-word
-rule only) with held-out v1, v2, v3, the v3 training bank or the S2 training bank, every line of a pasted message scored on its own; Grux's own output lines are set aside as
-product output, each one checked against the Grux source, and tool results are held to the 8-word and whole-text rule
-(their machine format would read as a clone by construction). The shell family keeps v3's own short sequences where
-the family defines them (snapshots then a reply, a gated run then a reply, a confirmed run). Its case sha (`dd985446...`) is frozen in the module and pinned again in `s2/test_holdout_v4.py`, before the
-next round's training data is generated. `eval_local.py`, `eval_run.py` and `s2/train_run.py` score it as
-`holdout_v4`. No model has been scored on it yet.
+none of its 11 chain call sequences appears in v3 or the v3 bank.
+
+`s2/contamination.py` proves held-out v4 shares nothing with held-out v1, v2, v3, the v3 training bank or the S2
+training bank:
+- no whole text and no 8-word run (`v4_overlap`); Grux's own output lines are set aside as product output, each one
+  checked against the Grux source;
+- no template clone (`v4_clones`: word 4-grams, and 3-grams for a short line, after names, numbers, times and quotes
+  are stripped), every line of a pasted message scored on its own, and no v4 line holding a short human line of any of
+  them (`v4_reverse_clones`);
+- no sentence frame (`v4_frames`: every noun masked, within one token edit, two when both frames have 10 or more
+  tokens, a merged masked run free, or a 3-gram Jaccard of 0.5), so a v3 ask on a new subject, or with one small word
+  changed, is caught. Lines with fewer than 5 fixed words are not frame-scored.
+
+Tool results are held to the 8-word and whole-text rule only (their machine format would read as a clone by
+construction). The shell family keeps v3's own short sequences where the family defines them (snapshots then a reply, a
+gated run then a reply, a confirmed run). Its case sha (`d17adce3...`) is frozen in the module and pinned again in
+`s2/test_holdout_v4.py`, before the next round's training data is generated.
+
+New training data is gated against it: `contamination.TrainGate` drops any job or row that holds a held-out v4 text or
+8-word run, clones a v4 line, or echoes a v3 or v4 sentence frame, and `s2/export_v3.py` applies it to every job it
+exports (`s2/test_train_gate.py`). The frozen v3 bank keeps its kept set.
+
+`eval_local.py`, `eval_run.py` and `s2/train_run.py` score held-out v4 as `holdout_v4`. No model has been scored on
+it yet.
 
 ## 2. Train your own
 

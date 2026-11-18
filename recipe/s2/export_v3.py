@@ -18,6 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
+import contamination  # noqa: E402
 import holdout_v3  # noqa: E402
 import train_bank_v3  # noqa: E402
 import train_prompt  # noqa: E402
@@ -87,11 +88,15 @@ def rows_for(case, answer, model="teacher"):
 def export(run_dir, out_path):
     """An answer is paired only with the exact job it answered and the exact tools it was offered: its row's job_sha
     and tools_sha must equal the job's now. A row without them (taught on another prompt) is never exported. A job
-    whose answer invents a home folder (invented_home) is never exported either."""
+    whose answer invents a home folder (invented_home) is never exported either, and neither is a job that touches
+    a held-out line (contamination.TrainGate: held-out v4's texts, a v4 template clone, or a v3 or v4 sentence frame
+    with its nouns changed), checked over the job and over every row written from it, the teacher's answer included."""
     bank = train_bank_v3.kept()
     by_id = {c["id"]: c for c in bank}
     answers = kept_answers(run_dir)
+    gate = contamination.TrainGate()
     fams, rows_n, short, changed, gone, hinted, invented = {}, 0, 0, 0, 0, 0, 0
+    held = {}   # held-out case id -> jobs dropped for touching it
     with open(out_path, "w") as f:
         for cid, ans in answers.items():
             case = by_id.get(cid)
@@ -109,6 +114,11 @@ def export(run_dir, out_path):
             if invented_home(rows):
                 invented += 1
                 continue
+            hit = gate.why(*contamination.case_items(case)) or next(
+                (w for w in (gate.why(*contamination.row_items(r)) for r in rows) if w), None)
+            if hit:
+                held.setdefault(hit[1], []).append(cid)
+                continue
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             rows_n += len(rows)
@@ -120,6 +130,8 @@ def export(run_dir, out_path):
     summary = {"jobs_kept": sum(fams.values()), "jobs_in_bank": len(by_id), "rows": rows_n,
                "dropped_short_answers": short, "dropped_job_changed": changed, "dropped_job_gone": gone,
                "dropped_invented_home": invented,
+               "dropped_touches_held_out": sum(len(v) for v in held.values()),
+               "held_out_touched": {k: len(v) for k, v in sorted(held.items())},
                "hinted_jobs": hinted,
                "families": {k: {"kept": fams.get(k, 0), "bank": n, "yield": round(fams.get(k, 0) / n, 3)}
                             for k, n in sorted(total.items())}}
