@@ -421,7 +421,7 @@ def main():
         import train_bank_v3
         import train_prompt
         KEEP_RAW, TRAIN_PROMPT = True, train_prompt
-        cases = train_bank_v3.kept()
+        cases = train_bank_v3.gated()   # kept(), less what the held-out gate drops at export
     elif a.set == "holdout_v4":
         import holdout_v4
         cases = holdout_v4.cases()

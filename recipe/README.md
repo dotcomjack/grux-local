@@ -117,7 +117,10 @@ gated run then a reply, a confirmed run). Its case sha (`d17adce3...`) is frozen
 
 New training data is gated against it: `contamination.TrainGate` drops any job or row that holds a held-out v4 text or
 8-word run, clones a v4 line, or echoes a v3 or v4 sentence frame, and `s2/export_v3.py` applies it to every job it
-exports (`s2/test_train_gate.py`). The frozen v3 bank keeps its kept set.
+exports (`s2/test_train_gate.py`). The frozen v3 bank keeps its kept set; the teacher pass (`eval_run.py --set
+train_v3`) reads `train_bank_v3.gated()`, the kept set less what the gate flags, and the S2 export (`s2/gen_data.py`)
+drops what it flags too. An existing `train.jsonl` is gated into a new copy, never in place:
+`python3 recipe/s2/contamination.py --gate <train.jsonl> <gated copy>` writes the copy and `<gated copy>.gate.json`.
 
 `eval_local.py`, `eval_run.py` and `s2/train_run.py` score held-out v4 as `holdout_v4`. No model has been scored on
 it yet.

@@ -688,6 +688,60 @@ def row_items(row):
     return [t for t in texts if t], lines
 
 
+def gate_file(src, dst, gate=None):
+    """Copy the rendered training rows of src (one JSON row a line, box_train's shape) to dst, without every row
+    TrainGate flags, and write dst + ".gate.json" with the counts and the held-out jobs touched. src is only read; dst,
+    its report and dst + ".partial" must not exist. The copy is written as dst + ".partial", the report is written,
+    and only then is the copy linked in as dst (a link never replaces a file), so a failure at any step (a malformed
+    row, a full disk) removes every file this call made and leaves nothing that could be trained on. Kept rows are
+    copied exactly as read. Returns the report."""
+    tmp, rep = dst + ".partial", dst + ".gate.json"
+    if any(os.path.exists(p) for p in (dst, rep, tmp)):   # dst == src exists too, so the source is never a target
+        raise SystemExit(f"refused: {dst}, its report or its .partial already exists (or it is the source); the "
+                         "gate writes new files only")
+    gate = gate or TrainGate()
+    report = {"source": os.path.abspath(src), "rows": 0, "kept": 0, "dropped": 0, "held_out_touched": {},
+              "dropped_by_kind": {}}
+    made = []   # files this call created, and so the only ones it may remove
+    try:
+        with open(src, encoding="utf-8", newline="") as f:
+            out = open(tmp, "x", encoding="utf-8", newline="")
+            made.append(tmp)
+            with out:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    report["rows"] += 1
+                    hit = gate.why(*row_items(row))
+                    if hit:
+                        kind = hit[0].split(":")[0].split(" (")[0]
+                        report["dropped"] += 1
+                        report["held_out_touched"][hit[1]] = report["held_out_touched"].get(hit[1], 0) + 1
+                        report["dropped_by_kind"][kind] = report["dropped_by_kind"].get(kind, 0) + 1
+                        continue
+                    out.write(line)
+                    report["kept"] += 1
+                out.flush()
+                os.fsync(out.fileno())   # the copy is on disk before a report vouches for it
+        report["held_out_touched"] = dict(sorted(report["held_out_touched"].items()))
+        g = open(rep, "x", encoding="utf-8")
+        made.append(rep)
+        with g:
+            json.dump(report, g, indent=1)
+        os.link(tmp, dst)   # fails rather than replace a dst made since the check above
+        made.append(dst)
+        os.unlink(tmp)
+    except BaseException:
+        for p in reversed(made):   # dst first: a failed unlink of tmp never strands a whole copy
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+        raise
+    return report
+
+
 def main():
     held = held_out()
     whole = {" ".join(w) for w in held}
@@ -702,4 +756,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--gate"]:   # python3 s2/contamination.py --gate <train.jsonl> <gated copy>
+        if len(sys.argv) != 4:
+            raise SystemExit("usage: contamination.py --gate <rows.jsonl> <new gated copy>")
+        print(json.dumps(gate_file(sys.argv[2], sys.argv[3]), indent=1))
+    else:
+        main()

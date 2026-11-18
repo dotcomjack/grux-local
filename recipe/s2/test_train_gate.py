@@ -10,7 +10,10 @@ out of new training rows, and leaves the frozen v3 bank alone. No model runs.
      does not shield a v4 run beside it, and a v4 run split by one on a line of its own is still caught; a clean row
      passes. The frame checks go red with the frame rule turned off;
   3. export_v3 drops a job that touches a held-out line, drops a job that is clean itself but whose teacher answer
-     carries a v4 run, counts both, and keeps a clean one.
+     carries a v4 run, counts both, and keeps a clean one;
+  4. the generators: train_bank_v3.gated() is kept() less exactly what the gate flags, and eval_run's teacher pass
+     reads it; gen_data's S2 export drops a row the gate flags and keeps a clean one; contamination.gate_file writes
+     a gated copy of an existing train.jsonl with its counts, and never writes over its source.
 Prints PASS or FAIL per check; exit 1 on any FAIL, or if no check ran.
 
   GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> python3 recipe/s2/test_train_gate.py
@@ -166,6 +169,131 @@ check(f"3 export_v3 drops the job that touches {reason[1]} and keeps the clean o
 check("3 ... and drops a job that is clean itself but whose answer (the training target) carries a held-out v4 run",
       late["id"] not in ids and s["dropped_touches_held_out"] == 2 and any(k.startswith("h4-") for k in s["held_out_touched"]),
       json.dumps(s)[:300])
+
+# 4. the generators and existing files
+GATED = tb.gated(ALL)
+flag_ids = {c["id"] for c in KEPT if GATE.why(*ct.case_items(c))}
+check(f"4 train_bank_v3.gated() is kept() less the {len(flag_ids)} cases the gate flags, and kept() is unchanged",
+      {c["id"] for c in GATED} == {c["id"] for c in KEPT} - flag_ids and flag_ids and tb.case_sha(tb.kept(ALL)) == KEPT_SHA)
+import eval_run  # noqa: E402
+
+src = open(eval_run.__file__, encoding="utf-8").read()
+check("4 eval_run's teacher pass (--set train_v3) reads train_bank_v3.gated(), not kept()",
+      "cases = train_bank_v3.gated()" in src and "cases = train_bank_v3.kept()" not in src)
+import gen_data  # noqa: E402
+import train_bank  # noqa: E402
+
+bad_c = good_c = None
+for c in train_bank.cases():
+    if c["id"] in gen_data.EXCLUDE or c["family"] not in ("chat_tools", "chat_plain"):
+        continue
+    body = train_bank.request_for(c, gen_data.TEACHER)["body"]
+    hit = GATE.why(*ct.row_items({"messages": body["messages"], "target": {"content": "Okay."}}))
+    if hit and bad_c is None:
+        bad_c = c
+    if not hit and good_c is None:
+        good_c = c
+    if bad_c and good_c:
+        break
+d = tempfile.mkdtemp()
+with open(os.path.join(d, "teacher-0of1.jsonl"), "w") as f:
+    for c in (bad_c, good_c):
+        f.write(json.dumps({"case": c["id"], "family": c["family"], "pass": True,
+                            "message": {"content": "Okay.", "tool_calls": []}}) + "\n")
+gen_data.export(d)
+ids = {json.loads(line)["id"] for line in open(os.path.join(d, "train.jsonl"))}
+summ = json.load(open(os.path.join(d, "export.json")))
+check(f"4 gen_data's S2 export drops a row the gate flags ({bad_c['id']}) and keeps a clean one ({good_c['id']})",
+      bad_c["id"] not in ids and good_c["id"] in ids and summ["dropped_touches_held_out"] == 1 and summ["kept"] == 1,
+      json.dumps(summ)[:200])
+src_rows = os.path.join(tempfile.mkdtemp(), "train.jsonl")
+leak = row("Can you read this file for me?", "notes\n" + v4_run)
+with open(src_rows, "w", newline="") as f:   # a CRLF row, a blank line and an LF row: kept rows stay byte for byte
+    f.write(json.dumps(dict(clean, id="clean")) + "\r\n" + "\n" + json.dumps(dict(leak, id="leak")) + "\n")
+before_bytes = open(src_rows, "rb").read()
+out_rows = os.path.join(os.path.dirname(src_rows), "train.gated.jsonl")
+rep = ct.gate_file(src_rows, out_rows, GATE)
+kept_ids = [json.loads(line)["id"] for line in open(out_rows)]
+check("4 gate_file writes a copy without the touching row, counts it, and leaves its source as it was",
+      kept_ids == ["clean"] and open(out_rows, "rb").read() == json.dumps(dict(clean, id="clean")).encode() + b"\r\n"
+      and rep["rows"] == 2 and rep["dropped"] == 1 and list(rep["held_out_touched"])
+      and open(src_rows, "rb").read() == before_bytes and os.path.exists(out_rows + ".gate.json"), json.dumps(rep)[:200])
+out_bytes, rep_bytes = open(out_rows, "rb").read(), open(out_rows + ".gate.json", "rb").read()   # before the refusals
+refused = []
+for dst in (src_rows, out_rows):
+    try:
+        ct.gate_file(src_rows, dst, GATE)
+    except SystemExit:
+        refused.append(dst)
+bad_src = os.path.join(os.path.dirname(src_rows), "broken.jsonl")
+with open(bad_src, "w") as f:
+    f.write(json.dumps(dict(clean, id="clean")) + "\n" + "{not json\n")
+bad_dst = os.path.join(os.path.dirname(src_rows), "broken.gated.jsonl")
+try:
+    ct.gate_file(bad_src, bad_dst, GATE)
+    raised = False
+except ValueError:
+    raised = True
+check("4 a malformed row stops gate_file with no copy, no report and no partial file left behind",
+      raised and not any(os.path.exists(bad_dst + x) for x in ("", ".gate.json", ".partial")))
+only_rep = os.path.join(os.path.dirname(src_rows), "lonely.jsonl")
+open(only_rep + ".gate.json", "w").write("{}")
+try:
+    ct.gate_file(src_rows, only_rep, GATE)
+    refused_rep = False
+except SystemExit:
+    refused_rep = True
+check("4 gate_file refuses when only the report file already exists, and writes no copy",
+      refused_rep and not os.path.exists(only_rep))
+left = os.path.join(os.path.dirname(src_rows), "left.jsonl")
+open(left + ".partial", "w").write("half a file\n")
+try:
+    ct.gate_file(src_rows, left, GATE)
+    refused_tmp = False
+except SystemExit:
+    refused_tmp = True
+check("4 gate_file refuses when a .partial is left over, and leaves it as it was with no copy and no report",
+      refused_tmp and open(left + ".partial").read() == "half a file\n"
+      and not any(os.path.exists(left + x) for x in ("", ".gate.json")))
+late = os.path.join(os.path.dirname(src_rows), "late.jsonl")
+real_link = ct.os.link
+def broken_link(a, b):
+    raise OSError("disk went away")
+ct.os.link = broken_link   # the last step fails after the report is written
+try:
+    ct.gate_file(src_rows, late, GATE)
+    raised_late = False
+except OSError:
+    raised_late = True
+finally:
+    ct.os.link = real_link
+check("4 a failure after the report is written leaves no copy, no report and no partial file",
+      raised_late and not any(os.path.exists(late + x) for x in ("", ".gate.json", ".partial")))
+raced = os.path.join(os.path.dirname(src_rows), "raced.jsonl")
+def raced_link(a, b):   # another writer makes dst between the existence check and the link
+    open(b, "w").write("theirs\n")
+    raise FileExistsError(b)
+ct.os.link = raced_link
+try:
+    ct.gate_file(src_rows, raced, GATE)
+    raised_race = False
+except FileExistsError:
+    raised_race = True
+finally:
+    ct.os.link = real_link
+check("4 a copy another writer made mid-run is never replaced or removed, and this run leaves nothing of its own",
+      raised_race and open(raced).read() == "theirs\n"
+      and not any(os.path.exists(raced + x) for x in (".gate.json", ".partial")))
+tail_src = os.path.join(os.path.dirname(src_rows), "tail.jsonl")
+tail_line = json.dumps(dict(clean, id="tail"))
+with open(tail_src, "w", newline="") as f:   # the last row has no newline: it is copied exactly as read
+    f.write(json.dumps(dict(leak, id="leak")) + "\n" + tail_line)
+ct.gate_file(tail_src, tail_src + ".gated", GATE)
+check("4 a last row without a newline is copied exactly as read",
+      open(tail_src + ".gated", "rb").read() == tail_line.encode())
+check("4 gate_file refuses to write over its source or over an existing file, and leaves both as they were",
+      refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes
+      and open(out_rows, "rb").read() == out_bytes and open(out_rows + ".gate.json", "rb").read() == rep_bytes)
 
 print(f"{'PASS' if not FAILS and RAN else 'FAIL'}: {len(RAN)} checks, {len(FAILS)} failed")
 sys.exit(1 if FAILS or not RAN else 0)
