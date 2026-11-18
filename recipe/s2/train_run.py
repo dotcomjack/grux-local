@@ -55,13 +55,15 @@ class SetDamaged(RuntimeError):
     stops, its skips are not written, and a rerun scores those jobs again."""
 
 
-def preflight_sets():
+def preflight_sets(names=None):
     """Build every scoring set's cases and the first case's request on this machine, before any box exists.
     Returns the problems (empty when every set can be scored). Measured 2026-11-17: v1 needs Grux 3.1.0's source
     (GRUX_SRC) and the launcher had none, so a 2B scoring box ran 17 minutes of setup before v1's first request
-    failed; this check fails in seconds for $0."""
+    failed; this check fails in seconds for $0. `names` checks only those sets (gguf_run scores no held-out v4)."""
     bad = []
     for name, (cases_fn, request, _score) in SETS.items():
+        if names is not None and name not in names:
+            continue
         try:
             cases = cases_fn()
             if not cases:

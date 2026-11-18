@@ -182,7 +182,8 @@ A = argparse.Namespace(kill_jobs=2, kill_points=15.0, parallel=2, passes=1)
 t.SETS = {"holdout_v3": (lambda: V3, None, None),
           "holdout": (lambda: V1, t.holdout.request_holdout, t.holdout.score_holdout),
           "holdout_v2": (lambda: V2, t.holdout_v2.request_v2, t.holdout_v2.score_v2),
-          "s1": (lambda: S1, t.suite.request, t.suite.score)}
+          "s1": (lambda: S1, t.suite.request, t.suite.score),
+          "holdout_v4": (lambda: V3, None, None)}   # train_run scores v4 too; a GGUF tier is compared on GGUF_SETS only
 good = tier_with_mlx()
 st = g.evaluate(Perfect(), MODEL, good, "grux-m", A)
 check("a good limited pass goes on to full scoring", st == "scored", str(g.status(good)))
@@ -191,6 +192,9 @@ check("... and evaluate leaves the final 'scored' to run_tier (the serial chat p
 check("... which writes every set's rows under the GGUF's own name",
       all(len(g.rows(t.eval_path(good, MODEL, n, 1))) == len(cs) for n, cs in (("holdout_v3", V3), ("holdout", V1),
                                                                                  ("holdout_v2", V2), ("s1", S1))))
+check("... and no held-out v4 rows, in a file or in the manifest's scores (gguf_run.GGUF_SETS)",
+      not os.path.exists(t.eval_path(good, MODEL, "holdout_v4", 1))
+      and not any(k.startswith("holdout_v4") for k in json.load(open(os.path.join(good, "gguf-manifest.json")))["scores"]))
 check("... the limited rows in their own file", len(g.rows(t.eval_path(good, MODEL + "-limit", "holdout_v3", 1))) == len(LIM))
 man = json.load(open(os.path.join(good, "gguf-manifest.json")))
 check("... and the manifest records the kill rule, the scores and a chat p95 with its parallel",

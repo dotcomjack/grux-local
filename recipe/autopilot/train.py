@@ -60,13 +60,14 @@ def words(text):
 
 
 def contamination(data_path):
-    """s2/contamination.py's rule, applied to the three held-out sets and to the rendered training rows: a row is
+    """s2/contamination.py's rule, applied to the four held-out sets and to the rendered training rows: a row is
     contaminated when its ask equals a held-out case's text, or its user turn shares any 8-word run with one.
     Returns (contaminated ids, ids that only CONTAIN a short held-out ask inside a longer one: reported, not blocked)."""
     import contamination as c8
     import holdout
     import holdout_v2
     import holdout_v3
+    import holdout_v4
     runs, wholes = set(), set()
     for case in holdout.cases() + holdout_v2.cases():
         ws = c8.texts(case)
@@ -74,6 +75,10 @@ def contamination(data_path):
         wholes.add(" ".join(ws))
     for case in holdout_v3.cases():   # nested jobs: every text a model reads, one at a time, and the ask whole
         for t in holdout_v3.case_texts(case):
+            runs |= c8.grams(words(t))
+        wholes.add(" ".join(words(case["user"])))
+    for case in holdout_v4.cases():   # the same, Grux's own output lines set aside (contamination.v4_texts)
+        for t in c8.v4_texts(case):
             runs |= c8.grams(words(t))
         wholes.add(" ".join(words(case["user"])))
     hits, near = [], []

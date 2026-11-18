@@ -281,7 +281,7 @@ def preflight(a, fetch=default_fetch):
                     f"{tier}: library {lib} is {config.get('file_type')}; this run quantizes to {a.quant[tier]}")
         except Exception as e:
             bad.append(f"{tier}: library Modelfile for {lib}: {type(e).__name__}: {str(e)[:160]}")
-    bad += [f"sets: {x}" for x in train_run.preflight_sets()]
+    bad += [f"sets: {x}" for x in train_run.preflight_sets(GGUF_SETS)]
     if not a.meter or not os.path.exists(a.meter):
         bad.append(f"no spend meter CLI at {a.meter!r} (--meter)")
     charter = os.path.expanduser(os.environ.get("GRUX_SWING_CHARTER", ""))
