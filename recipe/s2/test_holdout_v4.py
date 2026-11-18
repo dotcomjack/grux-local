@@ -43,7 +43,7 @@ import holdout_v4 as v4  # noqa: E402
 import train_bank  # noqa: E402
 import train_bank_v3 as tb  # noqa: E402
 
-EXPECTED_SHA = "853896691d911252392df1bbe7e34aa281f1b1eb8cfa64708fac65dab89a5010"
+EXPECTED_SHA = "dd985446e4439bcbc77ef48fbf481c2dc89e6a237c290b4b567370389fade84f"
 FAILS, RAN = [], []
 
 
@@ -361,12 +361,25 @@ for mode in ("swap", "open", "drop"):
     probes = sorted(set().union(*[perturbed(a, mode) for a in V3ASKS]))
     scored = [p for p in probes if ct._fixed(ct.frame(p)) >= ct.FRAME_FIXED]
     got = ct.v4_frames(scored, REF)
-    print(f"    {mode}: {len(probes)} probes over every closed-class position of {len(V3ASKS)} held-out v3 asks, "
+    where = "every closed-class position REP covers" if mode == "swap" else "every closed-class position"
+    print(f"    {mode}: {len(probes)} probes over {where} of {len(V3ASKS)} held-out v3 asks, "
           f"{len(probes) - len(scored)} under {ct.FRAME_FIXED} fixed words (not frame-scored)")
     check(f"6 the frame gate catches every held-out v3 ask with one closed-class word "
           f"{ {'swap': 'swapped', 'open': 'made an open-class word', 'drop': 'dropped'}[mode] } "
           f"({len(got)} of {len(scored)})", len(got) == len(scored) and len(scored) > 300,
           str(sorted(set(scored) - set(got))[:3]))
+# a word between each two lowercase words (not between capitalized ones: their run is one name slot, and splitting it
+# would change the fixed words themselves)
+spread = sorted({re.sub(r"(?<=[a-z'.,?]) (?=[a-z])", " zebra ", a) for a in V3ASKS})
+got = ct.v4_frames(spread, REF)
+check(f"6 ... and every one with an open-class word put between each two words, so no two fixed words stay side by "
+      f"side ({len(got)} of {len(spread)})", len(got) == len(spread), str(sorted(set(spread) - set(got))[:3]))
+solo = {"synthetic": ([], ["Do you have it for me?", "Could you send that over to them for us now?"])}
+alt = ["Do zebra you zebra have zebra it zebra for zebra me?",          # no frame 3-gram in common with its reference
+       "Could zebra you zebra send zebra that zebra over zebra to zebra them zebra for zebra us zebra now?"]
+got = ct.v4_frames(alt, solo)
+check("6 ... and a line whose fixed words all sit apart, sharing no frame 3-gram with a reference made only of fixed "
+      "words, is found by its fixed words alone", sorted(got) == sorted(alt), str(got))
 curly = sorted({a.replace("'", chr(0x2019)) for a in V3ASKS if "'" in a})
 got = ct.v4_frames(curly, REF)
 check(f"6 ... and every one written with a curly apostrophe ({len(got)} of {len(curly)})",
