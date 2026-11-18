@@ -354,6 +354,143 @@ def v4_clones(lines, ref=None):
     return out
 
 
+# The frame gate. A line whose nouns all change keeps few 4-grams, so near_v3 cannot see it ("Read my document Dance
+# recital and put the dress rehearsal on my calendar" against held-out v3's "Read my document Field trip and put the
+# trip on my calendar" scores 0.06). frame() keeps only the closed-class words of a skeleton (pronouns, prepositions,
+# conjunctions, auxiliaries, question words, common contractions) and its slot placeholders, drops the articles, and
+# masks every other word as X, one X per run; the two lines above both read "X my X N X and X X on my X". A line is a
+# frame echo when its frame is within FRAME_EDITS token edits of a reference line's frame (an X inserted or deleted is
+# free; FRAME_EDITS_LONG when both frames have FRAME_LONG tokens or more), or its frame 3-gram Jaccard is V4_FRAME_MAX or more; lines with fewer than FRAME_FIXED
+# fixed words are not frame-scored. Edits are counted on the fixed words alone (_fixed_seq), and a reference is found
+# by a piece of them (_chunks), so masked words between them never hide it. Measured on the Mini over every
+# closed-class position of held-out v3's asks: every probe with one word swapped, made an open-class word or dropped
+# that keeps FRAME_FIXED fixed words is caught (test_holdout_v4 asserts it). One-off measurements while the gate was
+# built (not asserted): Jaccard alone caught 107 of 164 one-word swaps, and the edit rule flagged 11 v4 lines of 592,
+# all since rewritten.
+FRAME_WORDS = frozenset("""my your our their his her its this that these those it i me we us you he she they them
+to of in on at for from with by about into onto over under after before until up down out off as than then and or
+but if so not no is are was were be been am do does did have has had can could will would should may might must
+what when where which who whom whose why how there here all any some every each one two please just also without
+during through between next last now again more other another only still yet too very both either neither nor once
+while because since across along around near per via against among below above behind beside within don't can't
+won't isn't aren't didn't doesn't haven't hasn't wouldn't couldn't shouldn't what's it's that's there's i'm i'll i'd
+i've you're we're they're let's he's she's here's where's who's how's""".split())
+FRAME_FIXED = 5
+FRAME_EDITS, FRAME_EDITS_LONG, FRAME_LONG = 1, 2, 10
+V4_FRAME_MAX = 0.5
+_PLACEHOLDERS = frozenset({"C", "Q", "U", "T", "D", "N", "#"})
+
+
+def frame(text):
+    """The skeleton of text (curly apostrophes made straight) with the articles dropped and every word that is not a
+    closed-class word or a slot placeholder masked as X, a run of X kept as one."""
+    out = []
+    for w in skeleton(text.replace(chr(0x2019), "'").replace(chr(0x2018), "'")):
+        if w in ("a", "an", "the"):
+            continue
+        w = w if (w in _PLACEHOLDERS or w in FRAME_WORDS) else "X"
+        if not (out and w == "X" == out[-1]):
+            out.append(w)
+    return out
+
+
+def _fixed(f):
+    return sum(w != "X" for w in f)
+
+
+def _edits(a, b, cap):
+    """Token edit distance between a and b, or cap + 1 once it is past cap."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, y in enumerate(b, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y))
+        if min(cur) > cap:
+            return cap + 1
+        prev = cur
+    return prev[-1]
+
+
+def _fixed_seq(f):
+    """A frame's fixed words in order, the X left out: two frames' edit distance with an X inserted or deleted for
+    free (a dropped word between two masked words merges two X into one, one change and not two) is the plain edit
+    distance of these sequences."""
+    return tuple(w for w in f if w != "X")
+
+
+def _chunks(seq, k):
+    """seq cut into k contiguous pieces as even as can be. Two sequences within k - 1 edits share one piece intact
+    (an edit touches one piece at most), so a reference is a candidate when it holds one of them."""
+    n, out, at = len(seq), [], 0
+    for i in range(k):
+        size = n // k + (1 if i < n % k else 0)
+        out.append(seq[at:at + size])
+        at += size
+    return out
+
+
+def v4_frame_ref(ref=None):
+    """[(frame, set name, the line)] for every line, and every line of a multi-line text, in v4_reference whose frame
+    has FRAME_FIXED fixed words, one entry per distinct frame."""
+    ref = v4_reference() if ref is None else ref
+    out, seen = [], set()
+    for name, (_, lines) in ref.items():
+        for t in lines:
+            for x in [t] + [y.strip() for y in t.split("\n") if y.strip()]:
+                f = tuple(frame(x))
+                if _fixed(f) >= FRAME_FIXED and f not in seen:
+                    seen.add(f)
+                    out.append((f, name, x))
+    return out
+
+
+def v4_frames(lines, ref=None):
+    """{line: (why, set name, the reference line)} for each line whose frame is within FRAME_EDITS edits of a
+    reference frame on their fixed words (FRAME_EDITS_LONG when both frames have FRAME_LONG tokens), or whose frame
+    3-gram Jaccard is V4_FRAME_MAX or more. Lines under FRAME_FIXED fixed words are not scored."""
+    fr = v4_frame_ref(ref)
+    seqs = [_fixed_seq(f) for f, _, _ in fr]
+    by1, by2, by3, g3 = {}, {}, {}, []
+    for i, (f, _, _) in enumerate(fr):
+        sq = seqs[i]
+        for w in set(sq):
+            by1.setdefault(w, []).append(i)
+        for x in {sq[k:k + 2] for k in range(len(sq) - 1)}:
+            by2.setdefault(x, []).append(i)
+        g = grams3(list(f))
+        g3.append(g)
+        for x in g:
+            by3.setdefault(x, []).append(i)
+    out = {}
+    for line in lines:
+        f = frame(line)
+        if _fixed(f) < FRAME_FIXED:
+            continue
+        sq, mine = _fixed_seq(f), grams3(f)
+        top = FRAME_EDITS_LONG if len(f) >= FRAME_LONG else FRAME_EDITS
+        cands = set()
+        for piece in _chunks(sq, top + 1):   # every reference within `top` edits holds one piece intact
+            hits = by2.get(piece[:2], ()) if len(piece) >= 2 else by1.get(piece[0], ()) if piece else range(len(fr))
+            cands.update(i for i in hits if any(seqs[i][k:k + len(piece)] == piece
+                                                for k in range(len(seqs[i]) - len(piece) + 1)))
+        for x in mine:   # every reference with a frame 3-gram Jaccard above 0
+            cands.update(by3.get(x, ()))
+        best = None
+        for i in sorted(cands):
+            cap = FRAME_EDITS_LONG if min(len(f), len(fr[i][0])) >= FRAME_LONG else FRAME_EDITS
+            d = _edits(sq, seqs[i], cap)
+            j = len(mine & g3[i]) / len(mine | g3[i]) if mine | g3[i] else 0.0
+            if d <= cap or j >= V4_FRAME_MAX:
+                why = f"{d} edit{'s' if d != 1 else ''}" if d <= cap else f"3-gram Jaccard {j:.2f}"
+                if best is None or (d, -j) < best[0]:
+                    best = ((d, -j), why, i)
+        if best:
+            out[line] = (best[1], fr[best[2]][1], fr[best[2]][2])
+    return out
+
+
 def main():
     held = held_out()
     whole = {" ".join(w) for w in held}
