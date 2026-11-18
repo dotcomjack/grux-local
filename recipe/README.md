@@ -102,7 +102,7 @@ proves it shares no whole text, no 8-word run and no template clone with held-ou
 the S2 training bank, every line of a pasted message scored on its own; Grux's own output lines are set aside as
 product output, each one checked against the Grux source, and tool results are held to the 8-word and whole-text rule
 (their machine format would read as a clone by construction). The shell family keeps v3's own short sequences where
-the family defines them (snapshots then a reply, a gated run then a reply, a confirmed run). Its case sha (`04c248fe...`) is frozen in the module and pinned again in `s2/test_holdout_v4.py`, before the
+the family defines them (snapshots then a reply, a gated run then a reply, a confirmed run). Its case sha (`48a97eb9...`) is frozen in the module and pinned again in `s2/test_holdout_v4.py`, before the
 next round's training data is generated. `eval_local.py`, `eval_run.py` and `s2/train_run.py` score it as
 `holdout_v4`. No model has been scored on it yet.
 
