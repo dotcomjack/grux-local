@@ -208,15 +208,14 @@ check(f"4 gen_data's S2 export drops a row the gate flags ({bad_c['id']}) and ke
       json.dumps(summ)[:200])
 src_rows = os.path.join(tempfile.mkdtemp(), "train.jsonl")
 leak = row("Can you read this file for me?", "notes\n" + v4_run)
-with open(src_rows, "w") as f:
-    for r_ in (dict(clean, id="clean"), dict(leak, id="leak")):
-        f.write(json.dumps(r_) + "\n")
+with open(src_rows, "w", newline="") as f:   # a CRLF row, a blank line and an LF row: kept rows stay byte for byte
+    f.write(json.dumps(dict(clean, id="clean")) + "\r\n" + "\n" + json.dumps(dict(leak, id="leak")) + "\n")
 before_bytes = open(src_rows, "rb").read()
 out_rows = os.path.join(os.path.dirname(src_rows), "train.gated.jsonl")
 rep = ct.gate_file(src_rows, out_rows, GATE)
 kept_ids = [json.loads(line)["id"] for line in open(out_rows)]
 check("4 gate_file writes a copy without the touching row, counts it, and leaves its source as it was",
-      kept_ids == ["clean"] and rep["rows"] == 2 and rep["dropped"] == 1 and list(rep["held_out_touched"]) and
+      kept_ids == ["clean"] and open(out_rows, "rb").read() == json.dumps(dict(clean, id="clean")).encode() + b"\r\n" and rep["rows"] == 2 and rep["dropped"] == 1 and list(rep["held_out_touched"]) and
       open(src_rows, "rb").read() == before_bytes and os.path.exists(out_rows + ".gate.json"), json.dumps(rep)[:200])
 refused = []
 for dst in (src_rows, out_rows):
@@ -224,8 +223,9 @@ for dst in (src_rows, out_rows):
         ct.gate_file(src_rows, dst, GATE)
     except SystemExit:
         refused.append(dst)
-check("4 gate_file refuses to write over its source or over an existing file",
-      refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes)
+check("4 gate_file refuses to write over its source or over an existing file, and leaves both as they were",
+      refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes and kept_ids == [
+          json.loads(line)["id"] for line in open(out_rows)])
 
 print(f"{'PASS' if not FAILS and RAN else 'FAIL'}: {len(RAN)} checks, {len(FAILS)} failed")
 sys.exit(1 if FAILS or not RAN else 0)

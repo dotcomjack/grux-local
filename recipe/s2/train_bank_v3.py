@@ -2012,7 +2012,8 @@ def kept(cs=None):
 def gated(cs=None):
     """kept(), less every case the next round's training gate flags (contamination.TrainGate: held-out v4's texts, a
     v4 template clone, a v3 or v4 sentence frame). kept() and its sha stay as they were frozen; a teacher pass reads
-    this, so no teacher time goes on a job the export would drop."""
+    this, so no teacher time goes on a job whose own text the export would drop (export_v3 still checks the teacher's
+    answer and drops a job for it)."""
     import contamination
     gate = contamination.TrainGate()
     return [c for c in kept(cs) if not gate.why(*contamination.case_items(c))]
