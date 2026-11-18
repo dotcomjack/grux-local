@@ -690,30 +690,42 @@ def row_items(row):
 
 def gate_file(src, dst, gate=None):
     """Copy the rendered training rows of src (one JSON row a line, box_train's shape) to dst, without every row
-    TrainGate flags, and write dst + ".gate.json" with the counts and the held-out jobs touched. src is only read; dst
-    must be a new file. Returns the report."""
-    if os.path.abspath(src) == os.path.abspath(dst) or os.path.exists(dst) or os.path.exists(dst + ".gate.json"):
-        raise SystemExit(f"refused: {dst} is the source or already exists; the gate writes a new file only")
+    TrainGate flags, and write dst + ".gate.json" with the counts and the held-out jobs touched. src is only read; dst,
+    its report and dst + ".partial" must not exist. The copy is written as dst + ".partial" and renamed to dst only
+    once it is whole, so a failure part way (a malformed row) leaves no file behind that could be trained on. Kept rows
+    are copied as read (a last row without a newline gets one). Returns the report."""
+    tmp, rep = dst + ".partial", dst + ".gate.json"
+    if os.path.abspath(src) == os.path.abspath(dst) or any(os.path.exists(p) for p in (dst, rep, tmp)):
+        raise SystemExit(f"refused: {dst} is the source, or it, its report or its .partial already exists; the gate "
+                         "writes new files only")
     gate = gate or TrainGate()
     report = {"source": os.path.abspath(src), "rows": 0, "kept": 0, "dropped": 0, "held_out_touched": {},
               "dropped_by_kind": {}}
-    with open(src, encoding="utf-8", newline="") as f, open(dst, "x", encoding="utf-8", newline="") as out:
-        for line in f:
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            report["rows"] += 1
-            hit = gate.why(*row_items(row))
-            if hit:
-                kind = hit[0].split(":")[0].split(" (")[0]
-                report["dropped"] += 1
-                report["held_out_touched"][hit[1]] = report["held_out_touched"].get(hit[1], 0) + 1
-                report["dropped_by_kind"][kind] = report["dropped_by_kind"].get(kind, 0) + 1
-                continue
-            out.write(line if line.endswith("\n") else line + "\n")
-            report["kept"] += 1
-    report["held_out_touched"] = dict(sorted(report["held_out_touched"].items()))
-    json.dump(report, open(dst + ".gate.json", "x"), indent=1)
+    try:
+        with open(src, encoding="utf-8", newline="") as f, open(tmp, "x", encoding="utf-8", newline="") as out:
+            for line in f:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                report["rows"] += 1
+                hit = gate.why(*row_items(row))
+                if hit:
+                    kind = hit[0].split(":")[0].split(" (")[0]
+                    report["dropped"] += 1
+                    report["held_out_touched"][hit[1]] = report["held_out_touched"].get(hit[1], 0) + 1
+                    report["dropped_by_kind"][kind] = report["dropped_by_kind"].get(kind, 0) + 1
+                    continue
+                out.write(line if line.endswith("\n") else line + "\n")
+                report["kept"] += 1
+        report["held_out_touched"] = dict(sorted(report["held_out_touched"].items()))
+        with open(rep, "x", encoding="utf-8") as g:
+            json.dump(report, g, indent=1)
+        os.rename(tmp, dst)
+    except BaseException:
+        for p in (tmp,):
+            if os.path.exists(p):
+                os.unlink(p)
+        raise
     return report
 
 

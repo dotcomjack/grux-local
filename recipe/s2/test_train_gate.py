@@ -215,17 +215,39 @@ out_rows = os.path.join(os.path.dirname(src_rows), "train.gated.jsonl")
 rep = ct.gate_file(src_rows, out_rows, GATE)
 kept_ids = [json.loads(line)["id"] for line in open(out_rows)]
 check("4 gate_file writes a copy without the touching row, counts it, and leaves its source as it was",
-      kept_ids == ["clean"] and open(out_rows, "rb").read() == json.dumps(dict(clean, id="clean")).encode() + b"\r\n" and rep["rows"] == 2 and rep["dropped"] == 1 and list(rep["held_out_touched"]) and
-      open(src_rows, "rb").read() == before_bytes and os.path.exists(out_rows + ".gate.json"), json.dumps(rep)[:200])
+      kept_ids == ["clean"] and open(out_rows, "rb").read() == json.dumps(dict(clean, id="clean")).encode() + b"\r\n"
+      and rep["rows"] == 2 and rep["dropped"] == 1 and list(rep["held_out_touched"])
+      and open(src_rows, "rb").read() == before_bytes and os.path.exists(out_rows + ".gate.json"), json.dumps(rep)[:200])
+out_bytes, rep_bytes = open(out_rows, "rb").read(), open(out_rows + ".gate.json", "rb").read()   # before the refusals
 refused = []
 for dst in (src_rows, out_rows):
     try:
         ct.gate_file(src_rows, dst, GATE)
     except SystemExit:
         refused.append(dst)
+bad_src = os.path.join(os.path.dirname(src_rows), "broken.jsonl")
+with open(bad_src, "w") as f:
+    f.write(json.dumps(dict(clean, id="clean")) + "\n" + "{not json\n")
+bad_dst = os.path.join(os.path.dirname(src_rows), "broken.gated.jsonl")
+try:
+    ct.gate_file(bad_src, bad_dst, GATE)
+    raised = False
+except ValueError:
+    raised = True
+check("4 a malformed row stops gate_file with no copy, no report and no partial file left behind",
+      raised and not any(os.path.exists(bad_dst + x) for x in ("", ".gate.json", ".partial")))
+only_rep = os.path.join(os.path.dirname(src_rows), "lonely.jsonl")
+open(only_rep + ".gate.json", "w").write("{}")
+try:
+    ct.gate_file(src_rows, only_rep, GATE)
+    refused_rep = False
+except SystemExit:
+    refused_rep = True
+check("4 gate_file refuses when only the report file already exists, and writes no copy",
+      refused_rep and not os.path.exists(only_rep))
 check("4 gate_file refuses to write over its source or over an existing file, and leaves both as they were",
-      refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes and kept_ids == [
-          json.loads(line)["id"] for line in open(out_rows)])
+      refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes
+      and open(out_rows, "rb").read() == out_bytes and open(out_rows + ".gate.json", "rb").read() == rep_bytes)
 
 print(f"{'PASS' if not FAILS and RAN else 'FAIL'}: {len(RAN)} checks, {len(FAILS)} failed")
 sys.exit(1 if FAILS or not RAN else 0)
