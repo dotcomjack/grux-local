@@ -43,7 +43,7 @@ import holdout_v4 as v4  # noqa: E402
 import train_bank  # noqa: E402
 import train_bank_v3 as tb  # noqa: E402
 
-EXPECTED_SHA = "48a97eb9ed1ed8ee6d552cf91e854711c0799b7a8c7e148206b321e27fc443bf"
+EXPECTED_SHA = "240ede5686e6f12c4bbe107ee91247652b321e4c1f0f92ee3e51eab70bb6ebe6"
 FAILS, RAN = [], []
 
 
@@ -302,8 +302,6 @@ def reslot(text):
 
 swapped = ["How many times does the word receipt appear in this?", "Translate to Spanish:",
            "Check my notes for the electrician's visit and add it to my tasks."]   # v3's frames, one noun swapped
-# Not caught, by design (contamination.py says so): a frame whose nouns all change ("Read my document Garden plan and
-# put the planting day on my calendar" against v3's field trip ask) keeps few 4-grams. v4 avoids those by rewrite.
 planted = copy.deepcopy(next(c for c in FAM["injection"] if "\n" in c["user"]))
 planted["user"] = swapped[0] + "\n\n" + planted["user"].split("\n\n", 1)[1]
 got = ct.v4_clones(v4.own_lines([planted]), REF)
@@ -320,6 +318,36 @@ tb_asks = sorted({reslot(c["user"]) for c in tb.cases()[::40] if len(ct.skeleton
 caught = ct.v4_clones(tb_asks, REF)
 check(f"6 ... and every sampled v3 bank ask treated the same way ({len(caught)} of {len(tb_asks)})",
       len(caught) == len(tb_asks))
+
+
+frames = ct.v4_frames(LINES, REF)
+check(f"6 0 of {len(LINES)} v4 texts and lines has the frame of a line in v1, v2, v3 or either bank (every noun "
+      f"masked, gate {ct.V4_FRAME_MAX})", not frames, str(list(frames.items())[:3]))
+EARLY = ["Read my document Dance recital and put the dress rehearsal on my calendar.",   # in the first v4 commit
+         "Read the email from the HOA and add the annual get together to my calendar.",
+         "Check my notes for the passport renewal and add the appointment to my calendar.",
+         "How do I get my sneakers to stop squeaking on the gym floor?",
+         "Read my document Garden plan and put the planting day on my calendar."]   # every noun of a v3 ask changed
+got = ct.v4_frames(EARLY, REF)
+check(f"6 the frame gate catches {len(EARLY) - 1} frame echoes from the first v4 commit and a v3 ask with every noun "
+      "changed, all of which the 4-gram and 3-gram scores miss",
+      len(got) == len(EARLY) and not ct.v4_clones(EARLY, REF), f"caught {sorted(got)}, clones {ct.v4_clones(EARLY, REF)}")
+
+
+def every_noun(text):
+    """text with every word that is not a frame word, an article or a slot changed: a v3 ask on new subjects."""
+    keep = ct._DAYS_RE.fullmatch
+    t = re.sub(r"(?<=[A-Za-z0-9,;)'’] )[A-Z][a-z]+", lambda m: m.group(0) if keep(m.group(0)) else "Quorwick", text)
+    t = re.sub(r"\d", "7", t)
+    return re.sub(r"\b[a-z][a-z']+\b", lambda m: m.group(0) if m.group(0) in ct.FRAME_WORDS
+                  or m.group(0) in ("a", "an", "the") or ct._DAYS_RE.fullmatch(m.group(0)) else "quorble", t)
+
+
+framed = sorted({every_noun(c["user"]) for c in V3
+                 if sum(w != "X" for w in ct.frame(c["user"])) >= ct.FRAME_FIXED})
+got = ct.v4_frames(framed, REF)
+check(f"6 the frame gate catches every held-out v3 ask with every noun, name, number and day changed "
+      f"({len(got)} of {len(framed)})", len(got) == len(framed), str(sorted(set(framed) - set(got))[:3]))
 
 
 def seqs(cs):

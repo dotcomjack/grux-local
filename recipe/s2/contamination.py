@@ -354,6 +354,75 @@ def v4_clones(lines, ref=None):
     return out
 
 
+# The frame gate. A line whose nouns all change keeps few 4-grams, so near_v3 cannot see it ("Read my document Dance
+# recital and put the dress rehearsal on my calendar" against held-out v3's "Read my document Field trip and put the
+# trip on my calendar" scores 0.06). frame() keeps only the closed-class words of a skeleton (pronouns, prepositions,
+# conjunctions, auxiliaries, question words) and its slot placeholders, drops the articles, and masks every other word
+# as X, one X per run; the two lines above both read "X my X N X and X X on my X". v4_frames scores a line by its
+# highest frame 3-gram Jaccard against any line of v4_reference, for lines with at least FRAME_FIXED fixed words.
+# V4_FRAME_MAX 0.5, measured on the Mini: the first v4 commit (d76b4b0) had 12 lines at or above it, among them every
+# frame echo its first review named; the set merged at 48a97eb9 had 6, all rewritten here.
+FRAME_WORDS = frozenset("""my your our their his her its this that these those it i me we us you he she they them
+to of in on at for from with by about into onto over under after before until up down out off as than then and or
+but if so not no is are was were be been am do does did have has had can could will would should may might must
+what when where which who whom whose why how there here all any some every each one two please just also""".split())
+FRAME_FIXED = 5
+V4_FRAME_MAX = 0.5
+_PLACEHOLDERS = frozenset({"C", "Q", "U", "T", "D", "N", "#"})
+
+
+def frame(text):
+    """The skeleton of text with the articles dropped and every word that is not a closed-class word or a slot
+    placeholder masked as X, a run of X kept as one."""
+    out = []
+    for w in skeleton(text):
+        if w in ("a", "an", "the"):
+            continue
+        w = w if (w in _PLACEHOLDERS or w in FRAME_WORDS) else "X"
+        if not (out and w == "X" == out[-1]):
+            out.append(w)
+    return out
+
+
+def v4_frame_ref(ref=None):
+    """[(set name, frame 3-grams, the line)] for every line, and every line of a multi-line text, in v4_reference
+    whose frame has FRAME_FIXED fixed words, one entry per distinct frame."""
+    ref = v4_reference() if ref is None else ref
+    out, seen = [], set()
+    for name, (_, lines) in ref.items():
+        for t in lines:
+            for x in [t] + [y.strip() for y in t.split("\n") if y.strip()]:
+                f = frame(x)
+                k = " ".join(f)
+                if sum(w != "X" for w in f) >= FRAME_FIXED and k not in seen:
+                    seen.add(k)
+                    out.append((name, grams3(f), x))
+    return out
+
+
+def v4_frames(lines, ref=None):
+    """{line: (score, set name, the reference line)} for each line whose frame 3-gram Jaccard against a reference
+    line's frame is at or above V4_FRAME_MAX (lines under FRAME_FIXED fixed words are not scored)."""
+    fr = v4_frame_ref(ref)
+    index = {}
+    for i, (_, g, _) in enumerate(fr):
+        for x in g:
+            index.setdefault(x, []).append(i)
+    out = {}
+    for line in lines:
+        f = frame(line)
+        if sum(w != "X" for w in f) < FRAME_FIXED:
+            continue
+        g, hits = grams3(f), {}
+        for x in g:
+            for i in index.get(x, ()):
+                hits[i] = hits.get(i, 0) + 1
+        best = max(((n / len(g | fr[i][1]), i) for i, n in hits.items()), default=(0.0, None))
+        if best[0] >= V4_FRAME_MAX:
+            out[line] = (round(best[0], 3), fr[best[1]][0], fr[best[1]][2])
+    return out
+
+
 def main():
     held = held_out()
     whole = {" ".join(w) for w in held}
