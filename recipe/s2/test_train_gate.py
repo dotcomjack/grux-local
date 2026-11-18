@@ -245,6 +245,37 @@ except SystemExit:
     refused_rep = True
 check("4 gate_file refuses when only the report file already exists, and writes no copy",
       refused_rep and not os.path.exists(only_rep))
+left = os.path.join(os.path.dirname(src_rows), "left.jsonl")
+open(left + ".partial", "w").write("half a file\n")
+try:
+    ct.gate_file(src_rows, left, GATE)
+    refused_tmp = False
+except SystemExit:
+    refused_tmp = True
+check("4 gate_file refuses when a .partial is left over, and leaves it as it was with no copy and no report",
+      refused_tmp and open(left + ".partial").read() == "half a file\n"
+      and not any(os.path.exists(left + x) for x in ("", ".gate.json")))
+late = os.path.join(os.path.dirname(src_rows), "late.jsonl")
+real_link = ct.os.link
+def broken_link(a, b):
+    raise OSError("disk went away")
+ct.os.link = broken_link   # the last step fails after the report is written
+try:
+    ct.gate_file(src_rows, late, GATE)
+    raised_late = False
+except OSError:
+    raised_late = True
+finally:
+    ct.os.link = real_link
+check("4 a failure after the report is written leaves no copy, no report and no partial file",
+      raised_late and not any(os.path.exists(late + x) for x in ("", ".gate.json", ".partial")))
+tail_src = os.path.join(os.path.dirname(src_rows), "tail.jsonl")
+tail_line = json.dumps(dict(clean, id="tail"))
+with open(tail_src, "w", newline="") as f:   # the last row has no newline: it is copied exactly as read
+    f.write(json.dumps(dict(leak, id="leak")) + "\n" + tail_line)
+ct.gate_file(tail_src, tail_src + ".gated", GATE)
+check("4 a last row without a newline is copied exactly as read",
+      open(tail_src + ".gated", "rb").read() == tail_line.encode())
 check("4 gate_file refuses to write over its source or over an existing file, and leaves both as they were",
       refused == [src_rows, out_rows] and open(src_rows, "rb").read() == before_bytes
       and open(out_rows, "rb").read() == out_bytes and open(out_rows + ".gate.json", "rb").read() == rep_bytes)
