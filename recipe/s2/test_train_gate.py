@@ -269,6 +269,21 @@ finally:
     ct.os.link = real_link
 check("4 a failure after the report is written leaves no copy, no report and no partial file",
       raised_late and not any(os.path.exists(late + x) for x in ("", ".gate.json", ".partial")))
+raced = os.path.join(os.path.dirname(src_rows), "raced.jsonl")
+def raced_link(a, b):   # another writer makes dst between the existence check and the link
+    open(b, "w").write("theirs\n")
+    raise FileExistsError(b)
+ct.os.link = raced_link
+try:
+    ct.gate_file(src_rows, raced, GATE)
+    raised_race = False
+except FileExistsError:
+    raised_race = True
+finally:
+    ct.os.link = real_link
+check("4 a copy another writer made mid-run is never replaced or removed, and this run leaves nothing of its own",
+      raised_race and open(raced).read() == "theirs\n"
+      and not any(os.path.exists(raced + x) for x in (".gate.json", ".partial")))
 tail_src = os.path.join(os.path.dirname(src_rows), "tail.jsonl")
 tail_line = json.dumps(dict(clean, id="tail"))
 with open(tail_src, "w", newline="") as f:   # the last row has no newline: it is copied exactly as read

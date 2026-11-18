@@ -722,6 +722,8 @@ def gate_file(src, dst, gate=None):
                         continue
                     out.write(line)
                     report["kept"] += 1
+                out.flush()
+                os.fsync(out.fileno())   # the copy is on disk before a report vouches for it
         report["held_out_touched"] = dict(sorted(report["held_out_touched"].items()))
         g = open(rep, "x", encoding="utf-8")
         made.append(rep)
@@ -731,9 +733,11 @@ def gate_file(src, dst, gate=None):
         made.append(dst)
         os.unlink(tmp)
     except BaseException:
-        for p in made:
-            if os.path.exists(p):
+        for p in reversed(made):   # dst first: a failed unlink of tmp never strands a whole copy
+            try:
                 os.unlink(p)
+            except FileNotFoundError:
+                pass
         raise
     return report
 
