@@ -9,7 +9,8 @@ cases already scored are skipped. Stops at the card's dollar cap.
   DAYTONA_API_KEY=<your key> \
     python eval_run.py --run results/s1-<stamp> [--models a,b] [--gpu H200,H100] [--cap 40]
 
---set holdout_v3 --models a,b scores held-out v3 (s2/holdout_v3.py) instead, each job step by step.
+--set holdout_v3 --models a,b scores held-out v3 (s2/holdout_v3.py) instead, each job step by step; --set holdout_v4
+scores held-out v4 (s2/holdout_v4.py) the same way, through v3's runner and scorer.
 """
 import argparse
 import urllib.error
@@ -382,8 +383,9 @@ def main():
     ap.add_argument("--candidates", action="store_true", help="run candidates.json instead of the Cookbook catalog")
     ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
     ap.add_argument("--meter-lane", default="grux")
-    ap.add_argument("--set", choices=["s1", "holdout_v3", "train_v3"], default="s1",
-                    help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; train_v3: the v3 training "
+    ap.add_argument("--set", choices=["s1", "holdout_v3", "holdout_v4", "train_v3"], default="s1",
+                    help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; holdout_v4: held-out v4 "
+                         "(s2/holdout_v4.py), the same way; train_v3: the v3 training "
                          "bank (s2/train_bank_v3.py) answered by a teacher, raw answers kept; both need --models")
     ap.add_argument("--seed", type=int, default=None, help="request seed; with --retry-failed pass k uses seed + k - 1")
     ap.add_argument("--hint-from-pass", type=int, default=0,
@@ -411,15 +413,18 @@ def main():
     if a.num_batch and a.set != "train_v3":
         raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
     NUM_BATCH = a.num_batch
-    if a.set in ("holdout_v3", "train_v3"):
+    if a.set in ("holdout_v3", "holdout_v4", "train_v3"):
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v3
-        V3 = holdout_v3
+        V3 = holdout_v3   # the runner and scorer for every v3-shaped set
     if a.set == "train_v3":
         import train_bank_v3
         import train_prompt
         KEEP_RAW, TRAIN_PROMPT = True, train_prompt
         cases = train_bank_v3.kept()
+    elif a.set == "holdout_v4":
+        import holdout_v4
+        cases = holdout_v4.cases()
     else:
         cases = V3.cases() if V3 else suite.cases()
     base_seed = a.seed if a.seed is not None else suite.SEED

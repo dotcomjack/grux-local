@@ -22,6 +22,7 @@ import holdout_v2  # noqa: E402
 EXPECTED = "7c3f2a9ff3316ecc"      # measured 2026-10-23 on the tree that scored v1, and on public Grux v3.1.0
 EXPECTED_V2 = "da6577c7178a0963"   # measured 2026-10-24 on the tree that scored 4b-v2, and on public Grux v3.1.0
 EXPECTED_V3 = "fd125548504ade65"   # every step's request of held-out v3, measured 2026-11-14 on public Grux v3.3.1
+EXPECTED_V4 = "578a2a6ec3b6376e"           # every step's request of held-out v4 (v3's request builder), on public Grux v3.3.1
 
 cases = holdout.build() if hasattr(holdout, "build") else holdout.cases()
 h = hashlib.sha256()
@@ -46,6 +47,13 @@ if os.environ.get("GRUX_SRC_V3"):
     ok3 = got3 == EXPECTED_V3 and len(cases3) == 321
     print(f"held-out v3: {len(cases3)} jobs at Grux {holdout_v3.GRUX_TAG}, hash {got3}, expected {EXPECTED_V3}: "
           f"{'MATCH' if ok3 else 'DIFFERENT'}")
+    import holdout_v4  # noqa: E402
+    cases4 = holdout_v4.cases()
+    got4 = holdout_v3.fingerprint(cases4)[:16]
+    ok4 = got4 == EXPECTED_V4 and len(cases4) == 323
+    ok3 = ok3 and ok4
+    print(f"held-out v4: {len(cases4)} jobs at Grux {holdout_v3.GRUX_TAG}, hash {got4}, expected {EXPECTED_V4}: "
+          f"{'MATCH' if ok4 else 'DIFFERENT'}")
 else:
-    print('held-out v3: not checked; export GRUX_SRC_V3="$(GRUX_TAG=v3.3.1 sh recipe/get_grux_source.sh)"')
+    print('held-out v3 and v4: not checked; export GRUX_SRC_V3="$(GRUX_TAG=v3.3.1 sh recipe/get_grux_source.sh)"')
 sys.exit(0 if ok and ok2 and ok3 else 1)

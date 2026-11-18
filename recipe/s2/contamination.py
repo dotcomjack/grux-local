@@ -193,16 +193,18 @@ def grams3(ws):
     return {" ".join(ws[i:i + 3]) for i in range(len(ws) - 2)}
 
 
-def near_v3_short(lines, skip_case=None):
+def near_v3_short(lines, skip_case=None, ref=None):
     """{line: (highest containment, held-out case id)} for each line under SHORT skeleton words: the share of the
     line's word-3-grams found in one held-out v3 text. A one-word swap in a six-word line keeps half of its 3-grams
-    and scores 0.5, where its 4-gram Jaccard reads 0.20. Longer lines score (0.0, None)."""
-    ref = []
-    for c in holdout_v3.cases():
-        for t in holdout_v3.case_texts(c):
-            g = grams3(skeleton(t))
-            if g:
-                ref.append((c["id"], g))
+    and scores 0.5, where its 4-gram Jaccard reads 0.20. Longer lines score (0.0, None). `ref` ([(id, 3-grams)])
+    replaces held-out v3's texts (v4_clones passes every set v4 is gated against)."""
+    if ref is None:
+        ref = []
+        for c in holdout_v3.cases():
+            for t in holdout_v3.case_texts(c):
+                g = grams3(skeleton(t))
+                if g:
+                    ref.append((c["id"], g))
     index = {}
     for i, (_, g) in enumerate(ref):
         for x in g:
@@ -222,6 +224,133 @@ def near_v3_short(lines, skip_case=None):
                 if ref[i][0] != own and n / len(g) > best:
                     best, who = n / len(g), ref[i][0]
         out[line] = (best, who)
+    return out
+
+
+# --------------------------------------------------------------------------- held-out v4's gate
+# Held-out v4 (s2/holdout_v4.py) shares nothing with held-out v1, v2 or v3, with the v3 training bank (every case
+# s2/train_bank_v3.py generates, before its exclusion) or with the S2 bank (every case of s2/train_bank.py): no whole
+# text of 3 words or more, no 8-word run, and no line of its own words (an ask, a planted line, an earlier turn) that
+# is a template clone of one of theirs by the two scores above. Grux's own output lines are product output, not
+# held-out content: RUNTIME_LINES plus V4_RUNTIME_LINES are set aside in v4's texts line by line, as v3_texts does for
+# the bank. Nothing here changes what v3_excluded or main() read.
+
+V4_RUNTIME_LINES = RUNTIME_LINES + [
+    (r"pending: your email to \S+ is waiting for your OK in Approvals\. It would go out as [A-Z][a-z]+\. Nothing is "
+     r"sent until you approve it\.", "Email/Imap/EmailTool.swift",
+     ("pending: your email to ", " is waiting for your OK in Approvals. ", "It would go out as ",
+      ". Nothing is sent until you approve it.")),
+]
+_RUNTIME_V4 = re.compile("|".join(f"(?:{p})" for p, _, _ in V4_RUNTIME_LINES))
+# The template-clone thresholds test_train_bank_v3 set from held-out v3's own spread (its check 8), unchanged.
+V4_PARA_MAX = 0.25
+V4_SHORT_MAX = 0.5
+
+
+def _words(t):
+    return re.findall(r"[a-z0-9']+", t.lower())
+
+
+def v4_texts(c):
+    """Every text a held-out-v4 case shows a model (holdout_v3.case_texts), one per message, with Grux's own output
+    lines (V4_RUNTIME_LINES) set aside line by line."""
+    out = []
+    for t in holdout_v3.case_texts(c):
+        t = "\n".join(line for line in t.split("\n") if not _RUNTIME_V4.fullmatch(line.strip()))
+        if t.strip():
+            out.append(t)
+    return out
+
+
+def _fields(c):
+    """Each string an S2-shaped case holds (the fields texts() reads), one at a time."""
+    out = []
+    for k, v in c.items():
+        if k in SKIP:
+            continue
+        if isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, list):
+            out += [x for x in v if isinstance(x, str)]
+    return out
+
+
+def v4_reference():
+    """{set name: (word lists for the 8-word rule, strings for whole-text and clone checks)} for every set held-out
+    v4 must not touch. v1, v2 and the S2 bank are read as texts() reads them (one word list per case, so a run that
+    crosses two fields counts) and field by field; v3 and the v3 bank one text per message (holdout_v3.case_texts)."""
+    import train_bank_v3
+    out = {}
+    for name, cs in (("held-out v1", holdout.cases()), ("held-out v2", holdout_v2.cases()),
+                     ("S2 training bank", train_bank.cases())):
+        lines = [s for c in cs for s in _fields(c)]
+        out[name] = ([texts(c) for c in cs] + [_words(s) for s in lines], lines)
+    for name, cs in (("held-out v3", holdout_v3.cases()), ("v3 training bank", train_bank_v3.cases())):
+        lines = [t for c in cs for t in holdout_v3.case_texts(c)]
+        out[name] = ([_words(t) for t in lines], lines)
+    return out
+
+
+def v4_overlap(cases, ref=None):
+    """{case id: '<set>: <first shared 8-word run>' or '<set>: same text: ...'} for each held-out v4 case that shares
+    a whole text of 3 words or more, or any 8-word run, with a set in v4_reference."""
+    ref = v4_reference() if ref is None else ref
+    index = []
+    for name, (wls, _) in ref.items():
+        runs, whole = set(), set()
+        for ws in wls:
+            runs |= grams(ws)
+            if len(ws) >= 3:
+                whole.add(" ".join(ws))
+        index.append((name, runs, whole))
+    out = {}
+    for c in cases:
+        for t in v4_texts(c):
+            ws = _words(t)
+            joined, g = " ".join(ws), grams(ws)
+            hit = next((f"{name}: same text: {joined[:60]}" if len(ws) >= 3 and joined in whole
+                        else f"{name}: {sorted(g & runs)[0]}"
+                        for name, runs, whole in index if (len(ws) >= 3 and joined in whole) or g & runs), None)
+            if hit:
+                out[c["id"]] = hit
+                break
+    return out
+
+
+def v4_clone_ref(ref=None):
+    """(4-gram reference for near_v3, 3-gram reference for near_v3_short) over every string of every set in
+    v4_reference, one entry per distinct skeleton, named by its set."""
+    ref = v4_reference() if ref is None else ref
+    seen, four, three = set(), [], []
+    for name, (_, lines) in ref.items():
+        for t in lines:
+            sk = skeleton(t)
+            whole = " ".join(sk)
+            if not sk or whole in seen:
+                continue
+            seen.add(whole)
+            four.append((name, grams4(sk), whole))
+            g3 = grams3(sk)
+            if g3:
+                three.append((name, g3))
+    return four, three
+
+
+def v4_clones(lines, ref=None):
+    """{line: (score, set, which score)} for each line of held-out v4's own words that reads as a template clone of
+    a line in v4_reference: 4-gram Jaccard at or above V4_PARA_MAX, or, for a line under SHORT skeleton words, 3-gram
+    containment at or above V4_SHORT_MAX."""
+    four, three = v4_clone_ref(ref)
+    out = {}
+    long_ = near_v3(lines, four)
+    short = near_v3_short(lines, ref=three)
+    for line in lines:
+        v4_, who4 = long_[line]
+        v3_, who3 = short[line]
+        if v4_ >= V4_PARA_MAX:
+            out[line] = (round(v4_, 3), who4, "4-gram Jaccard")
+        elif v3_ >= V4_SHORT_MAX:
+            out[line] = (round(v3_, 3), who3, "3-gram containment")
     return out
 
 

@@ -4,13 +4,14 @@ person's Grux would. Records pass, latency and the Ollama runner's memory footpr
 proven on the hardware it is for, not only on a GPU.
 
   python3 eval_local.py --model qwen3.5:4b --run results/mac-<stamp> [--think false] [--per-family N]
-                        [--set holdout|holdout2|holdout_v3]
+                        [--set holdout|holdout2|holdout_v3|holdout_v4]
 
 --set holdout scores S2's frozen held-out set (s2/holdout.py) instead of the S1 suite; --set holdout2 scores
 held-out version 2 (s2/holdout_v2.py), whose chat-shaped cases are sent the way a Grux 3.1.0 local turn sends
 them (local_turn.py) and scored against the tools that turn offered. --set holdout_v3 scores held-out version 3
 (s2/holdout_v3.py): the full Grux turn with every tool at its pinned tag (GRUX_SRC_V3), each job sent step by
-step with the scripted results of the steps before it; num_ctx defaults to that set's own window.
+step with the scripted results of the steps before it; num_ctx defaults to that set's own window. --set holdout_v4
+scores held-out version 4 (s2/holdout_v4.py): new jobs, sent and scored by held-out v3's own runner and scorer.
 """
 import argparse
 import json
@@ -266,7 +267,7 @@ def _main():
     ap.add_argument("--think", choices=["unset", "false"], default="false")
     ap.add_argument("--per-family", type=int, default=0, help="first N cases per job (0 = all)")
     ap.add_argument("--num-ctx", type=int, default=None, help="16384, or held-out v3's own window for holdout_v3")
-    ap.add_argument("--set", choices=["s1", "holdout", "holdout2", "holdout_v3"], default="s1")
+    ap.add_argument("--set", choices=["s1", "holdout", "holdout2", "holdout_v3", "holdout_v4"], default="s1")
     a = ap.parse_args()
     request, score, cases_fn, suffix = suite.request, suite.score, suite.cases, ""
     if a.set == "holdout":
@@ -278,10 +279,13 @@ def _main():
         import holdout_v2
         request, score, cases_fn, suffix = holdout_v2.request_v2, holdout_v2.score_v2, holdout_v2.cases, "-holdout2"
     v3 = None
-    if a.set == "holdout_v3":
+    if a.set in ("holdout_v3", "holdout_v4"):   # v4's jobs go through v3's runner and scorer, unchanged
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v3 as v3
         cases_fn, suffix = v3.cases, "-holdout_v3"
+        if a.set == "holdout_v4":
+            import holdout_v4
+            cases_fn, suffix = holdout_v4.cases, "-holdout_v4"
         if a.num_ctx is not None:
             v3.NUM_CTX = a.num_ctx
         a.num_ctx = v3.NUM_CTX
