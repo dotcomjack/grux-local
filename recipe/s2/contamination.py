@@ -357,25 +357,32 @@ def v4_clones(lines, ref=None):
 # The frame gate. A line whose nouns all change keeps few 4-grams, so near_v3 cannot see it ("Read my document Dance
 # recital and put the dress rehearsal on my calendar" against held-out v3's "Read my document Field trip and put the
 # trip on my calendar" scores 0.06). frame() keeps only the closed-class words of a skeleton (pronouns, prepositions,
-# conjunctions, auxiliaries, question words) and its slot placeholders, drops the articles, and masks every other word
-# as X, one X per run; the two lines above both read "X my X N X and X X on my X". v4_frames scores a line by its
-# highest frame 3-gram Jaccard against any line of v4_reference, for lines with at least FRAME_FIXED fixed words.
-# V4_FRAME_MAX 0.5, measured on the Mini: the first v4 commit (d76b4b0) had 12 lines at or above it, among them every
-# frame echo its first review named; the set merged at 48a97eb9 had 6, all rewritten here.
+# conjunctions, auxiliaries, question words, common contractions) and its slot placeholders, drops the articles, and
+# masks every other word as X, one X per run; the two lines above both read "X my X N X and X X on my X". A line is a
+# frame echo when its frame is within FRAME_EDITS token edits of a reference line's frame (FRAME_EDITS_LONG for frames
+# of FRAME_LONG tokens or more), or its frame 3-gram Jaccard is V4_FRAME_MAX or more; lines with fewer than FRAME_FIXED
+# fixed words are not frame-scored. Measured on the Mini over held-out v3's asks with one closed-class word swapped for
+# another or dropped: every probe that keeps FRAME_FIXED fixed words is caught (test_holdout_v4 asserts it), and the
+# edit rule alone flags one v4 line of 592 before its rewrite; Jaccard alone caught 110 of 164 swaps.
 FRAME_WORDS = frozenset("""my your our their his her its this that these those it i me we us you he she they them
 to of in on at for from with by about into onto over under after before until up down out off as than then and or
 but if so not no is are was were be been am do does did have has had can could will would should may might must
-what when where which who whom whose why how there here all any some every each one two please just also""".split())
+what when where which who whom whose why how there here all any some every each one two please just also without
+during through between next last now again more other another only still yet too very both either neither nor once
+while because since across along around near per via against among below above behind beside within don't can't
+won't isn't aren't didn't doesn't haven't hasn't wouldn't couldn't shouldn't what's it's that's there's i'm i'll i'd
+i've you're we're they're let's he's she's here's where's who's how's""".split())
 FRAME_FIXED = 5
+FRAME_EDITS, FRAME_EDITS_LONG, FRAME_LONG = 1, 2, 10
 V4_FRAME_MAX = 0.5
 _PLACEHOLDERS = frozenset({"C", "Q", "U", "T", "D", "N", "#"})
 
 
 def frame(text):
-    """The skeleton of text with the articles dropped and every word that is not a closed-class word or a slot
-    placeholder masked as X, a run of X kept as one."""
+    """The skeleton of text (curly apostrophes made straight) with the articles dropped and every word that is not a
+    closed-class word or a slot placeholder masked as X, a run of X kept as one."""
     out = []
-    for w in skeleton(text):
+    for w in skeleton(text.replace(chr(0x2019), "'").replace(chr(0x2018), "'")):
         if w in ("a", "an", "the"):
             continue
         w = w if (w in _PLACEHOLDERS or w in FRAME_WORDS) else "X"
@@ -384,42 +391,70 @@ def frame(text):
     return out
 
 
+def _fixed(f):
+    return sum(w != "X" for w in f)
+
+
+def _edits(a, b, cap):
+    """Token edit distance between a and b, or cap + 1 once it is past cap."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, y in enumerate(b, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y))
+        if min(cur) > cap:
+            return cap + 1
+        prev = cur
+    return prev[-1]
+
+
 def v4_frame_ref(ref=None):
-    """[(set name, frame 3-grams, the line)] for every line, and every line of a multi-line text, in v4_reference
-    whose frame has FRAME_FIXED fixed words, one entry per distinct frame."""
+    """[(frame, set name, the line)] for every line, and every line of a multi-line text, in v4_reference whose frame
+    has FRAME_FIXED fixed words, one entry per distinct frame."""
     ref = v4_reference() if ref is None else ref
     out, seen = [], set()
     for name, (_, lines) in ref.items():
         for t in lines:
             for x in [t] + [y.strip() for y in t.split("\n") if y.strip()]:
-                f = frame(x)
-                k = " ".join(f)
-                if sum(w != "X" for w in f) >= FRAME_FIXED and k not in seen:
-                    seen.add(k)
-                    out.append((name, grams3(f), x))
+                f = tuple(frame(x))
+                if _fixed(f) >= FRAME_FIXED and f not in seen:
+                    seen.add(f)
+                    out.append((f, name, x))
     return out
 
 
 def v4_frames(lines, ref=None):
-    """{line: (score, set name, the reference line)} for each line whose frame 3-gram Jaccard against a reference
-    line's frame is at or above V4_FRAME_MAX (lines under FRAME_FIXED fixed words are not scored)."""
+    """{line: (why, set name, the reference line)} for each line whose frame is within FRAME_EDITS edits
+    (FRAME_EDITS_LONG at FRAME_LONG tokens) of a reference frame, or whose frame 3-gram Jaccard is V4_FRAME_MAX or
+    more. Lines under FRAME_FIXED fixed words are not scored."""
     fr = v4_frame_ref(ref)
-    index = {}
-    for i, (_, g, _) in enumerate(fr):
-        for x in g:
-            index.setdefault(x, []).append(i)
+    g2, g3 = {}, []
+    for i, (f, _, _) in enumerate(fr):
+        for x in {f[k:k + 2] for k in range(len(f) - 1)}:
+            g2.setdefault(x, []).append(i)
+        g3.append(grams3(list(f)))
     out = {}
     for line in lines:
         f = frame(line)
-        if sum(w != "X" for w in f) < FRAME_FIXED:
+        if _fixed(f) < FRAME_FIXED:
             continue
-        g, hits = grams3(f), {}
-        for x in g:
-            for i in index.get(x, ()):
-                hits[i] = hits.get(i, 0) + 1
-        best = max(((n / len(g | fr[i][1]), i) for i, n in hits.items()), default=(0.0, None))
-        if best[0] >= V4_FRAME_MAX:
-            out[line] = (round(best[0], 3), fr[best[1]][0], fr[best[1]][2])
+        cap = FRAME_EDITS_LONG if len(f) >= FRAME_LONG else FRAME_EDITS
+        mine = grams3(f)
+        cands = set()
+        for k in range(len(f) - 1):
+            cands.update(g2.get(tuple(f[k:k + 2]), ()))
+        best = None
+        for i in sorted(cands):
+            d = _edits(f, list(fr[i][0]), cap)
+            j = len(mine & g3[i]) / len(mine | g3[i]) if mine | g3[i] else 0.0
+            if d <= cap or j >= V4_FRAME_MAX:
+                why = f"{d} edit{'s' if d != 1 else ''}" if d <= cap else f"3-gram Jaccard {j:.2f}"
+                if best is None or (d, -j) < best[0]:
+                    best = ((d, -j), why, i)
+        if best:
+            out[line] = (best[1], fr[best[2]][1], fr[best[2]][2])
     return out
 
 

@@ -43,7 +43,7 @@ import holdout_v4 as v4  # noqa: E402
 import train_bank  # noqa: E402
 import train_bank_v3 as tb  # noqa: E402
 
-EXPECTED_SHA = "240ede5686e6f12c4bbe107ee91247652b321e4c1f0f92ee3e51eab70bb6ebe6"
+EXPECTED_SHA = "9cf428447d197657865a9115302e927eba7726c76676e8772f47fda51be0e2fe"
 FAILS, RAN = [], []
 
 
@@ -322,7 +322,8 @@ check(f"6 ... and every sampled v3 bank ask treated the same way ({len(caught)} 
 
 frames = ct.v4_frames(LINES, REF)
 check(f"6 0 of {len(LINES)} v4 texts and lines has the frame of a line in v1, v2, v3 or either bank (every noun "
-      f"masked, gate {ct.V4_FRAME_MAX})", not frames, str(list(frames.items())[:3]))
+      f"masked; {ct.FRAME_EDITS} edit, {ct.FRAME_EDITS_LONG} at {ct.FRAME_LONG}+ tokens, or 3-gram Jaccard "
+      f"{ct.V4_FRAME_MAX})", not frames, str(list(frames.items())[:3]))
 EARLY = ["Read my document Dance recital and put the dress rehearsal on my calendar.",   # in the first v4 commit
          "Read the email from the HOA and add the annual get together to my calendar.",
          "Check my notes for the passport renewal and add the appointment to my calendar.",
@@ -334,20 +335,36 @@ check(f"6 the frame gate catches {len(EARLY) - 1} frame echoes from the first v4
       len(got) == len(EARLY) and not ct.v4_clones(EARLY, REF), f"caught {sorted(got)}, clones {ct.v4_clones(EARLY, REF)}")
 
 
-def every_noun(text):
-    """text with every word that is not a frame word, an article or a slot changed: a v3 ask on new subjects."""
-    keep = ct._DAYS_RE.fullmatch
-    t = re.sub(r"(?<=[A-Za-z0-9,;)'’] )[A-Z][a-z]+", lambda m: m.group(0) if keep(m.group(0)) else "Quorwick", text)
-    t = re.sub(r"\d", "7", t)
-    return re.sub(r"\b[a-z][a-z']+\b", lambda m: m.group(0) if m.group(0) in ct.FRAME_WORDS
-                  or m.group(0) in ("a", "an", "the") or ct._DAYS_RE.fullmatch(m.group(0)) else "quorble", t)
+REP = {"my": "your", "your": "my", "on": "at", "at": "on", "and": "or", "to": "for", "for": "to", "in": "on",
+       "it": "this", "this": "that", "me": "us", "of": "from", "from": "of", "with": "without", "can": "could",
+       "do": "did", "is": "was", "you": "we", "i": "we", "what": "which", "when": "where", "then": "and"}
 
 
-framed = sorted({every_noun(c["user"]) for c in V3
-                 if sum(w != "X" for w in ct.frame(c["user"])) >= ct.FRAME_FIXED})
-got = ct.v4_frames(framed, REF)
-check(f"6 the frame gate catches every held-out v3 ask with every noun, name, number and day changed "
-      f"({len(got)} of {len(framed)})", len(got) == len(framed), str(sorted(set(framed) - set(got))[:3]))
+def perturb(text, i, mode):
+    """text with its i-th closed-class word swapped for another (REP) or dropped; None when there is no such word."""
+    toks = re.findall(r"[A-Za-z']+|[^A-Za-z']+", text)
+    cand = [k for k, w in enumerate(toks) if w.lower() in ct.FRAME_WORDS and (mode == "drop" or w.lower() in REP)]
+    if not cand:
+        return None
+    k = cand[i % len(cand)]
+    toks[k] = "" if mode == "drop" else REP[toks[k].lower()]
+    return re.sub(r"\s+", " ", "".join(toks)).strip()
+
+
+V3ASKS = sorted({c["user"] for c in V3 if ct._fixed(ct.frame(c["user"])) >= ct.FRAME_FIXED})
+for mode in ("swap", "drop"):
+    probes = sorted({p for n, a in enumerate(V3ASKS) for p in [perturb(a, n, mode)] if p and p != a})
+    scored = [p for p in probes if ct._fixed(ct.frame(p)) >= ct.FRAME_FIXED]
+    got = ct.v4_frames(scored, REF)
+    print(f"    {mode}: {len(probes)} probes from {len(V3ASKS)} held-out v3 asks, {len(probes) - len(scored)} under "
+          f"{ct.FRAME_FIXED} fixed words (not frame-scored)")
+    check(f"6 the frame gate catches every held-out v3 ask with one closed-class word {mode}ped "
+          f"({len(got)} of {len(scored)})", len(got) == len(scored) and len(scored) > 100,
+          str(sorted(set(scored) - set(got))[:3]))
+curly = sorted({a.replace("'", chr(0x2019)) for a in V3ASKS if "'" in a})
+got = ct.v4_frames(curly, REF)
+check(f"6 ... and every one written with a curly apostrophe ({len(got)} of {len(curly)})",
+      len(got) == len(curly) and curly, str(sorted(set(curly) - set(got))[:3]))
 
 
 def seqs(cs):

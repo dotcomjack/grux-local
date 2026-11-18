@@ -47,7 +47,7 @@ import suite  # noqa: E402
 
 VERSION = 4
 # sha256 of the cases (holdout_v3.case_sha), frozen before the next round's training data is generated
-FROZEN_SHA = "240ede5686e6f12c4bbe107ee91247652b321e4c1f0f92ee3e51eab70bb6ebe6"
+FROZEN_SHA = "9cf428447d197657865a9115302e927eba7726c76676e8772f47fda51be0e2fe"
 FAMILIES = h.FAMILIES
 MINIMUM = 30
 PREFIX = "h4"
@@ -1491,7 +1491,7 @@ TOOL_CHOICE = [
      [("mode", "eq", "grind")], None),
     ("Fire the macro called Studio Lights.", "run_macro", {"name": "Studio Lights"}, [("name", "has_any", ["studio"])],
      None),
-    ("I need the Numbers spreadsheet app in front of me.", "open_app", {"name": "Numbers"}, [("name", "has_any", ["numbers"])], None),
+    ("Pull up Numbers; I have a spreadsheet to finish.", "open_app", {"name": "Numbers"}, [("name", "has_any", ["numbers"])], None),
     ("Find out when the Ridgeview farmers market closes for the season.", "search_web",
      {"query": "Ridgeview farmers market season end"}, [("query", "has_any", ["ridgeview", "farmers market"])],
      {"research_web": [("query", "has_any", ["ridgeview", "farmers market"])]}),
