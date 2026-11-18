@@ -107,17 +107,30 @@ for label, text, who in (("held-out v4", every_noun(v4_ask), "h4-"), ("held-out 
     got, off = why(row(text)), why(row(text), NO_FRAMES)
     check(f"2 a {label} ask with every noun changed is caught as a frame echo, and is missed with frames off",
           bool(got) and got[1].startswith(who) and "frame" in got[0] and off is None, f"{text!r}: {got}, off {off}")
-short = next((cid, line) for line, cid in GATE.owner.items()
-             if 6 <= len(ct.skeleton(line)) < ct.SHORT and len(ct.grams3(ct.skeleton(line))) >= ct.REVERSE_GRAMS
-             and not line.startswith(("{", "-")) and "\n" not in line)
-inside = "Before anything else this morning, and I mean it, " + short[1].rstrip(".?!") + ", thanks a lot for that."
+short = next((cid, line) for line, cid in GATE.owner.items()   # under 8 words: no 8-word run, so only this rule sees it
+             if 5 <= len(ct.skeleton(line)) < ct.SHORT and len(ct.grams3(ct.skeleton(line))) >= ct.REVERSE_GRAMS
+             and len(line.split()) < 8 and not line.startswith(("{", "-")) and "\n" not in line)
+pad = ("so here is the long story about my week, which started with a flat tire on the way to the market and then "
+       "a whole mess with the landlord about the heating, and in the middle of all of it")   # dilutes the 4-gram score
+inside = pad + ", " + short[1].rstrip(".?!") + ", and after that " + pad.replace("so here is", "there is still")
 got = why(row(inside))
-check("2 a short v4 line held inside a longer row line is caught", bool(got) and got[1] == short[0],
+check("2 a short v4 line held inside a longer row line is caught", bool(got) and got[1] == short[0] and "holds" in got[0],
       f"{inside!r}: {got}")
+four = next(line for line in sorted(GATE.owner) if len(ct.skeleton(line)) == 4 and len(line.split()) == 4
+            and line.split()[-1].rstrip(".?!").isalpha() and line.split()[-1].islower())
+swapped = " ".join(four.split()[:-1] + ["pinecone" + four.split()[-1][-1:] if not four[-1].isalpha() else "pinecone"])
+got = why(row(swapped))
+check(f"2 a four-word v4 line with one word swapped is caught ({four!r} as {swapped!r})", bool(got) and "clone" in got[0],
+      str(got))
 got = why(row("Can you read this file for me?", h.PENDING))
 check("2 a Grux runtime line alone (the Approvals pending line) is not counted", got is None, str(got))
 got = why(row("Can you read this file for me?", h.PENDING + "\n" + v4_run))
 check("2 ... and it does not shield a held-out v4 run on the next line", bool(got), str(got))
+half = len(v4_run.split()) // 2
+split = " ".join(v4_run.split()[:half]) + "\n" + h.PENDING + "\n" + " ".join(v4_run.split()[half:])
+got = why(row("Can you read this file for me?", split))
+check("2 a v4 run split by a runtime line on a line of its own is still caught (the line is set aside, the run "
+      "rejoins)", bool(got) and got[1].startswith("h4-"), str(got))
 clean = row("What's a good name for a goldfish that likes to hide?", target="Maybe Bashful, or Shadow.")
 check("2 a clean row passes", why(clean) is None, str(why(clean)))
 
@@ -133,16 +146,22 @@ def answer(c):
             "job_sha": h.case_sha([c]), "tools_sha": train_prompt.tools_sha(c)}
 
 
+late = next(c for c in KEPT if c["family"] == "chain" and not GATE.why(*ct.case_items(c)) and c is not fine
+            and "reply" in c["steps"][-1])
+leaky = answer(late)
+leaky["raw"][-1]["content"] = "Done. " + v4_run   # the teacher's own words carry a held-out v4 run
 run = tempfile.mkdtemp()
 with open(os.path.join(run, "t-train_v3-pass1.jsonl"), "w") as f:
-    for c in (flagged, fine):
-        f.write(json.dumps(answer(c)) + "\n")
+    for a in (answer(flagged), answer(fine), leaky):
+        f.write(json.dumps(a) + "\n")
 s = export_v3.export(run, os.path.join(run, "train.jsonl"))
 ids = {json.loads(line)["id"].split("#")[0] for line in open(os.path.join(run, "train.jsonl"))}
 reason = GATE.why(*ct.case_items(flagged))
 check(f"3 export_v3 drops the job that touches {reason[1]} and keeps the clean one, and says so",
-      flagged["id"] not in ids and fine["id"] in ids and s["dropped_touches_held_out"] == 1
-      and s["held_out_touched"] == {reason[1]: 1}, json.dumps(s)[:300])
+      flagged["id"] not in ids and fine["id"] in ids and reason[1] in s["held_out_touched"], json.dumps(s)[:300])
+check("3 ... and drops a job that is clean itself but whose answer (the training target) carries a held-out v4 run",
+      late["id"] not in ids and s["dropped_touches_held_out"] == 2 and any(k.startswith("h4-") for k in s["held_out_touched"]),
+      json.dumps(s)[:300])
 
 print(f"{'PASS' if not FAILS and RAN else 'FAIL'}: {len(RAN)} checks, {len(FAILS)} failed")
 sys.exit(1 if FAILS or not RAN else 0)

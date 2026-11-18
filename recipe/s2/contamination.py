@@ -603,35 +603,60 @@ class TrainGate:
         refs = {"held-out v3": ([], sorted(v3_owner)), "held-out v4": ([], sorted(self.owner))}
         self.frames = FrameIndex({k: v for k, v in refs.items() if k in frames_against})
         self.frame_owner = {**{line: cid for line, cid in v3_owner.items()}, **self.owner}
+        self._texts, self._lines = {}, {}
+
+    def _text(self, t):
+        """(why, case id) when text t holds a held-out v4 whole text or 8-word run, else None (cached)."""
+        if t not in self._texts:
+            ws = _words(_strip_v4_runtime(t))
+            joined = " ".join(ws)
+            hit = None
+            if len(ws) >= 3 and joined in self.whole and not t.lstrip().startswith("{"):
+                hit = "held-out v4 same text: " + joined[:60], self.whole[joined]
+            else:
+                shared = sorted(g for g in grams(ws) if g in self.runs)
+                if shared:
+                    hit = "held-out v4 8-word run: " + shared[0], self.runs[shared[0]]
+            self._texts[t] = hit
+        return self._texts[t]
+
+    def _line(self, line):
+        """(why, case id) when a human line clones or frame-echoes a held-out line, else None (cached). The forward
+        clone scores are v4_clones' own (no floor); the reverse direction reads only v4 lines of REVERSE_GRAMS
+        3-grams or more, as v4_reverse_clones does."""
+        if line not in self._lines:
+            hit = None
+            v, cid = near_v3([line], self.four)[line]
+            if v >= V4_PARA_MAX:
+                hit = f"held-out v4 clone (4-gram Jaccard {v:.2f}): {line[:60]}", cid
+            if hit is None:
+                v, cid = near_v3_short([line], ref=self.three)[line]
+                if v >= V4_SHORT_MAX:
+                    hit = f"held-out v4 clone (3-gram containment {v:.2f}): {line[:60]}", cid
+            if hit is None:
+                g = grams3(skeleton(line))
+                for cid, h in self.short:   # the other direction: a short v4 line held inside this line
+                    if g and len(h & g) / len(h) >= V4_SHORT_MAX:
+                        hit = f"held-out v4 clone (holds {len(h & g)} of {len(h)} 3-grams of a v4 line): {line[:60]}", cid
+                        break
+            if hit is None:
+                for _, (how, who, theirs) in self.frames.scan([line]).items():
+                    hit = f"{who} frame ({how}): {line[:60]} ~ {theirs[:60]}", self.frame_owner.get(theirs, who)
+            self._lines[line] = hit
+        return self._lines[line]
 
     def why(self, texts, lines):
         """(why, held-out case id) for an item that shows texts (every text of it, for the 8-word rule) and lines (its
-        human lines: asks, earlier turns, pasted lines), or None when it touches no held-out line."""
+        human lines: asks, earlier turns, pasted lines, each line of one scored on its own too), or None when it
+        touches no held-out line."""
         for t in texts:
-            ws = _words(_strip_v4_runtime(t))
-            joined = " ".join(ws)
-            if len(ws) >= 3 and joined in self.whole and not t.lstrip().startswith("{"):
-                return "held-out v4 same text: " + joined[:60], self.whole[joined]
-            shared = sorted(g for g in grams(ws) if g in self.runs)
-            if shared:
-                return "held-out v4 8-word run: " + shared[0], self.runs[shared[0]]
-        lines = sorted({x.strip() for t in lines for x in [t] + t.split("\n") if x.strip()})
-        if not lines:
-            return None
-        for line, (v, cid) in near_v3(lines, self.four).items():
-            if v >= V4_PARA_MAX:
-                return f"held-out v4 clone (4-gram Jaccard {v:.2f}): {line[:60]}", cid
-        enough = [x for x in lines if len(grams3(skeleton(x))) >= REVERSE_GRAMS]   # not a two- or three-word phrase
-        for line, (v, cid) in near_v3_short(enough, ref=self.three).items():
-            if v >= V4_SHORT_MAX:
-                return f"held-out v4 clone (3-gram containment {v:.2f}): {line[:60]}", cid
-        for x in enough:   # the other direction: a short v4 line held inside this line
-            g = grams3(skeleton(x))
-            for cid, h in self.short:
-                if len(h & g) / len(h) >= V4_SHORT_MAX:
-                    return f"held-out v4 clone (holds {len(h & g)} of {len(h)} 3-grams of a v4 line): {x[:60]}", cid
-        for line, (how, who, theirs) in self.frames.scan(lines).items():
-            return f"{who} frame ({how}): {line[:60]} ~ {theirs[:60]}", self.frame_owner.get(theirs, who)
+            hit = self._text(t)
+            if hit:
+                return hit
+        for line in sorted({x.strip() for t in lines for x in [t] + t.split("\n") if x.strip()}):
+            hit = self._line(line)
+            if hit:
+                return hit
         return None
 
 
