@@ -374,9 +374,11 @@ spread = sorted({re.sub(r"(?<=[a-z'.,?]) (?=[a-z])", " zebra ", a) for a in V3AS
 got = ct.v4_frames(spread, REF)
 check(f"6 ... and every one with an open-class word put between each two words, so no two fixed words stay side by "
       f"side ({len(got)} of {len(spread)})", len(got) == len(spread), str(sorted(set(spread) - set(got))[:3]))
-solo = {"synthetic": ([], ["Do you have it for me?", "Could you send that over to them for us now?"])}
+solo = {"synthetic": ([], ["Do you have it for me?", "Could you have it for us now?"])}   # every word a fixed word
 alt = ["Do zebra you zebra have zebra it zebra for zebra me?",          # no frame 3-gram in common with its reference
-       "Could zebra you zebra send zebra that zebra over zebra to zebra them zebra for zebra us zebra now?"]
+       "Could zebra you zebra have zebra it zebra for zebra us zebra now?"]
+check("6 ... (the synthetic lines share no frame 3-gram with their references, so only their fixed words find them)",
+      all(not ct.grams3(ct.frame(a_)) & ct.grams3(ct.frame(r_)) for a_, r_ in zip(alt, solo["synthetic"][1])))
 got = ct.v4_frames(alt, solo)
 check("6 ... and a line whose fixed words all sit apart, sharing no frame 3-gram with a reference made only of fixed "
       "words, is found by its fixed words alone", sorted(got) == sorted(alt), str(got))

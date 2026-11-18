@@ -364,8 +364,9 @@ def v4_clones(lines, ref=None):
 # fixed words are not frame-scored. Edits are counted on the fixed words alone (_fixed_seq), and a reference is found
 # by a piece of them (_chunks), so masked words between them never hide it. Measured on the Mini over every
 # closed-class position of held-out v3's asks: every probe with one word swapped, made an open-class word or dropped
-# that keeps FRAME_FIXED fixed words is caught (test_holdout_v4 asserts it); Jaccard alone caught 107 of 164 one-word
-# swaps. Turning the edit rule on flagged 11 v4 lines of 592 before their rewrite.
+# that keeps FRAME_FIXED fixed words is caught (test_holdout_v4 asserts it). One-off measurements while the gate was
+# built (not asserted): Jaccard alone caught 107 of 164 one-word swaps, and the edit rule flagged 11 v4 lines of 592,
+# all since rewritten.
 FRAME_WORDS = frozenset("""my your our their his her its this that these those it i me we us you he she they them
 to of in on at for from with by about into onto over under after before until up down out off as than then and or
 but if so not no is are was were be been am do does did have has had can could will would should may might must
