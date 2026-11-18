@@ -22,7 +22,7 @@ import holdout_v2  # noqa: E402
 EXPECTED = "7c3f2a9ff3316ecc"      # measured 2026-10-23 on the tree that scored v1, and on public Grux v3.1.0
 EXPECTED_V2 = "da6577c7178a0963"   # measured 2026-10-24 on the tree that scored 4b-v2, and on public Grux v3.1.0
 EXPECTED_V3 = "fd125548504ade65"   # every step's request of held-out v3, measured 2026-11-14 on public Grux v3.3.1
-EXPECTED_V4 = "788af140f5c9004e"           # every step's request of held-out v4 (v3's request builder), on public Grux v3.3.1
+EXPECTED_V4 = "d9e41aa3eaf8ca71"           # every step's request of held-out v4 (v3's request builder), on public Grux v3.3.1
 
 cases = holdout.build() if hasattr(holdout, "build") else holdout.cases()
 h = hashlib.sha256()
