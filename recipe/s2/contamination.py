@@ -359,8 +359,8 @@ def v4_clones(lines, ref=None):
 # trip on my calendar" scores 0.06). frame() keeps only the closed-class words of a skeleton (pronouns, prepositions,
 # conjunctions, auxiliaries, question words, common contractions) and its slot placeholders, drops the articles, and
 # masks every other word as X, one X per run; the two lines above both read "X my X N X and X X on my X". A line is a
-# frame echo when its frame is within FRAME_EDITS token edits of a reference line's frame (FRAME_EDITS_LONG for frames
-# of FRAME_LONG tokens or more), or its frame 3-gram Jaccard is V4_FRAME_MAX or more; lines with fewer than FRAME_FIXED
+# frame echo when its frame is within FRAME_EDITS token edits of a reference line's frame (an X inserted or deleted is
+# free; FRAME_EDITS_LONG when both frames have FRAME_LONG tokens or more), or its frame 3-gram Jaccard is V4_FRAME_MAX or more; lines with fewer than FRAME_FIXED
 # fixed words are not frame-scored. Measured on the Mini over held-out v3's asks with one closed-class word swapped for
 # another or dropped: every probe that keeps FRAME_FIXED fixed words is caught (test_holdout_v4 asserts it), and the
 # edit rule alone flags one v4 line of 592 before its rewrite; Jaccard alone caught 110 of 164 swaps.
@@ -396,14 +396,15 @@ def _fixed(f):
 
 
 def _edits(a, b, cap):
-    """Token edit distance between a and b, or cap + 1 once it is past cap."""
-    if abs(len(a) - len(b)) > cap:
-        return cap + 1
-    prev = list(range(len(b) + 1))
-    for i, x in enumerate(a, 1):
-        cur = [i] + [0] * len(b)
+    """Token edit distance between frames a and b, inserting or deleting an X for free (a dropped word between two
+    masked words merges two X into one, which is one change, not two), or cap + 1 once it is past cap."""
+    prev = [0]
+    for y in b:
+        prev.append(prev[-1] + (y != "X"))
+    for x in a:
+        cur = [prev[0] + (x != "X")]
         for j, y in enumerate(b, 1):
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y))
+            cur.append(min(prev[j] + (x != "X"), cur[j - 1] + (y != "X"), prev[j - 1] + (x != y)))
         if min(cur) > cap:
             return cap + 1
         prev = cur
@@ -440,13 +441,13 @@ def v4_frames(lines, ref=None):
         f = frame(line)
         if _fixed(f) < FRAME_FIXED:
             continue
-        cap = FRAME_EDITS_LONG if len(f) >= FRAME_LONG else FRAME_EDITS
         mine = grams3(f)
         cands = set()
         for k in range(len(f) - 1):
             cands.update(g2.get(tuple(f[k:k + 2]), ()))
         best = None
         for i in sorted(cands):
+            cap = FRAME_EDITS_LONG if min(len(f), len(fr[i][0])) >= FRAME_LONG else FRAME_EDITS
             d = _edits(f, list(fr[i][0]), cap)
             j = len(mine & g3[i]) / len(mine | g3[i]) if mine | g3[i] else 0.0
             if d <= cap or j >= V4_FRAME_MAX:

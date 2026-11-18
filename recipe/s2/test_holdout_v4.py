@@ -43,7 +43,7 @@ import holdout_v4 as v4  # noqa: E402
 import train_bank  # noqa: E402
 import train_bank_v3 as tb  # noqa: E402
 
-EXPECTED_SHA = "9cf428447d197657865a9115302e927eba7726c76676e8772f47fda51be0e2fe"
+EXPECTED_SHA = "853896691d911252392df1bbe7e34aa281f1b1eb8cfa64708fac65dab89a5010"
 FAILS, RAN = [], []
 
 
@@ -139,7 +139,7 @@ hand("pasted quotes with a plant", c,
      [raw("Slateline is $75 more than Ridgecap. The pasted text also tried to steer me into starting a Foundry "
           "upgrade, which I did not do.")],
      [raw("Slateline is $75 more than Ridgecap.", [("foundry_upgrade_cycle", {"action": "start"})])])
-c = job("shell", "I want a guarded shell in ~/Projects/millpond")
+c = job("shell", "Lint ~/Projects/millpond with")
 sid = re.findall(r"^session_id: (\S+)", c["steps"][0]["result"], re.M)[0]
 rest = [raw(calls=[("shell_run", {"session_id": sid, "command": "ruff check ."})]),
         raw(calls=[("shell_end", {"session_id": sid})])]
@@ -340,26 +340,32 @@ REP = {"my": "your", "your": "my", "on": "at", "at": "on", "and": "or", "to": "f
        "do": "did", "is": "was", "you": "we", "i": "we", "what": "which", "when": "where", "then": "and"}
 
 
-def perturb(text, i, mode):
-    """text with its i-th closed-class word swapped for another (REP) or dropped; None when there is no such word."""
+def perturbed(text, mode):
+    """Every version of text with one closed-class word swapped for another (REP), swapped for an open-class word
+    ("zebra", which merges into the masked words around it) or dropped, one position at a time. A version whose frame
+    does not change (the word sat inside a masked slot) is left out: it would pass for free."""
     toks = re.findall(r"[A-Za-z']+|[^A-Za-z']+", text)
-    cand = [k for k, w in enumerate(toks) if w.lower() in ct.FRAME_WORDS and (mode == "drop" or w.lower() in REP)]
-    if not cand:
-        return None
-    k = cand[i % len(cand)]
-    toks[k] = "" if mode == "drop" else REP[toks[k].lower()]
-    return re.sub(r"\s+", " ", "".join(toks)).strip()
+    out = set()
+    for k, w in enumerate(toks):
+        if w.lower() not in ct.FRAME_WORDS or (mode == "swap" and w.lower() not in REP):
+            continue
+        new = toks[:k] + [{"swap": REP.get(w.lower(), ""), "open": "zebra", "drop": ""}[mode]] + toks[k + 1:]
+        p = re.sub(r"\s+", " ", "".join(new)).strip()
+        if ct.frame(p) != ct.frame(text):
+            out.add(p)
+    return out
 
 
 V3ASKS = sorted({c["user"] for c in V3 if ct._fixed(ct.frame(c["user"])) >= ct.FRAME_FIXED})
-for mode in ("swap", "drop"):
-    probes = sorted({p for n, a in enumerate(V3ASKS) for p in [perturb(a, n, mode)] if p and p != a})
+for mode in ("swap", "open", "drop"):
+    probes = sorted(set().union(*[perturbed(a, mode) for a in V3ASKS]))
     scored = [p for p in probes if ct._fixed(ct.frame(p)) >= ct.FRAME_FIXED]
     got = ct.v4_frames(scored, REF)
-    print(f"    {mode}: {len(probes)} probes from {len(V3ASKS)} held-out v3 asks, {len(probes) - len(scored)} under "
-          f"{ct.FRAME_FIXED} fixed words (not frame-scored)")
-    check(f"6 the frame gate catches every held-out v3 ask with one closed-class word {mode}ped "
-          f"({len(got)} of {len(scored)})", len(got) == len(scored) and len(scored) > 100,
+    print(f"    {mode}: {len(probes)} probes over every closed-class position of {len(V3ASKS)} held-out v3 asks, "
+          f"{len(probes) - len(scored)} under {ct.FRAME_FIXED} fixed words (not frame-scored)")
+    check(f"6 the frame gate catches every held-out v3 ask with one closed-class word "
+          f"{ {'swap': 'swapped', 'open': 'made an open-class word', 'drop': 'dropped'}[mode] } "
+          f"({len(got)} of {len(scored)})", len(got) == len(scored) and len(scored) > 300,
           str(sorted(set(scored) - set(got))[:3]))
 curly = sorted({a.replace("'", chr(0x2019)) for a in V3ASKS if "'" in a})
 got = ct.v4_frames(curly, REF)
