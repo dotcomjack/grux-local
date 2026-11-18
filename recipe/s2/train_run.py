@@ -3,7 +3,7 @@
 
 One leased spot box at a time: train a LoRA (every checkpoint pulled out the moment it lands), merge,
 import the base and the trained model into the box's Ollama as nvfp4 (the format a Mac serves),
-score both on the S1 suite and the frozen held-out sets v1, v2 and v3 (--passes times) with thinking off, then pull the
+score both on the S1 suite and the frozen held-out sets v1, v2, v3 and v4 (--passes times) with thinking off, then pull the
 trained model's Ollama pack out for the Mac check when the disk here allows (pull.json says what happened; the base
 is public and never pulled). A spot box goes without warning (measured 2026-10-22), so a new box
 resumes from the last checkpoint pulled out, skips training once the adapter is out, and skips every
@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import holdout  # noqa: E402
 import holdout_v2  # noqa: E402
 import holdout_v3  # noqa: E402
+import holdout_v4  # noqa: E402
 import suite  # noqa: E402
 from eval_run import BOX_EXTRA, EARLY_ERRORS, PRICE, log, skip_max  # noqa: E402
 from train_box import BOOT, TrainBox  # noqa: E402
@@ -38,7 +39,8 @@ MODELFILE = ("FROM {src}\nRENDERER qwen3.5\nPARSER qwen3.5\nPARAMETER temperatur
 SETS = {"holdout_v3": (holdout_v3.cases, None, None),   # first: the gate's set; a job runs step by step (run_case)
         "holdout": (holdout.cases, holdout.request_holdout, holdout.score_holdout),
         "holdout_v2": (holdout_v2.cases, holdout_v2.request_v2, holdout_v2.score_v2),
-        "s1": (suite.cases, suite.request, suite.score)}
+        "s1": (suite.cases, suite.request, suite.score),
+        "holdout_v4": (holdout_v4.cases, None, None)}   # last: held-out v3's runner and scorer; a cap cuts it first
 
 
 ALLOC = "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"   # less cached-but-free memory for kernels outside PyTorch

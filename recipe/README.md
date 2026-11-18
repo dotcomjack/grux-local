@@ -85,6 +85,25 @@ own ActionClaimGuard patterns). The set shares no 8-word run with held-out v1, v
 and checked by its self-test, and `check_prompts.py` checks every request it sends when `GRUX_SRC_V3` is set;
 `s2/test_holdout_v3.py` proves the scorer fails what it should. No model has been scored on it yet.
 
+### Held-out v4: v3's turn and scorer, new jobs
+
+```
+python3 recipe/s2/holdout_v4.py
+python3 recipe/s2/test_holdout_v4.py
+python3 recipe/eval_local.py --model <tag> --set holdout_v4 --run /tmp/grux-local-v4
+```
+
+The models trained on the v3 training bank score 84 to 87 on held-out v3, and the bank and v3 were written from
+similar templates, so a v3 score cannot tell a learned skill from a memorized template. Held-out v4 is 323 jobs
+(`s2/holdout_v4.py`) in v3's six families and close to v3's family proportions, sent and scored by v3's own code
+(`holdout_v3.request_v3`, `run_case`, `score_v3`, unchanged), with new scenarios, wording, names and tool sequences:
+none of its 11 chain call sequences appears in v3 or the v3 bank. `s2/contamination.py` (`v4_overlap`, `v4_clones`)
+proves it shares no whole text, no 8-word run and no template clone with held-out v1, v2, v3, the v3 training bank or
+the S2 training bank; Grux's own output lines are set aside as product output, each one checked against the Grux
+source. Its case sha (`ab2d6ab8...`) is frozen in the module and pinned again in `s2/test_holdout_v4.py`, before the
+next round's training data is generated. `eval_local.py`, `eval_run.py` and `s2/train_run.py` score it as
+`holdout_v4`. No model has been scored on it yet.
+
 ## 2. Train your own
 
 | Step | File | What it does |
@@ -93,6 +112,7 @@ and checked by its self-test, and `check_prompts.py` checks every request it sen
 | Held-out set | `s2/holdout.py` | 464 tasks written separately; `s2/contamination.py` proves none of them leaks into training (`s2/train_exclude.json`) |
 | Held-out v2 | `s2/holdout_v2.py`, `s2/rules.py`, `local_turn.py` | 466 tasks scored as Grux 3.1.0 sends a local turn, with round 2's stricter rules; the set that measured 4b-v2 |
 | Held-out v3 | `s2/holdout_v3.py`, `s2/test_holdout_v3.py` | 321 multi-step jobs on the full Grux v3.3.1 turn, every tool on every request; the set for a bigger tier |
+| Held-out v4 | `s2/holdout_v4.py`, `s2/test_holdout_v4.py` | 323 new jobs on v3's turn and scorer, written apart from every earlier set and both banks; the set that tells a skill from a memorized template |
 | Answers | `s2/gen_data.py` | A teacher model (Gemma 4 26B on a GPU box, through Ollama) writes each reply; a reply is kept only when the scorer passes it |
 | Training | `s2/box_train.py` | LoRA on Qwen 3.5 (2B, 4B, 9B), loss on the answer tokens only, checkpoints so a lost spot box resumes |
 | Run | `s2/train_run.py` | Train, merge, import into Ollama as nvfp4, score the held-out set, pull the model out (the published 9B was then quantized separately with NVIDIA ModelOpt, to the mixed NVFP4 and MXFP8 recipe of Ollama's own qwen3.5:9b) |

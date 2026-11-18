@@ -58,6 +58,8 @@ HOST_NEEDS = {"2b": (16, 60), "4b": (24, 80), "9b": (40, 120), "pro": (80, 250)}
 SHIPPED = {"2b": "601cd23c66ef", "4b": "1de6472396f2", "9b": "357e4bd45ff0"}
 SHIPPED_TAG = "gruxai.com/grux/grux-local:{}"
 SHIPPED_SETS = ("holdout", "holdout_v2", "s1")   # their v3 is scored on its own (eval_run --set holdout_v3)
+GGUF_SETS = ("holdout_v3", "holdout", "holdout_v2", "s1")   # the sets a GGUF tier is compared on (train_run.SETS also
+# scores held-out v4, which the MLX rows of tiers trained before it do not have)
 # daytona 0.231.1's GpuType values (read 2026-11-17); preflight uses the SDK's own enum when it is installed.
 GPU_TYPES_SDK = "0.231.1"
 GPU_TYPES = ("H100", "H200", "B200", "B300", "L40S", "RTX-PRO-6000", "RTX-4090", "RTX-5090", "MI355X")
@@ -258,7 +260,7 @@ def preflight(a, fetch=default_fetch):
         if man.get("model") != TIERS[tier][0]:
             bad.append(f"{tier}: trained from {man.get('model')}, expected {TIERS[tier][0]}")
         missing = [os.path.basename(train_run.eval_path(d, man.get("tag", ""), name, k))
-                   for name in train_run.SETS for k in range(1, a.passes + 1)
+                   for name in GGUF_SETS for k in range(1, a.passes + 1)
                    if not os.path.exists(train_run.eval_path(d, man.get("tag", ""), name, k))]
         if missing:
             bad.append(f"{tier}: {len(missing)} MLX row files missing to compare with (first {missing[0]})")
@@ -378,12 +380,12 @@ def evaluate(client, model, tier_dir, mlx_tag, a):
                               sets={k: v for k, v in train_run.SETS.items() if k == "holdout_v3"})
         gpu_sample(client, model, tier_dir, "v3_full")
         train_run.score_model(client, model, tier_dir, a.parallel, a.passes,
-                              sets={k: v for k, v in train_run.SETS.items() if k != "holdout_v3"})
+                              sets={k: v for k, v in train_run.SETS.items() if k in GGUF_SETS and k != "holdout_v3"})
     except train_run.SetDamaged as e:
         set_status(tier_dir, "damaged", f"full scoring: {e}")
         return "damaged"
     summary = {}
-    for name in train_run.SETS:
+    for name in GGUF_SETS:
         for k in range(1, a.passes + 1):
             r = rows(train_run.eval_path(tier_dir, model, name, k))
             mr = rows(train_run.eval_path(tier_dir, mlx_tag, name, k))
