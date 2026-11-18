@@ -688,6 +688,33 @@ def row_items(row):
     return [t for t in texts if t], lines
 
 
+def gate_file(src, dst, gate=None):
+    """Copy the rendered training rows of src (one JSON row a line, box_train's shape) to dst, without every row
+    TrainGate flags, and write dst + ".gate.json" with the counts and the held-out jobs touched. src is only read; dst
+    must be a new file. Returns the report."""
+    if os.path.abspath(src) == os.path.abspath(dst) or os.path.exists(dst):
+        raise SystemExit(f"refused: {dst} is the source or already exists; the gate writes a new file only")
+    gate = gate or TrainGate()
+    report = {"source": os.path.abspath(src), "rows": 0, "kept": 0, "dropped": 0, "held_out_touched": {},
+              "dropped_by_kind": {}}
+    with open(src) as f, open(dst, "w") as out:
+        for line in f:
+            row = json.loads(line)
+            report["rows"] += 1
+            hit = gate.why(*row_items(row))
+            if hit:
+                kind = hit[0].split(":")[0].split(" (")[0]
+                report["dropped"] += 1
+                report["held_out_touched"][hit[1]] = report["held_out_touched"].get(hit[1], 0) + 1
+                report["dropped_by_kind"][kind] = report["dropped_by_kind"].get(kind, 0) + 1
+                continue
+            out.write(line if line.endswith("\n") else line + "\n")
+            report["kept"] += 1
+    report["held_out_touched"] = dict(sorted(report["held_out_touched"].items()))
+    json.dump(report, open(dst + ".gate.json", "w"), indent=1)
+    return report
+
+
 def main():
     held = held_out()
     whole = {" ".join(w) for w in held}
@@ -702,4 +729,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--gate"]:   # python3 s2/contamination.py --gate <train.jsonl> <gated copy>
+        if len(sys.argv) != 4:
+            raise SystemExit("usage: contamination.py --gate <rows.jsonl> <new gated copy>")
+        print(json.dumps(gate_file(sys.argv[2], sys.argv[3]), indent=1))
+    else:
+        main()

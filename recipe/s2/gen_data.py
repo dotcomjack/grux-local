@@ -161,8 +161,10 @@ def run(box, cases, path, parallel, run_dir, deadline):
 
 def export(run_dir):
     """train.jsonl in box_train.py's shape, rebuilt from the bank (deterministic) plus kept answers."""
+    import contamination
+    gate = contamination.TrainGate()
     by_id = {c["id"]: c for c in train_bank.cases() if c["id"] not in EXCLUDE}
-    kept, fams = {}, {}
+    kept, fams, held = {}, {}, {}
     for line in answers(run_dir):
         r = json.loads(line)
         if r.get("pass") and r["case"] not in kept and r["case"] in by_id:
@@ -173,19 +175,25 @@ def export(run_dir):
             calls = [{"name": (x.get("function") or {}).get("name"),
                       "arguments": (x.get("function") or {}).get("arguments") or {}}
                      for x in r["message"]["tool_calls"]]
-            f.write(json.dumps({"id": cid, "family": r["family"], "messages": body["messages"],
-                                "tools": body.get("tools"),
-                                "target": {"content": r["message"]["content"], "tool_calls": calls}}) + "\n")
+            row = {"id": cid, "family": r["family"], "messages": body["messages"], "tools": body.get("tools"),
+                   "target": {"content": r["message"]["content"], "tool_calls": calls}}
+            hit = gate.why(*contamination.row_items(row))   # held-out v4, a v4 clone, a v3 or v4 frame
+            if hit:
+                held[hit[1]] = held.get(hit[1], 0) + 1
+                continue
+            f.write(json.dumps(row) + "\n")
             fams[r["family"]] = fams.get(r["family"], 0) + 1
     total = {}
     for c in by_id.values():
         total[c["family"]] = total.get(c["family"], 0) + 1
     summary = {f: {"kept": fams.get(f, 0), "bank": n, "yield": round(fams.get(f, 0) / n, 3)}
                for f, n in sorted(total.items())}
-    json.dump({"kept": len(kept), "bank": len(by_id), "families": summary},
+    json.dump({"kept": len(kept) - sum(held.values()), "bank": len(by_id), "families": summary,
+               "dropped_touches_held_out": sum(held.values()), "held_out_touched": dict(sorted(held.items()))},
               open(os.path.join(run_dir, "export.json"), "w"), indent=1)
     print(json.dumps(summary, indent=1))
-    print(f"EXPORT: {len(kept)} of {len(by_id)} cases kept")
+    print(f"EXPORT: {len(kept) - sum(held.values())} of {len(by_id)} cases kept, {sum(held.values())} dropped for "
+          "touching a held-out line")
 
 
 def main():
