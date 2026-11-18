@@ -446,49 +446,246 @@ def v4_frame_ref(ref=None):
     return out
 
 
+class FrameIndex:
+    """v4_frame_ref's frames, indexed once, for many scans."""
+
+    def __init__(self, ref=None):
+        self.fr = v4_frame_ref(ref)
+        self.seqs = [_fixed_seq(f) for f, _, _ in self.fr]
+        self.by1, self.by2, self.by3, self.g3 = {}, {}, {}, []
+        for i, (f, _, _) in enumerate(self.fr):
+            sq = self.seqs[i]
+            for w in set(sq):
+                self.by1.setdefault(w, []).append(i)
+            for x in {sq[k:k + 2] for k in range(len(sq) - 1)}:
+                self.by2.setdefault(x, []).append(i)
+            g = grams3(list(f))
+            self.g3.append(g)
+            for x in g:
+                self.by3.setdefault(x, []).append(i)
+
+    def scan(self, lines):
+        """v4_frames over this index."""
+        fr, seqs = self.fr, self.seqs
+        out = {}
+        for line in lines:
+            f = frame(line)
+            if _fixed(f) < FRAME_FIXED:
+                continue
+            sq, mine = _fixed_seq(f), grams3(f)
+            top = FRAME_EDITS_LONG if len(f) >= FRAME_LONG else FRAME_EDITS
+            cands = set()
+            for piece in _chunks(sq, top + 1):   # every reference within `top` edits holds one piece intact
+                hits = self.by2.get(piece[:2], ()) if len(piece) >= 2 else self.by1.get(piece[0], ()) if piece \
+                    else range(len(fr))
+                cands.update(i for i in hits if any(seqs[i][k:k + len(piece)] == piece
+                                                    for k in range(len(seqs[i]) - len(piece) + 1)))
+            for x in mine:   # every reference with a frame 3-gram Jaccard above 0
+                cands.update(self.by3.get(x, ()))
+            best = None
+            for i in sorted(cands):
+                cap = FRAME_EDITS_LONG if min(len(f), len(fr[i][0])) >= FRAME_LONG else FRAME_EDITS
+                d = _edits(sq, seqs[i], cap)
+                j = len(mine & self.g3[i]) / len(mine | self.g3[i]) if mine | self.g3[i] else 0.0
+                if d <= cap or j >= V4_FRAME_MAX:
+                    why = f"{d} edit{'s' if d != 1 else ''}" if d <= cap else f"3-gram Jaccard {j:.2f}"
+                    if best is None or (d, -j) < best[0]:
+                        best = ((d, -j), why, i)
+            if best:
+                out[line] = (best[1], fr[best[2]][1], fr[best[2]][2])
+        return out
+
+
 def v4_frames(lines, ref=None):
     """{line: (why, set name, the reference line)} for each line whose frame is within FRAME_EDITS edits of a
     reference frame on their fixed words (FRAME_EDITS_LONG when both frames have FRAME_LONG tokens), or whose frame
     3-gram Jaccard is V4_FRAME_MAX or more. Lines under FRAME_FIXED fixed words are not scored."""
-    fr = v4_frame_ref(ref)
-    seqs = [_fixed_seq(f) for f, _, _ in fr]
-    by1, by2, by3, g3 = {}, {}, {}, []
-    for i, (f, _, _) in enumerate(fr):
-        sq = seqs[i]
-        for w in set(sq):
-            by1.setdefault(w, []).append(i)
-        for x in {sq[k:k + 2] for k in range(len(sq) - 1)}:
-            by2.setdefault(x, []).append(i)
-        g = grams3(list(f))
-        g3.append(g)
-        for x in g:
-            by3.setdefault(x, []).append(i)
+    return FrameIndex(ref).scan(lines)
+
+
+# The short-line score above reads one way: the share of a v4 line's 3-grams found in a reference line. A short
+# reference line whose 3-grams sit inside a longer v4 line ("Get <name> on a video call." inside "Get my brother on a
+# video call right now.") is the same template read the other way. v4_reverse_clones scores that direction, over the
+# human lines of each set (v1, v2 and the S2 bank field by field; v3 and the v3 bank by their asks, plants and earlier
+# turns, not their tool output) with at least REVERSE_GRAMS 3-grams, so a two- or three-word phrase does not count.
+REVERSE_GRAMS = 3
+
+
+def human_reference():
+    """{set name: its human lines}: what v4_reverse_clones reads."""
+    import holdout_v4
+    import train_bank_v3
     out = {}
-    for line in lines:
-        f = frame(line)
-        if _fixed(f) < FRAME_FIXED:
-            continue
-        sq, mine = _fixed_seq(f), grams3(f)
-        top = FRAME_EDITS_LONG if len(f) >= FRAME_LONG else FRAME_EDITS
-        cands = set()
-        for piece in _chunks(sq, top + 1):   # every reference within `top` edits holds one piece intact
-            hits = by2.get(piece[:2], ()) if len(piece) >= 2 else by1.get(piece[0], ()) if piece else range(len(fr))
-            cands.update(i for i in hits if any(seqs[i][k:k + len(piece)] == piece
-                                                for k in range(len(seqs[i]) - len(piece) + 1)))
-        for x in mine:   # every reference with a frame 3-gram Jaccard above 0
-            cands.update(by3.get(x, ()))
-        best = None
-        for i in sorted(cands):
-            cap = FRAME_EDITS_LONG if min(len(f), len(fr[i][0])) >= FRAME_LONG else FRAME_EDITS
-            d = _edits(sq, seqs[i], cap)
-            j = len(mine & g3[i]) / len(mine | g3[i]) if mine | g3[i] else 0.0
-            if d <= cap or j >= V4_FRAME_MAX:
-                why = f"{d} edit{'s' if d != 1 else ''}" if d <= cap else f"3-gram Jaccard {j:.2f}"
-                if best is None or (d, -j) < best[0]:
-                    best = ((d, -j), why, i)
-        if best:
-            out[line] = (best[1], fr[best[2]][1], fr[best[2]][2])
+    for name, cs in (("held-out v1", holdout.cases()), ("held-out v2", holdout_v2.cases()),
+                     ("S2 training bank", train_bank.cases())):
+        out[name] = sorted({x.strip() for c in cs for t in _fields(c) for x in [t] + t.split("\n") if x.strip()})
+    for name, cs in (("held-out v3", holdout_v3.cases()), ("v3 training bank", train_bank_v3.cases())):
+        out[name] = holdout_v4.own_lines(cs)
     return out
+
+
+def v4_reverse_clones(lines, ref=None):
+    """{v4 line: (containment, set name, reference line)} for each v4 line that holds at least V4_SHORT_MAX of the
+    3-grams of a short reference human line (under SHORT skeleton words, at least REVERSE_GRAMS 3-grams)."""
+    ref = human_reference() if ref is None else ref
+    mine = {}
+    for line in lines:
+        g = grams3(skeleton(line))
+        if g:
+            mine[line] = g
+    index = {}
+    for line, g in mine.items():
+        for x in g:
+            index.setdefault(x, []).append(line)
+    out = {}
+    for name, ls in ref.items():
+        for r in ls:
+            sk = skeleton(r)
+            g = grams3(sk)
+            if len(sk) >= SHORT or len(g) < REVERSE_GRAMS:
+                continue
+            hits = {}
+            for x in g:
+                for line in index.get(x, ()):
+                    hits[line] = hits.get(line, 0) + 1
+            for line, n in hits.items():
+                v = n / len(g)
+                if v >= V4_SHORT_MAX and v > out.get(line, (0,))[0]:
+                    out[line] = (round(v, 3), name, r)
+    return out
+
+
+# --------------------------------------------------------------------------- the next round's training gate
+# Training data made after held-out v4 was frozen (a new bank, a teacher export) must not carry v4: no whole text of 3
+# words or more and no 8-word run of any v4 text (Grux's own output lines set aside on both sides, as v4_overlap does),
+# no template clone of a v4 line (the 4-gram and short-line scores), and no frame echo of a v3 or v4 line (v4_frames'
+# rule: every noun masked, so a held-out line on a new subject is caught). held_out() and v3_excluded are left as they
+# are: the frozen v3 bank keeps its kept set and its sha, and this gate runs where new rows are made or exported.
+
+def _strip_v4_runtime(t):
+    return "\n".join(line for line in t.split("\n") if not _RUNTIME_V4.fullmatch(line.strip()))
+
+
+def _owned_lines(cases, own_lines):
+    """{line: the first case id whose own lines hold it}, over own_lines (holdout_v4.own_lines), case by case."""
+    out = {}
+    for c in cases:
+        for line in own_lines([c]):
+            out.setdefault(line, c["id"])
+    return out
+
+
+class TrainGate:
+    """Built once (the references are large), then asked about many training items."""
+
+    def __init__(self, frames_against=("held-out v3", "held-out v4")):
+        import holdout_v4
+        v4 = holdout_v4.cases()
+        self.runs, self.whole = {}, {}
+        for c in v4:
+            for t in v4_texts(c):
+                ws = _words(t)
+                for g in grams(ws):
+                    self.runs.setdefault(g, c["id"])
+                if len(ws) >= 3 and not t.lstrip().startswith("{"):   # a call's arguments: the 8-word rule only
+                    self.whole.setdefault(" ".join(ws), c["id"])
+        self.owner = _owned_lines(v4, holdout_v4.own_lines)
+        v3_owner = _owned_lines(holdout_v3.cases(), holdout_v4.own_lines)
+        sk = {}
+        for line, cid in self.owner.items():
+            k = skeleton(line)
+            if k:
+                sk.setdefault(" ".join(k), (k, cid))
+        self.four = [(cid, grams4(k), w) for w, (k, cid) in sk.items()]
+        self.three = [(cid, grams3(k)) for k, cid in sk.values() if grams3(k)]
+        self.short = [(cid, grams3(k)) for k, cid in sk.values()   # v4's short lines, for the reverse direction
+                      if len(k) < SHORT and len(grams3(k)) >= REVERSE_GRAMS]
+        refs = {"held-out v3": ([], sorted(v3_owner)), "held-out v4": ([], sorted(self.owner))}
+        self.frames = FrameIndex({k: v for k, v in refs.items() if k in frames_against})
+        self.frame_owner = {**{line: cid for line, cid in v3_owner.items()}, **self.owner}
+        self._texts, self._lines = {}, {}
+
+    def _text(self, t):
+        """(why, case id) when text t holds a held-out v4 whole text or 8-word run, else None (cached)."""
+        if t not in self._texts:
+            ws = _words(_strip_v4_runtime(t))
+            joined = " ".join(ws)
+            hit = None
+            if len(ws) >= 3 and joined in self.whole and not t.lstrip().startswith("{"):
+                hit = "held-out v4 same text: " + joined[:60], self.whole[joined]
+            else:
+                shared = sorted(g for g in grams(ws) if g in self.runs)
+                if shared:
+                    hit = "held-out v4 8-word run: " + shared[0], self.runs[shared[0]]
+            self._texts[t] = hit
+        return self._texts[t]
+
+    def _line(self, line):
+        """(why, case id) when a human line clones or frame-echoes a held-out line, else None (cached). The forward
+        clone scores are v4_clones' own (no floor); the reverse direction reads only v4 lines of REVERSE_GRAMS
+        3-grams or more, as v4_reverse_clones does."""
+        if line not in self._lines:
+            hit = None
+            v, cid = near_v3([line], self.four)[line]
+            if v >= V4_PARA_MAX:
+                hit = f"held-out v4 clone (4-gram Jaccard {v:.2f}): {line[:60]}", cid
+            if hit is None:
+                v, cid = near_v3_short([line], ref=self.three)[line]
+                if v >= V4_SHORT_MAX:
+                    hit = f"held-out v4 clone (3-gram containment {v:.2f}): {line[:60]}", cid
+            if hit is None:
+                g = grams3(skeleton(line))
+                for cid, h in self.short:   # the other direction: a short v4 line held inside this line
+                    if g and len(h & g) / len(h) >= V4_SHORT_MAX:
+                        hit = f"held-out v4 clone (holds {len(h & g)} of {len(h)} 3-grams of a v4 line): {line[:60]}", cid
+                        break
+            if hit is None:
+                for _, (how, who, theirs) in self.frames.scan([line]).items():
+                    hit = f"{who} frame ({how}): {line[:60]} ~ {theirs[:60]}", self.frame_owner.get(theirs, who)
+            self._lines[line] = hit
+        return self._lines[line]
+
+    def why(self, texts, lines):
+        """(why, held-out case id) for an item that shows texts (every text of it, for the 8-word rule) and lines (its
+        human lines: asks, earlier turns, pasted lines, each line of one scored on its own too), or None when it
+        touches no held-out line."""
+        for t in texts:
+            hit = self._text(t)
+            if hit:
+                return hit
+        for line in sorted({x.strip() for t in lines for x in [t] + t.split("\n") if x.strip()}):
+            hit = self._line(line)
+            if hit:
+                return hit
+        return None
+
+
+def case_items(c):
+    """(texts, human lines) of a v3-shaped training case: every text it shows a model, and its ask, planted line and
+    earlier turns."""
+    return holdout_v3.case_texts(c), [c["user"]] + ([c["inject"]] if c.get("inject") else []) + [
+        t for _, t in c.get("history") or []]
+
+
+def row_items(row):
+    """(texts, human lines) of a rendered training row (box_train's shape: messages, target): every message but the
+    system text, and the target; the human lines are each user turn's words (after the per-turn block)."""
+    texts, lines = [], []
+    for m in row.get("messages") or []:
+        if m.get("role") == "system":
+            continue
+        c = m.get("content") or ""
+        if m.get("role") == "user":
+            c = c.split("THE USER'S MESSAGE:")[-1].strip()
+            lines.append(c)
+        texts.append(c)
+        for x in m.get("tool_calls") or []:
+            texts.append(json.dumps((x.get("function") or x).get("arguments") or {}, ensure_ascii=False))
+    tgt = row.get("target") or {}
+    texts.append(tgt.get("content") or "")
+    for x in tgt.get("tool_calls") or []:
+        texts.append(json.dumps((x.get("function") or x).get("arguments") or {}, ensure_ascii=False))
+    return [t for t in texts if t], lines
 
 
 def main():

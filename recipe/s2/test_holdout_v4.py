@@ -43,7 +43,7 @@ import holdout_v4 as v4  # noqa: E402
 import train_bank  # noqa: E402
 import train_bank_v3 as tb  # noqa: E402
 
-EXPECTED_SHA = "dd985446e4439bcbc77ef48fbf481c2dc89e6a237c290b4b567370389fade84f"
+EXPECTED_SHA = "d17adce36c3c5456273a689455e7e7a83fc823d85b6ad6103468258be63db89e"
 FAILS, RAN = [], []
 
 
@@ -324,6 +324,12 @@ frames = ct.v4_frames(LINES, REF)
 check(f"6 0 of {len(LINES)} v4 texts and lines has the frame of a line in v1, v2, v3 or either bank (every noun "
       f"masked; {ct.FRAME_EDITS} edit, {ct.FRAME_EDITS_LONG} at {ct.FRAME_LONG}+ tokens, or 3-gram Jaccard "
       f"{ct.V4_FRAME_MAX})", not frames, str(list(frames.items())[:3]))
+rev = ct.v4_reverse_clones(LINES)
+check(f"6 0 of {len(LINES)} v4 texts and lines holds a short human line of v1, v2, v3 or either bank (the short-line "
+      f"score read the other way)", not rev, str(list(rev.items())[:3]))
+got = ct.v4_reverse_clones(["Get my sister on a video call right now.", "Is my calendar open on Saturday?"])
+check("6 ... and it catches a v4 line built around a bank template (\"Get <name> on a video call.\"), not a plain ask",
+      list(got) == ["Get my sister on a video call right now."], str(got))
 EARLY = ["Read my document Dance recital and put the dress rehearsal on my calendar.",   # in the first v4 commit
          "Read the email from the HOA and add the annual get together to my calendar.",
          "Check my notes for the passport renewal and add the appointment to my calendar.",
