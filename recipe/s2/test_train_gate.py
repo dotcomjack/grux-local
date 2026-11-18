@@ -6,9 +6,11 @@ out of new training rows, and leaves the frozen v3 bank alone. No model runs.
      it (the gate runs at export time instead, so the frozen set never moves);
   2. the gate catches, in a rendered training row: a held-out v4 8-word run in a tool result, a v4 ask copied whole,
      a v4 ask and a v3 ask with every noun changed (a frame echo, which the word scores miss), a short v4 line held
-     inside a longer line; a Grux runtime line alone is not counted, and it does not shield a v4 run beside it; a
-     clean row passes. The frame checks go red with the frame rule turned off;
-  3. export_v3 drops a job that touches a held-out line and counts it, and keeps a clean one.
+     inside a longer line, a four-word v4 line with one word swapped; a Grux runtime line alone is not counted, it
+     does not shield a v4 run beside it, and a v4 run split by one on a line of its own is still caught; a clean row
+     passes. The frame checks go red with the frame rule turned off;
+  3. export_v3 drops a job that touches a held-out line, drops a job that is clean itself but whose teacher answer
+     carries a v4 run, counts both, and keeps a clean one.
 Prints PASS or FAIL per check; exit 1 on any FAIL, or if no check ran.
 
   GRUX_SRC_V3=<Grux v3.3.1 Sources/Grux> python3 recipe/s2/test_train_gate.py
@@ -148,6 +150,8 @@ def answer(c):
 
 late = next(c for c in KEPT if c["family"] == "chain" and not GATE.why(*ct.case_items(c)) and c is not fine
             and "reply" in c["steps"][-1])
+check("3 the job used for the leaky answer is clean itself, rows and all, before the leak",
+      not any(GATE.why(*ct.row_items(r)) for r in export_v3.rows_for(late, answer(late))))
 leaky = answer(late)
 leaky["raw"][-1]["content"] = "Done. " + v4_run   # the teacher's own words carry a held-out v4 run
 run = tempfile.mkdtemp()
