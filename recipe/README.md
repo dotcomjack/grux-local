@@ -99,7 +99,7 @@ similar templates, so a v3 score cannot tell a learned skill from a memorized te
 (`holdout_v3.request_v3`, `run_case`, `score_v3`, unchanged), with new scenarios, wording, names and tool sequences:
 none of its 11 chain call sequences appears in v3 or the v3 bank. `s2/contamination.py` (`v4_overlap`, `v4_clones`)
 proves it shares no whole text, no 8-word run, no template clone and no sentence frame (`v4_frames`: every noun
-masked, within one token edit, two for long frames (a merged masked run is free), or a 3-gram Jaccard of 0.5, so a v3 ask on a new subject, or with one small word
+masked, within one token edit, two when both frames have 10 or more tokens (a merged masked run is free), or a 3-gram Jaccard of 0.5, so a v3 ask on a new subject, or with one small word
 changed, is caught; lines with fewer than 5 fixed words are not frame-scored, and tool results are held to the 8-word
 rule only) with held-out v1, v2, v3, the v3 training bank or the S2 training bank, every line of a pasted message scored on its own; Grux's own output lines are set aside as
 product output, each one checked against the Grux source, and tool results are held to the 8-word and whole-text rule
