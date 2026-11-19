@@ -16,7 +16,7 @@ def check(name, ok, detail=""):
 
 
 d = tempfile.mkdtemp()
-json.dump({"model": "grux-m", "pull": "skipped: needs 22.00 GB plus a 10 GB floor, 13.00 GB free"},
+json.dump({"model": "grux-m", "pull": "skipped: needs 22.00 GB plus a 20 GB floor, 13.00 GB free"},
           open(os.path.join(d, "pull.json"), "w"))
 why = train.pack_refusal(d, "grux-m")
 check("a pack skipped for disk refuses the gate request, naming the reason",
