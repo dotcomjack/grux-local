@@ -243,7 +243,8 @@ def train(box, a, run_dir):
             return ok
 
 
-DISK_FLOOR = 10e9   # a download leaves at least this much free on this machine
+DISK_FLOOR = 20e9   # a download leaves at least this much free on this machine. 20 GB, not 10: 2026-11-18 the
+#                    tier packs took this Mac to 0.3 GB free; under 20 GB no model lands here (agreed rule, same day)
 
 
 def disk_short(dest_dir, nbytes, floor=None):
