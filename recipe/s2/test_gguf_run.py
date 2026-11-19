@@ -531,9 +531,11 @@ box = Box(payload=payload)
 td = tempfile.mkdtemp()
 check("the Pro GGUF is not pulled by default", g.fetch_gguf(box, "pro", td, "/w/g.gguf", sha, GA).startswith("not pulled")
       and box.gets == [])
+check("a download leaves at least 20 GB free here (the 2026-11-18 rule)", t.DISK_FLOOR == 20e9, t.DISK_FLOOR)
+_floor = t.DISK_FLOOR
 t.DISK_FLOOR = 1e18
 r = g.fetch_gguf(box, "2b", td, "/w/g.gguf", sha, GA)
-t.DISK_FLOOR = 10e9
+t.DISK_FLOOR = _floor
 check("short of disk, a GGUF is skipped with the reason", r.startswith("skipped: needs") and box.gets == [], r)
 t.DISK_FLOOR = 0
 r = g.fetch_gguf(box, "2b", td, "/w/g.gguf", sha, GA)
@@ -543,7 +545,7 @@ r = g.fetch_gguf(Box(payload=payload, get_error="Write failed: [Errno 28]"), "4b
 check("a GGUF download that fails partway leaves no .part", r.startswith("failed:") and not os.path.exists(
     os.path.join(td, "f.gguf.part")) and not os.path.exists(os.path.join(td, "f.gguf")), r)
 r = g.fetch_gguf(Box(payload=b"other"), "4b", td, "/w/h.gguf", sha, GA)
-t.DISK_FLOOR = 10e9
+t.DISK_FLOOR = _floor
 check("a GGUF whose sha256 differs is not kept", r.startswith("failed: sha256") and not os.path.exists(os.path.join(td, "h.gguf")), r)
 
 
