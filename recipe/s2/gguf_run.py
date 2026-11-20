@@ -759,12 +759,19 @@ def progress(a, tiers, shipped):
     return n
 
 
+now = time.time   # the box clock for settles; tests advance it
+
+
 def run_group(a, gpu, tiers, shipped, facts, root):
     """Boxes for one GPU type until the group is done: a new box only after an eviction, never after a stop, the cap
     or a refusal, and never a third after two evictions in a row that wrote nothing. Every reservation is settled,
     whatever ends the box."""
-    status_, stale = "not started", 0
-    for attempt in range(4):
+    import capacity
+    status_, stale, attempt = "not started", 0, -1
+    waiter = capacity.CapacityWait(getattr(a, "capacity_wait_hours", 12.0), sleep=STOP.wait)
+    boxes = 0   # a create that never came up for lack of capacity is not a box (2026-11-20: see capacity.py)
+    while boxes < 4:
+        attempt = boxes
         if STOP.is_set():
             status_ = "stopped"
             break
@@ -785,22 +792,34 @@ def run_group(a, gpu, tiers, shipped, facts, root):
         if r.returncode != 0 or not rid:
             log(f"STOP: the spend meter refused the {gpu} box (exit {r.returncode}): {r.stderr.strip()[:200]}", root)
             return "meter refused"
-        t_box, before, cost = time.time(), progress(a, tiers, shipped), None
+        t_box, before, cost, short, s_ = now(), progress(a, tiers, shipped), None, False, None
         try:
             status_, cost = one_box(a, gpu, tiers, shipped, facts, rid, root)
         except Exception as e:   # a box reclaimed while it starts raises from create
             log(f"{gpu} box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", root)
-            status_, cost = "evicted", 0.0
-            if not STOP.is_set():
-                time.sleep(30)
-        finally:   # settled on every way out, a SystemExit or a full disk included
-            held = (time.time() - t_box) / 3600
+            status_, cost, short = "evicted", 0.0, capacity.is_capacity(e)
+        finally:   # settled on every way out, a SystemExit or a full disk included; a shortage created nothing
+            held = capacity.settle_hours((now() - t_box) / 3600, short)
             s_ = meter_call(a, ["settle", rid, "--hours", f"{held:.4f}"])
             a.add_spent(gpu, cost if cost is not None else held * rate(gpu))
             try:
                 log(f"{gpu} settle {rid}: exit {s_.returncode} {(s_.stdout or s_.stderr).strip()[:160]}", root)
             except OSError:
                 pass
+        if s_.returncode != 0:   # an unsettled reservation counts its full estimate all week: buy nothing more
+            log(f"STOP: the spend meter refused the {gpu} settle of {rid} (exit {s_.returncode})", root)
+            return status_ if status_ == "done" else "settle refused"
+        if short:
+            if waiter.wait(lambda m: log(f"{gpu}: {m}", root)):
+                continue
+            status_ = f"no capacity: no {gpu} box came up in {waiter.hours:g} h"
+            log(f"STOP: {status_}", root)
+            break
+        boxes += 1
+        if cost:
+            waiter.reset()
+        elif status_ == "evicted" and not STOP.is_set():
+            time.sleep(30)   # a create error that is not a capacity shortage still uses a box, as before
         log(f"{gpu} box {attempt + 1}: {status_}, spent about ${a.spent_of(gpu):.2f}", root)
         if status_ != "evicted":
             break
@@ -845,6 +864,8 @@ def parse_args(argv=None):
     ap.add_argument("--pro-cap", type=float, default=15.0, help="dollars for the --pro-gpu box group (plan: about $14)")
     ap.add_argument("--max-minutes", type=int, default=480)
     ap.add_argument("--meter", default="", help="spend meter CLI (reserve/settle) called around every box")
+    ap.add_argument("--capacity-wait-hours", type=float, default=12.0,
+                    help="keep retrying creates this long while the provider has no box ($0 meanwhile)")
     ap.add_argument("--meter-lane", default="grux-local")
     ap.add_argument("--owner", default="grux")
     ap.add_argument("--preflight-only", action="store_true", help="run the $0 checks and stop")
