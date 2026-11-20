@@ -856,10 +856,13 @@ StubTB = ShortTB   # group() installs whatever StubTB names
 g.STOP.clear()
 st, a_ = group(lambda *x: "scored")
 res, sett = meter_calls()
-zero = [l for l in open(METER_LOG).read().splitlines() if l.startswith("settle") and l.endswith("--hours 0.0000")]
+# the 9 shortages are reservations rid-1 to rid-9 (the stub box that came up holds for milliseconds, so it may read 0 too)
+zero = {l.split()[1] for l in open(METER_LOG).read().splitlines() if l.startswith("settle") and l.endswith("--hours 0.0000")}
+short_rids = {f"rid-{i}" for i in range(1, 10)}
 check("9 shortages then a box: the group is done (the old loop quit after 4)", st == "done" and len(StubTB.made) == 1,
       f"{st} {len(StubTB.made)}")
-check("... each shortage reserved and settled at 0 hours", res == 10 and sett == 10 and len(zero) == 9, f"{res} {sett} {len(zero)}")
+check("... each shortage reserved and settled at 0 hours", res == 10 and sett == 10 and short_rids <= zero,
+      f"{res} {sett} {sorted(short_rids - zero)}")
 ShortTB.short = 10 ** 6
 a_hours = 0.000001   # a deadline about 4 ms out
 
