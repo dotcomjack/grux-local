@@ -832,5 +832,51 @@ check("... and once the serial chat pass is in, the tier is scored and final",
       st == "scored" and g.status(os.path.join(tr3, "pro"))["stage"] == "scored", str(g.status(os.path.join(tr3, "pro"))))
 g.build_tier, g.check_import, g.probe, g.evaluate, g.serial_chat = saved_fns
 
+# --------------------------------------------------------------------------- 10. a GPU shortage is waited out
+# Measured 2026-11-20: creates that never came up used the group's 4 attempts in about 2 minutes. Now a shortage waits
+# (capacity.CapacityWait, $0, settled at 0 hours) and only a box that came up counts.
+import capacity  # noqa: E402
+
+capacity.FIRST_GAP, capacity.MOST_GAP = 0.001, 0.002
+
+
+class ShortTB(StubTB):
+    short = 0
+
+    def __init__(self, *x, **k):
+        if ShortTB.short > 0:
+            ShortTB.short -= 1
+            raise RuntimeError("DaytonaServiceUnavailableError: No spot GPU capacity is available for this request.")
+        super().__init__(*x, **k)
+
+
+saved_tb = StubTB
+ShortTB.short = 9
+StubTB = ShortTB   # group() installs whatever StubTB names
+g.STOP.clear()
+st, a_ = group(lambda *x: "scored")
+res, sett = meter_calls()
+zero = [l for l in open(METER_LOG).read().splitlines() if l.startswith("settle") and l.endswith("--hours 0.0000")]
+check("9 shortages then a box: the group is done (the old loop quit after 4)", st == "done" and len(StubTB.made) == 1,
+      f"{st} {len(StubTB.made)}")
+check("... each shortage reserved and settled at 0 hours", res == 10 and sett == 10 and len(zero) == 9, f"{res} {sett} {len(zero)}")
+ShortTB.short = 10 ** 6
+a_hours = 0.000001   # a deadline about 4 ms out
+
+
+def group_short(*x, **k):
+    real = capacity.CapacityWait
+    capacity.CapacityWait = lambda hours, **kw: real(a_hours, **kw)
+    try:
+        return group(*x, **k)
+    finally:
+        capacity.CapacityWait = real
+
+
+st, a_ = group_short(lambda *x: "scored")
+check("a shortage past the deadline ends the group no capacity, no box made", st.startswith("no capacity")
+      and len(StubTB.made) == 0, f"{st} {len(StubTB.made)}")
+StubTB = saved_tb
+
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)

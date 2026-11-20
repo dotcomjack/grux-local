@@ -357,6 +357,79 @@ def one_box(a, run_dir, tag, base_tag, reservation=None):
             return ("evicted" if box.gone() else "failed: " + why), (time.time() - t0) / 3600 * price
 
 
+def meter_run(a, args):
+    return subprocess.run([sys.executable, a.meter] + args, capture_output=True, text=True)
+
+
+def exit_code(status):
+    """6: no box came up for --capacity-wait-hours. 7: every allowed box was reclaimed (the checkpoint is kept, a
+    rerun resumes from it). Both used to end 0, so a chain logged "exit 0" for a run that had given up (2026-11-20).
+    Anything else keeps the old 0, and callers still read status.json for "done"."""
+    if status.startswith("no capacity"):
+        return 6
+    return 7 if status == "evicted" else 0
+
+
+def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None):
+    """Boxes until the run is done, stopped or out of boxes. Returns (status, spent).
+
+    A box that came up and was reclaimed uses one of --max-boxes (checkpoints keep its progress). A create that
+    never came up for lack of capacity uses none: it is settled at 0 hours (nothing ran) and waits in
+    capacity.CapacityWait, up to --capacity-wait-hours, then ends "no capacity". --cap bounds the spend throughout.
+    Measured 2026-11-20: the old loop spent its 8 attempts on 3 evictions plus 5 creates in about 3 minutes and quit
+    a 4B and a 9B run overnight; capacity came back about 7 hours later."""
+    import capacity
+    box = box or one_box
+    meter = meter or (lambda args: meter_run(a, args))
+    waiter = waiter or capacity.CapacityWait(getattr(a, "capacity_wait_hours", 12.0))
+    status, boxes = "not started", 0
+    while boxes < getattr(a, "max_boxes", 8):
+        if spent >= a.cap:
+            log(f"STOP: cap ${a.cap} reached (${spent:.2f})", run_dir)
+            break
+        rid, t_box = None, time.time()
+        if a.meter:   # a shared spend meter, reserved before every box create; exit 3 refuses the box
+            gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
+            hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
+            r = meter(["reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}", "--gpu", gpu.replace("-", ""),
+                       "--purpose", "train"] + (["--charter", a.charter] if a.charter else []))
+            if r.returncode != 0:
+                log(f"STOP: the spend meter refused the box (exit {r.returncode}): {r.stderr.strip()[:200]}", run_dir)
+                status = "meter refused"
+                break
+            rid = r.stdout.strip()
+            if not rid:
+                log("STOP: the spend meter returned no reservation id", run_dir)
+                status = "meter refused"
+                break
+        came_up, err = True, None
+        try:
+            status, cost = box(a, run_dir, tag, base_tag, rid)
+        except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
+            came_up, err, status, cost = False, e, "evicted", 0.0
+            log(f"box {boxes + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
+        short = not came_up and capacity.is_capacity(err)
+        if rid:   # a shortage created nothing, so it settles 0 hours: a long wait never books GPU time
+            meter(["settle", rid, "--hours", f"{0 if short else (time.time() - t_box) / 3600:.4f}"])
+        spent += cost
+        json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))
+        if short:
+            if waiter.wait(lambda s: log(s, run_dir)):
+                continue
+            status = f"no capacity: no box came up in {waiter.hours:g} h"
+            log(f"STOP: {status}", run_dir)
+            break
+        boxes += 1
+        if came_up:
+            waiter.reset()
+        else:
+            time.sleep(30)   # a create error that is not a capacity shortage still uses a box, as before
+        log(f"box {boxes}: {status}, spent about ${spent:.2f}", run_dir)
+        if status != "evicted":
+            break
+    return status, spent
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -375,6 +448,10 @@ def main():
     ap.add_argument("--parallel", type=int, default=4)
     ap.add_argument("--cap", type=float, default=50.0, help="training $40 plus scoring $10")
     ap.add_argument("--max-minutes", type=int, default=300)
+    ap.add_argument("--max-boxes", type=int, default=8, help="boxes that came up; a reclaimed one resumes from the "
+                    "checkpoint. A create that never came up for lack of capacity does not count")
+    ap.add_argument("--capacity-wait-hours", type=float, default=12.0,
+                    help="how long to keep retrying creates while the provider has no box ($0 meanwhile); exit 6 after")
     ap.add_argument("--until", choices=["train", "all"], default="all", help="train: stop once the adapter is out")
     ap.add_argument("--passes", type=int, default=3, help="score every set this many times (the charter's reruns)")
     ap.add_argument("--tag", default="", help="Ollama name for the trained model (sweeps need one each)")
@@ -414,46 +491,13 @@ def main():
         sys.exit(3)
     spent = float(json.load(open(os.path.join(run_dir, "spent.json")))["spent"]) if os.path.exists(
         os.path.join(run_dir, "spent.json")) else 0.0
-    status = "not started"
-    for attempt in range(8):                     # checkpoints keep progress and --cap bounds spend
-        if spent >= a.cap:
-            log(f"STOP: cap ${a.cap} reached (${spent:.2f})", run_dir)
-            break
-        rid, t_box = None, time.time()
-        if a.meter:   # a shared spend meter, reserved before every box create; exit 3 refuses the box
-            gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
-            hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
-            cmd = [sys.executable, a.meter, "reserve", "--lane", a.meter_lane, "--hours", f"{hours:.3f}",
-                   "--gpu", gpu.replace("-", ""), "--purpose", "train"] + (["--charter", a.charter] if a.charter else [])
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            if r.returncode != 0:
-                log(f"STOP: the spend meter refused the box (exit {r.returncode}): {r.stderr.strip()[:200]}", run_dir)
-                status = "meter refused"
-                break
-            rid = r.stdout.strip()
-            if not rid:
-                log("STOP: the spend meter returned no reservation id", run_dir)
-                status = "meter refused"
-                break
-        try:
-            status, cost = one_box(a, run_dir, tag, base_tag, rid)
-        except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
-            log(f"box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
-            status, cost = "evicted", 0.0
-            time.sleep(30)
-        if rid:
-            subprocess.run([sys.executable, a.meter, "settle", rid, "--hours", f"{(time.time() - t_box) / 3600:.4f}"],
-                           capture_output=True, text=True)
-        spent += cost
-        json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))
-        log(f"box {attempt + 1}: {status}, spent about ${spent:.2f}", run_dir)
-        if status != "evicted":
-            break
+    status, spent = box_loop(a, run_dir, tag, base_tag, spent)
     json.dump({"status": status}, open(os.path.join(run_dir, "status.json"), "w"))
     for name in sorted(os.listdir(run_dir)):     # a model tar only passes through here on its way to the Mac
         if name.startswith("ollama-") and name.endswith(".part"):
             os.remove(os.path.join(run_dir, name))
     log(f"FINISHED: spent about ${spent:.2f}", run_dir)
+    sys.exit(exit_code(status))
 
 
 if __name__ == "__main__":
