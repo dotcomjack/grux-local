@@ -8,6 +8,8 @@
  },
  "headline_tier": "4b",
  "since": "2026-10-22",
+ "backfill": {"enabled": true},
+ "backfill_why": "gruxai round 4, road B, pressed by the owner 2026-11-16: score the Mac-size builds already in the Ollama library, not only those published after since. Counted 2026-11-17 with this lane's own filters: 48 builds qualify, 1 already scored. They score after every new build, inside the same 15 a run and the same weekly meter, so about 4 weeks at about $2 a build. A back-catalog win is an alert, never trained by the lane.",
  "since_why": "S1 measured the whole open field on ollama.com on 2026-10-22 (Grux-Mac docs/factory/local-model-eval.md) and the Qwen 3.5 base was chosen from it; a base published or re-published after that date is new.",
  "license_allowlist": {
   "apache-2.0": "permits redistributing modified weights with the license and notices kept",

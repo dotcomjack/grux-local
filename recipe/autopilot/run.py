@@ -32,6 +32,31 @@ MAX_INCOMPLETE_RUNS = 2    # a build still not scored completely after this many
 MAX_BASE_RESCORES = 2      # base rescores per registry build; past it the lane says so loudly and stops paying
 
 
+def order_to_score(cands, headline):
+    """New builds first, newest first, the headline tier ahead; the back catalog (backfill) after every new build,
+    in the same order among themselves, so a week's cap never spends a new base's slot on an old one."""
+    out = sorted(cands, key=lambda c: c.get("updated") or "", reverse=True)
+    out.sort(key=lambda c: c["tier"] != headline)
+    out.sort(key=lambda c: bool(c.get("backfill")))
+    return out
+
+
+def may_train(c, verdict, no_train):
+    """Only a new base's win trains. A back-catalog win is an alert for a person: training spend was never part of
+    the backfill the owner approved (about $2 a scored build)."""
+    return verdict == "win" and not no_train and not c.get("backfill")
+
+
+def backfill_retry_is_alert(incomplete, box_ran, base_rescored):
+    """score.py exits 1 when any build came back incomplete, which the lane retries (a lose after two runs). It is a
+    quiet retry ONLY when something did come back incomplete, every one of them is a back-catalog build, a box really
+    ran for each (its result file exists), and no base was rescored this run. Anything else pages: a new build
+    incomplete, a base rescore that may have failed, or a lane that died before any box (review round 2)."""
+    if not incomplete or base_rescored:
+        return True
+    return any(not c.get("backfill") or c["id"] not in box_ran for c in incomplete)
+
+
 def complete_result(digest, model):
     """The newest complete, fully scored result for this build, or None. A result whose box listed no digest is
     matched by model name, and only from today's run (the watch's digest for today's build is then the only one
@@ -95,6 +120,8 @@ def main():
                 alerts.append("the spend meter refused at least one scoring box (exit 3); a refused model retries next week")
             elif st.get("score_exit") == 4:
                 alerts.append("scoring refused over the $150 swing line (exit 4): no box was created")
+            elif st.get("score_exit") == 1 and st.get("backfill_retry"):
+                pass                                      # only back-catalog builds came back incomplete: they retry
             elif st.get("score_exit") not in (None, 0):
                 alerts.append(f"score.py exited {st['score_exit']}")
             if st.get("train") and st.get("exit") not in (None, 0):
@@ -155,17 +182,21 @@ def week_run():
             to_decide.append((c, res))                           # scored earlier, never decided (killed, base failed)
         else:
             to_score.append(c)
-    to_score.sort(key=lambda c: c.get("updated") or "", reverse=True)             # newest first ...
-    to_score.sort(key=lambda c: c["tier"] != common.base_config()["headline_tier"])  # ... headline tier ahead (stable)
+    to_score = order_to_score(to_score, common.base_config()["headline_tier"])
     week["carried_over"] = [c["id"] for c in to_score[MAX_PER_RUN:]]
     to_score = to_score[:MAX_PER_RUN]
     models = [c["id"] for c in to_score]
     rescores = state.setdefault("base_rescores", {})
     added_rescores = []
-    for tier in sorted({c["tier"] for c in pending}):
+    # Only the tiers this run can actually score or decide: a back-catalog build carried over past the cap never
+    # buys a base rescore on its own (review 2026-11-17, finding 4).
+    for tier in sorted({c["tier"] for c in to_score} | {c["tier"] for c, _ in to_decide}):
         if base_row_current(tier) is False:
             key = f"{tier}|{_BASE_DIGEST.get(tier)}"
             if len(rescores.get(key, [])) >= MAX_BASE_RESCORES:
+                if key in state.setdefault("stuck_alerted", []):
+                    continue                              # said once; the week report still lists the tier waiting
+                state["stuck_alerted"].append(key)
                 msg = (f"BASE ROW STUCK: the {tier} base was scored {MAX_BASE_RESCORES} times for registry build "
                        f"{_BASE_DIGEST.get(tier)} and its newest complete row still does not carry that digest; "
                        "not rescoring again, its candidates wait for a person")
@@ -186,9 +217,14 @@ def week_run():
             if r.returncode == common.BACKLOGGED:
                 week["backlogged"] = models
         _BASE_CURRENT.clear()                             # a base rescored just now may be current
+    incomplete, box_ran = [], set()
     for c in to_score:
         res = os.path.join(common.RESULTS, f"{date}-{common.stem(c['id'])}.json")
         done = complete_result(c["digest"], c["id"])
+        if not done:
+            incomplete.append(c)
+            if os.path.exists(res):
+                box_ran.add(c["id"])
         if done:
             to_decide.append((c, done))
             continue
@@ -205,6 +241,9 @@ def week_run():
         else:
             week["decisions"].append({"candidate": c["id"], "verdict": None,
                                       "why": f"not scored completely (run {len(runs)} of {MAX_INCOMPLETE_RUNS}); next week retries"})
+    if week["steps"] and week["steps"][-1].get("score_exit") == 1 and not backfill_retry_is_alert(incomplete, box_ran,
+                                                                                            bool(added_rescores)):
+        week["steps"][-1]["backfill_retry"] = [c["id"] for c in incomplete]   # retried next run: not a failure
     common.write_json(watch.STATE_PATH, state)
     for c, res in to_decide:
         if base_row_current(c["tier"]) is not True:      # never a permanent verdict against a stale or unknown base
@@ -221,7 +260,17 @@ def week_run():
             d = {}
         week["decisions"].append({"candidate": c["id"], "verdict": d.get("verdict"),
                                   "line": d.get("line") or (r.stdout + r.stderr).strip()[-300:]})
-        if d.get("verdict") == "win" and not a.no_train:
+        if d.get("verdict") == "win" and c.get("backfill"):
+            item = common.ready_item(
+                f"grux-local-backfill-win-{common.stem(c['id'])}", "backfill-win",
+                f"Grux Local: {c['id']} beat the {c['tier']} base",
+                f"A back-catalog build ({c['id']}) scored above today's {c['tier']} base on the held-out sets. The lane "
+                "trains only new bases, so training this one waits on a person.",
+                [dpath.replace(os.path.expanduser("~"), "~", 1), res.replace(os.path.expanduser("~"), "~", 1)],
+                None, [])
+            print(f"BACK-CATALOG WIN: {c['id']}; wrote {item}", flush=True)
+            week.setdefault("backfill_wins", []).append(c["id"])
+        if may_train(c, d.get("verdict"), a.no_train):
             t = subprocess.run([sys.executable, os.path.join(HERE, "train.py"), dpath])
             week["steps"].append({"train": c["id"], "exit": t.returncode})
     common.write_json(os.path.join(common.RESULTS, f"week-{date}.json"), week)
