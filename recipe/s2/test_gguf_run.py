@@ -850,6 +850,15 @@ class ShortTB(StubTB):
         super().__init__(*x, **k)
 
 
+box_t = [0.0]
+
+
+def box_clock():   # 0.5 h per read: a shortage settled with it instead of 0 would read 0.5000
+    box_t[0] += 1800.0
+    return box_t[0]
+
+
+saved_now, g.now = g.now, box_clock
 saved_tb = StubTB
 ShortTB.short = 9
 StubTB = ShortTB   # group() installs whatever StubTB names
@@ -857,12 +866,14 @@ g.STOP.clear()
 st, a_ = group(lambda *x: "scored")
 res, sett = meter_calls()
 # the 9 shortages are reservations rid-1 to rid-9 (the stub box that came up holds for milliseconds, so it may read 0 too)
-zero = {l.split()[1] for l in open(METER_LOG).read().splitlines() if l.startswith("settle") and l.endswith("--hours 0.0000")}
+settle_h = {l.split()[1]: l.split()[-1] for l in open(METER_LOG).read().splitlines() if l.startswith("settle")}
+zero = {r for r, h in settle_h.items() if h == "0.0000"}
 short_rids = {f"rid-{i}" for i in range(1, 10)}
 check("9 shortages then a box: the group is done (the old loop quit after 4)", st == "done" and len(StubTB.made) == 1,
       f"{st} {len(StubTB.made)}")
-check("... each shortage reserved and settled at 0 hours", res == 10 and sett == 10 and short_rids <= zero,
-      f"{res} {sett} {sorted(short_rids - zero)}")
+check("... each shortage reserved and settled at 0 hours, the box at its real time",
+      res == 10 and sett == 10 and short_rids <= zero and settle_h.get("rid-10") == "0.5000",
+      f"{res} {sett} {sorted(short_rids - zero)} {settle_h.get('rid-10')}")
 ShortTB.short = 10 ** 6
 a_hours = 0.000001   # a deadline about 4 ms out
 
@@ -879,7 +890,7 @@ def group_short(*x, **k):
 st, a_ = group_short(lambda *x: "scored")
 check("a shortage past the deadline ends the group no capacity, no box made", st.startswith("no capacity")
       and len(StubTB.made) == 0, f"{st} {len(StubTB.made)}")
-StubTB = saved_tb
+StubTB, g.now = saved_tb, saved_now
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)

@@ -759,6 +759,9 @@ def progress(a, tiers, shipped):
     return n
 
 
+now = time.time   # the box clock for settles; tests advance it
+
+
 def run_group(a, gpu, tiers, shipped, facts, root):
     """Boxes for one GPU type until the group is done: a new box only after an eviction, never after a stop, the cap
     or a refusal, and never a third after two evictions in a row that wrote nothing. Every reservation is settled,
@@ -789,14 +792,14 @@ def run_group(a, gpu, tiers, shipped, facts, root):
         if r.returncode != 0 or not rid:
             log(f"STOP: the spend meter refused the {gpu} box (exit {r.returncode}): {r.stderr.strip()[:200]}", root)
             return "meter refused"
-        t_box, before, cost, short = time.time(), progress(a, tiers, shipped), None, False
+        t_box, before, cost, short = now(), progress(a, tiers, shipped), None, False
         try:
             status_, cost = one_box(a, gpu, tiers, shipped, facts, rid, root)
         except Exception as e:   # a box reclaimed while it starts raises from create
             log(f"{gpu} box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", root)
             status_, cost, short = "evicted", 0.0, capacity.is_capacity(e)
         finally:   # settled on every way out, a SystemExit or a full disk included; a shortage created nothing
-            held = 0.0 if short else (time.time() - t_box) / 3600
+            held = 0.0 if short else (now() - t_box) / 3600
             s_ = meter_call(a, ["settle", rid, "--hours", f"{held:.4f}"])
             a.add_spent(gpu, cost if cost is not None else held * rate(gpu))
             try:

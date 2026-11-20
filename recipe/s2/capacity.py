@@ -15,7 +15,10 @@ CAPACITY_WORDS = ("capacity", "serviceunavailable", "service unavailable", "no s
 
 
 def is_capacity(e):
-    """True when a create failed because the provider had no box to give (as opposed to a bad request)."""
+    """True when a create failed because the provider had no box to give (as opposed to a bad request). An error
+    raised after the box was created (train_box marks it `box_created`) is a box that billed, never a shortage."""
+    if getattr(e, "box_created", False):
+        return False
     text = f"{type(e).__name__} {e}".lower()
     return any(w in text for w in CAPACITY_WORDS)
 
@@ -44,7 +47,7 @@ class CapacityWait:
         left = self.started + self.hours * 3600 - now
         if left <= 0:
             return False
-        gap = min(self.most, self.first * (2 ** self.misses), left)
+        gap = min(self.most, self.first * (2 ** min(self.misses, 30)), left)   # capped: no overflow
         self.misses += 1
         log(f"no GPU capacity (miss {self.misses}, {self.waited_hours():.2f} h of {self.hours:g} h); "
             f"next create in {gap:.0f} s, $0 meanwhile")

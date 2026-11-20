@@ -78,8 +78,10 @@ check("a bad request is not a shortage", not capacity.is_capacity(ValueError("im
 
 
 # --------------------------------------------------------------------------- 3 to 5. the box loop
-def loop(plan, wait_hours=12.0, max_boxes=8, meter=False):
-    """Run box_loop over `plan`: each item is an Exception to raise from the box or a (status, cost) to return."""
+def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None):
+    """Run box_loop over `plan`: each item is an Exception to raise from the box or a (status, cost) to return.
+    The box clock moves 0.5 h on every read, so a settle that used it instead of 0 reads 0.5000. The meter refuses
+    every reserve after `refuse_after`."""
     run = tempfile.mkdtemp()
     a = argparse.Namespace(cap=100.0, meter="fake" if meter else "", gpu="H200", meter_lane="test", charter="",
                            capacity_wait_hours=wait_hours, max_boxes=max_boxes)
@@ -93,17 +95,30 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False):
             raise step
         return step
 
+    reserves = []
+
     def fake_meter(args):
         if args[0] == "settle":
             settles.append(float(args[3]))
+        if args[0] == "reserve":
+            reserves.append(1)
+            if refuse_after is not None and len(reserves) > refuse_after:
+                return types.SimpleNamespace(returncode=3, stdout="", stderr="week cap reached")
         return types.SimpleNamespace(returncode=0, stdout=f"rid-{len(calls)}\n", stderr="")
+
+    box_t = [0.0]
+
+    def box_clock():
+        box_t[0] += 1800.0
+        return box_t[0]
 
     ck = Clock()
     waiter = capacity.CapacityWait(wait_hours, clock=ck, sleep=ck.sleep)
     saved = t.time.sleep
     t.time.sleep = lambda s: None
     try:
-        status, spent = t.box_loop(a, run, "grux-m", "base-m", 0.0, box=box, meter=fake_meter, waiter=waiter)
+        status, spent = t.box_loop(a, run, "grux-m", "base-m", 0.0, box=box, meter=fake_meter, waiter=waiter,
+                                   clock=box_clock)
     finally:
         t.time.sleep = saved
     return status, spent, len(calls), settles, open(os.path.join(run, "run.log")).read()
@@ -111,8 +126,8 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False):
 
 st, spent, n, settles, lg = loop([SHORT] * 20 + [("done", 4.0)], meter=True)
 check("20 shortages then a box that runs: done (the old loop quit after 8)", st == "done" and n == 21, f"{st} {n}")
-check("... every shortage settled at 0 hours, the box at its real time", settles[:20] == [0.0] * 20 and len(settles) == 21,
-      str(settles[:3]))
+check("... every shortage settled at 0 hours, the box at its real time",
+      settles[:20] == [0.0] * 20 and len(settles) == 21 and settles[20] == 0.5, f"{settles[:3]} {settles[20:]}")
 check("... and $0 spent on the shortages", abs(spent - 4.0) < 1e-9, str(spent))
 
 st, spent, n, settles, lg = loop([SHORT] * 10000, wait_hours=1.0)
@@ -128,9 +143,24 @@ check("a create error that is not a shortage still uses a box", n == 3 and st ==
 st, spent, n, settles, lg = loop([SHORT, SHORT, ("evicted", 1.0), SHORT, ("done", 1.0)], max_boxes=2)
 check("shortages around a reclaimed box do not use boxes", st == "done" and n == 5, f"{st} {n}")
 
+CREATED = NoSpot("503 Service Unavailable from the toolbox proxy")
+CREATED.box_created = True   # train_box marks an error raised after the create returned
+check("an error after the box was created is not a shortage", not capacity.is_capacity(CREATED))
+st, spent, n, settles, lg = loop([CREATED] * 20, max_boxes=3, meter=True)
+check("... it uses a box and settles its real time", n == 3 and settles == [0.5, 0.5, 0.5], f"{n} {settles}")
+
+st, spent, n, settles, lg = loop([SHORT] * 50, meter=True, refuse_after=4)
+check("a meter refusal in the middle of a wait stops the run, not 0", st == "meter refused" and t.exit_code(st) == 8
+      and n == 4 and settles == [0.0] * 4, f"{st} {n} {settles}")
+
+big = capacity.CapacityWait(1e9, first=30, most=600, clock=Clock(), sleep=lambda s: None)
+big.misses = 5000
+check("the gap stays at its cap after thousands of misses (no overflow)", big.wait() and big.misses == 5001)
+
 # --------------------------------------------------------------------------- 6. exit codes
-check("exit 6 for no capacity, 7 for out of boxes, 0 for done",
-      (t.exit_code("no capacity: no box came up in 12 h"), t.exit_code("evicted"), t.exit_code("done")) == (6, 7, 0))
+check("exit 0 only for done: 6 no capacity, 7 out of boxes, 8 anything else unfinished",
+      [t.exit_code(x) for x in ("done", "no capacity: no box came up in 12 h", "evicted", "meter refused",
+                                "not started", "failed: boot")] == [0, 6, 7, 8, 8, 8])
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")
 sys.exit(1 if FAILS else 0)

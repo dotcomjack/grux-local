@@ -362,15 +362,18 @@ def meter_run(a, args):
 
 
 def exit_code(status):
-    """6: no box came up for --capacity-wait-hours. 7: every allowed box was reclaimed (the checkpoint is kept, a
-    rerun resumes from it). Both used to end 0, so a chain logged "exit 0" for a run that had given up (2026-11-20).
-    Anything else keeps the old 0, and callers still read status.json for "done"."""
+    """0 only for "done". 6: no box came up for --capacity-wait-hours. 7: every allowed box was reclaimed (the
+    checkpoint is kept, a rerun resumes from it). 8: anything else that did not finish (meter refused, train or boot
+    failed, not started). All of these used to end 0, so a chain logged "exit 0" for a run that had given up
+    (2026-11-20)."""
+    if status == "done":
+        return 0
     if status.startswith("no capacity"):
         return 6
-    return 7 if status == "evicted" else 0
+    return 7 if status == "evicted" else 8
 
 
-def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None):
+def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None, clock=time.time):
     """Boxes until the run is done, stopped or out of boxes. Returns (status, spent).
 
     A box that came up and was reclaimed uses one of --max-boxes (checkpoints keep its progress). A create that
@@ -387,7 +390,7 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
         if spent >= a.cap:
             log(f"STOP: cap ${a.cap} reached (${spent:.2f})", run_dir)
             break
-        rid, t_box = None, time.time()
+        rid, t_box = None, clock()
         if a.meter:   # a shared spend meter, reserved before every box create; exit 3 refuses the box
             gpu = max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0))
             hours = max(0.25, (a.cap - spent) / (PRICE.get(gpu, max(PRICE.values())) + BOX_EXTRA))
@@ -410,7 +413,7 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
             log(f"box {boxes + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
         short = not came_up and capacity.is_capacity(err)
         if rid:   # a shortage created nothing, so it settles 0 hours: a long wait never books GPU time
-            meter(["settle", rid, "--hours", f"{0 if short else (time.time() - t_box) / 3600:.4f}"])
+            meter(["settle", rid, "--hours", f"{0 if short else (clock() - t_box) / 3600:.4f}"])
         spent += cost
         json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))
         if short:
