@@ -602,6 +602,9 @@ check("a converter that fails stops that tier with its error, not the box", st =
 METER_LOG = tempfile.NamedTemporaryFile(delete=False, suffix=".log").name
 fake_meter = tempfile.NamedTemporaryFile("w", delete=False, suffix=".py")
 fake_meter.write("import os, sys\nlog = os.environ['FAKE_METER_LOG']\nopen(log, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                 # the real meter's rule (daytona_spend.check_hours): a settle of 0 hours or less is refused
+                 "if sys.argv[1] == 'settle' and (float(sys.argv[-1]) <= 0 or os.environ.get('FAKE_METER_REFUSE_SETTLE')):\n"
+                 "    sys.exit(1)\n"
                  "if sys.argv[1] == 'reserve':\n    if os.environ.get('FAKE_METER_REFUSE'):\n        sys.exit(3)\n"
                  "    print('rid-%d' % sum(1 for l in open(log) if l.startswith('reserve')))\n")
 fake_meter.close()
@@ -867,11 +870,11 @@ st, a_ = group(lambda *x: "scored")
 res, sett = meter_calls()
 # the 9 shortages are reservations rid-1 to rid-9 (the stub box that came up holds for milliseconds, so it may read 0 too)
 settle_h = {l.split()[1]: l.split()[-1] for l in open(METER_LOG).read().splitlines() if l.startswith("settle")}
-zero = {r for r, h in settle_h.items() if h == "0.0000"}
+zero = {r for r, h in settle_h.items() if h == "0.0001"}
 short_rids = {f"rid-{i}" for i in range(1, 10)}
 check("9 shortages then a box: the group is done (the old loop quit after 4)", st == "done" and len(StubTB.made) == 1,
       f"{st} {len(StubTB.made)}")
-check("... each shortage reserved and settled at 0 hours, the box at its real time",
+check("... each shortage reserved and settled at the meter's floor, the box at its real time",
       res == 10 and sett == 10 and short_rids <= zero and settle_h.get("rid-10") == "0.5000",
       f"{res} {sett} {sorted(short_rids - zero)} {settle_h.get('rid-10')}")
 ShortTB.short = 10 ** 6
@@ -890,6 +893,15 @@ def group_short(*x, **k):
 st, a_ = group_short(lambda *x: "scored")
 check("a shortage past the deadline ends the group no capacity, no box made", st.startswith("no capacity")
       and len(StubTB.made) == 0, f"{st} {len(StubTB.made)}")
+ShortTB.short = 5
+os.environ["FAKE_METER_REFUSE_SETTLE"] = "1"
+try:
+    st, a_ = group(lambda *x: "scored")
+finally:
+    del os.environ["FAKE_METER_REFUSE_SETTLE"]
+res, sett = meter_calls()
+check("a settle the meter refuses ends the group at once: no second reservation", st == "settle refused" and res == 1,
+      f"{st} {res}")
 StubTB, g.now = saved_tb, saved_now
 
 print("SELF-TEST", "PASS" if not FAILS else f"FAIL ({len(FAILS)})")

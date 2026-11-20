@@ -11,6 +11,15 @@ here instead, with a growing gap, until a wall-clock deadline. The spend bound s
 import time
 
 FIRST_GAP, MOST_GAP = 30.0, 600.0   # seconds; tests shrink these
+# The spend meter (daytona_spend.check_hours) refuses a settle of 0 hours and would leave the reservation open at its
+# full estimate (review 2026-11-20: every shortage retry would have booked a phantom $100). So a shortage settles at
+# this floor, about $0.0006 on an H200, and no settle is ever sent below it.
+SETTLE_FLOOR_HOURS = 0.0001
+
+
+def settle_hours(held, short):
+    """Hours to settle: the floor for a shortage (nothing ran), else the real time, never under the floor."""
+    return SETTLE_FLOOR_HOURS if short else max(SETTLE_FLOOR_HOURS, held)
 CAPACITY_WORDS = ("capacity", "serviceunavailable", "service unavailable", "no spot")
 
 

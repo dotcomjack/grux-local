@@ -792,20 +792,23 @@ def run_group(a, gpu, tiers, shipped, facts, root):
         if r.returncode != 0 or not rid:
             log(f"STOP: the spend meter refused the {gpu} box (exit {r.returncode}): {r.stderr.strip()[:200]}", root)
             return "meter refused"
-        t_box, before, cost, short = now(), progress(a, tiers, shipped), None, False
+        t_box, before, cost, short, s_ = now(), progress(a, tiers, shipped), None, False, None
         try:
             status_, cost = one_box(a, gpu, tiers, shipped, facts, rid, root)
         except Exception as e:   # a box reclaimed while it starts raises from create
             log(f"{gpu} box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", root)
             status_, cost, short = "evicted", 0.0, capacity.is_capacity(e)
         finally:   # settled on every way out, a SystemExit or a full disk included; a shortage created nothing
-            held = 0.0 if short else (now() - t_box) / 3600
+            held = capacity.settle_hours((now() - t_box) / 3600, short)
             s_ = meter_call(a, ["settle", rid, "--hours", f"{held:.4f}"])
             a.add_spent(gpu, cost if cost is not None else held * rate(gpu))
             try:
                 log(f"{gpu} settle {rid}: exit {s_.returncode} {(s_.stdout or s_.stderr).strip()[:160]}", root)
             except OSError:
                 pass
+        if s_.returncode != 0:   # an unsettled reservation counts its full estimate all week: buy nothing more
+            log(f"STOP: the spend meter refused the {gpu} settle of {rid} (exit {s_.returncode})", root)
+            return status_ if status_ == "done" else "settle refused"
         if short:
             if waiter.wait(lambda m: log(f"{gpu}: {m}", root)):
                 continue

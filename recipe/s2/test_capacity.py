@@ -78,7 +78,7 @@ check("a bad request is not a shortage", not capacity.is_capacity(ValueError("im
 
 
 # --------------------------------------------------------------------------- 3 to 5. the box loop
-def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None):
+def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, refuse_settle=False):
     """Run box_loop over `plan`: each item is an Exception to raise from the box or a (status, cost) to return.
     The box clock moves 0.5 h on every read, so a settle that used it instead of 0 reads 0.5000. The meter refuses
     every reserve after `refuse_after`."""
@@ -97,9 +97,11 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None):
 
     reserves = []
 
-    def fake_meter(args):
+    def fake_meter(args):   # the real meter's rule (daytona_spend.check_hours): hours must be above 0
         if args[0] == "settle":
             settles.append(float(args[3]))
+            if float(args[3]) <= 0 or refuse_settle:
+                return types.SimpleNamespace(returncode=1, stdout="", stderr="hours must be a finite number above 0")
         if args[0] == "reserve":
             reserves.append(1)
             if refuse_after is not None and len(reserves) > refuse_after:
@@ -126,8 +128,8 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None):
 
 st, spent, n, settles, lg = loop([SHORT] * 20 + [("done", 4.0)], meter=True)
 check("20 shortages then a box that runs: done (the old loop quit after 8)", st == "done" and n == 21, f"{st} {n}")
-check("... every shortage settled at 0 hours, the box at its real time",
-      settles[:20] == [0.0] * 20 and len(settles) == 21 and settles[20] == 0.5, f"{settles[:3]} {settles[20:]}")
+check("... every shortage settled at the meter's floor (0.0001 h, which it accepts), the box at its real time",
+      settles[:20] == [0.0001] * 20 and len(settles) == 21 and settles[20] == 0.5, f"{settles[:3]} {settles[20:]}")
 check("... and $0 spent on the shortages", abs(spent - 4.0) < 1e-9, str(spent))
 
 st, spent, n, settles, lg = loop([SHORT] * 10000, wait_hours=1.0)
@@ -151,7 +153,13 @@ check("... it uses a box and settles its real time", n == 3 and settles == [0.5,
 
 st, spent, n, settles, lg = loop([SHORT] * 50, meter=True, refuse_after=4)
 check("a meter refusal in the middle of a wait stops the run, not 0", st == "meter refused" and t.exit_code(st) == 8
-      and n == 4 and settles == [0.0] * 4, f"{st} {n} {settles}")
+      and n == 4 and settles == [0.0001] * 4, f"{st} {n} {settles}")
+
+st, spent, n, settles, lg = loop([SHORT] * 50, meter=True, refuse_settle=True)
+check("a settle the meter refuses stops the run at once (no new reservation)", st == "settle refused"
+      and t.exit_code(st) == 8 and n == 1 and "STOP: the spend meter refused the settle" in lg, f"{st} {n}")
+check("no settle is ever sent below the floor", capacity.settle_hours(0.0, False) == capacity.SETTLE_FLOOR_HOURS
+      and capacity.settle_hours(0.0, True) == capacity.SETTLE_FLOOR_HOURS and capacity.settle_hours(2.0, False) == 2.0)
 
 big = capacity.CapacityWait(1e9, first=30, most=600, clock=Clock(), sleep=lambda s: None)
 big.misses = 5000
