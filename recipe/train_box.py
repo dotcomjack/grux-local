@@ -70,8 +70,12 @@ class TrainBox:
                          "cpu": m.get("cpu"), "memory": m.get("memory"), "disk": m.get("disk"),
                          "created_s": round(time.time() - t0, 1), "started_at": time.time()}
             self.info["nvidia_smi"] = self.sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")[1]
-        except BaseException:
+        except BaseException as e:
             # `with` never calls __exit__ when __enter__ raises; a live Lease would keep the box billing.
+            try:
+                e.box_created = True   # it billed: capacity.is_capacity must never call it a $0 shortage
+            except Exception:
+                pass
             self.info.setdefault("started_at", time.time())
             self.__exit__(None, None, None)
             raise
