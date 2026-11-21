@@ -160,6 +160,8 @@ CREATED.box_created = True   # train_box marks an error raised after the create 
 check("an error after the box was created is not a shortage", not capacity.is_capacity(CREATED))
 st, spent, n, settles, lg = loop([CREATED] * 20, max_boxes=3, meter=True)
 check("... it uses a box and settles its real time", n == 3 and settles == [0.5, 0.5, 0.5], f"{n} {settles}")
+check("... and books that time against --cap (a box that billed is never $0)",
+      abs(spent - 3 * 0.5 * (t.PRICE["H200"] + t.BOX_EXTRA)) < 1e-6, str(spent))
 
 st, spent, n, settles, lg = loop([SHORT] * 50, meter=True, refuse_after=4)
 check("a meter refusal in the middle of a wait stops the run, not 0", st == "meter refused" and t.exit_code(st) == 8
@@ -182,6 +184,27 @@ check("Ctrl-C mid-box settles its real time, then is re-raised (no reservation l
 want = round(0.5 * (t.PRICE["H200"] + t.BOX_EXTRA), 2)
 check("... and books that half hour against --cap in spent.json", read_spent(loop.run) == {"spent": want},
       f"{read_spent(loop.run)} vs {want}")
+
+try:
+    loop([SystemExit(143)], meter=True)   # SIGTERM through lease's handler
+    se = "not raised"
+except SystemExit:
+    se = "raised"
+check("SIGTERM (SystemExit) mid-box settles too, then exits", se == "raised" and loop.settles == [0.5], f"{se} {loop.settles}")
+
+
+def no_fsync(fd):
+    raise OSError(28, "No space left on device")
+
+
+saved_fsync, t.os.fsync = t.os.fsync, no_fsync
+try:
+    st, spent, n, settles, lg = loop([("evicted", 2.0), ("done", 3.0)], meter=True)
+finally:
+    t.os.fsync = saved_fsync
+check("a full disk at the spent.json write keeps the old file and still settles every box",
+      st == "done" and settles == [0.5, 0.5] and loop.spent_json is None and "No space left" in lg, f"{st} {settles} "
+      f"{loop.spent_json} {lg[-160:]}")
 
 st, spent, n, settles, lg = loop([("done", 3.0)], meter=True, spent_json_dir=True)
 check("a spent.json that cannot be written still settles the box (no reservation left open)",

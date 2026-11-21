@@ -416,13 +416,16 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
         finally:   # every way out books and settles once, Ctrl-C and SIGTERM included (review rounds 3 and 4)
             short = not came_up and capacity.is_capacity(err)
             held = (clock() - t_box) / 3600
-            if cost is None:   # interrupted mid-box: book its real time against --cap
+            if cost is None or getattr(err, "box_created", False):   # interrupted, or a box that billed then failed:
                 cost = held * (PRICE.get(max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0)), max(PRICE.values()))
-                               + BOX_EXTRA)
+                               + BOX_EXTRA)                           # book its real time against --cap
             spent += cost
             try:
                 tmp = os.path.join(run_dir, "spent.json.tmp")
-                json.dump({"spent": round(spent, 2)}, open(tmp, "w"))
+                with open(tmp, "w") as f:   # closed and synced here, so a full disk raises before the replace
+                    json.dump({"spent": round(spent, 2)}, f)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp, os.path.join(run_dir, "spent.json"))
             except OSError as we:   # a full disk must not skip the settle below
                 log(f"spent.json not written ({we}); spent is ${spent:.2f}", run_dir)
@@ -431,6 +434,9 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
                     s_ = meter(["settle", rid, "--hours", f"{capacity.settle_hours(held, short):.4f}"])
                 except Exception as me:   # never masks the error that is already on its way out
                     s_ = types.SimpleNamespace(returncode=-1, stderr=f"{type(me).__name__}: {me}")
+                if getattr(s_, "returncode", 0) != 0:   # logged here too: an interrupt skips the STOP below
+                    log(f"settle of {rid} refused (exit {s_.returncode}): {(s_.stderr or '').strip()[:200]}; the "
+                        "reservation counts its full estimate until settled by hand", run_dir)
         if s_ is not None and getattr(s_, "returncode", 0) != 0:   # an unsettled reservation counts all week
             log(f"STOP: the spend meter refused the settle of {rid} (exit {s_.returncode}): "
                 f"{(s_.stderr or '').strip()[:200]}", run_dir)
