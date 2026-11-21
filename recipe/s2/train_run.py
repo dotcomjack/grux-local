@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -32,6 +33,7 @@ import holdout_v4  # noqa: E402
 import suite  # noqa: E402
 from eval_run import BOX_EXTRA, EARLY_ERRORS, PRICE, log, skip_max  # noqa: E402
 from train_box import BOOT, TrainBox  # noqa: E402
+import lease  # noqa: E402
 
 suite.THINK = False   # Grux sends think false on every Ollama call (loop row D-THINK, PROVEN)
 MODELFILE = ("FROM {src}\nRENDERER qwen3.5\nPARSER qwen3.5\nPARAMETER temperature 1\nPARAMETER top_k 20\n"
@@ -405,28 +407,36 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
                 log("STOP: the spend meter returned no reservation id", run_dir)
                 status = "meter refused"
                 break
-        came_up, err = True, None
+        came_up, err, cost, s_ = True, None, None, None
         try:
             status, cost = box(a, run_dir, tag, base_tag, rid)
         except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
             came_up, err, status, cost = False, e, "evicted", 0.0
             log(f"box {boxes + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
-        except BaseException:   # Ctrl-C or SIGTERM mid-box: settle its real time first, or it stays open all week
-            if rid:
-                meter(["settle", rid, "--hours", f"{capacity.settle_hours((clock() - t_box) / 3600, False):.4f}"])
-            raise
-        short = not came_up and capacity.is_capacity(err)
-        spent += cost
-        json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))   # before any STOP
-        if rid:   # a shortage created nothing: it settles at the meter's floor, so a long wait books about $0
-            held = capacity.settle_hours((clock() - t_box) / 3600, short)
-            s_ = meter(["settle", rid, "--hours", f"{held:.4f}"])
-            if getattr(s_, "returncode", 0) != 0:   # an unsettled reservation counts its full estimate all week
-                log(f"STOP: the spend meter refused the settle of {rid} (exit {s_.returncode}): "
-                    f"{(s_.stderr or '').strip()[:200]}", run_dir)
-                if status != "done":
-                    status = "settle refused"
-                break
+        finally:   # every way out books and settles once, Ctrl-C and SIGTERM included (review rounds 3 and 4)
+            short = not came_up and capacity.is_capacity(err)
+            held = (clock() - t_box) / 3600
+            if cost is None:   # interrupted mid-box: book its real time against --cap
+                cost = held * (PRICE.get(max(a.gpu.split(","), key=lambda g: PRICE.get(g, 0)), max(PRICE.values()))
+                               + BOX_EXTRA)
+            spent += cost
+            try:
+                tmp = os.path.join(run_dir, "spent.json.tmp")
+                json.dump({"spent": round(spent, 2)}, open(tmp, "w"))
+                os.replace(tmp, os.path.join(run_dir, "spent.json"))
+            except OSError as we:   # a full disk must not skip the settle below
+                log(f"spent.json not written ({we}); spent is ${spent:.2f}", run_dir)
+            if rid:   # a shortage created nothing: it settles at the meter's floor, so a long wait books about $0
+                try:
+                    s_ = meter(["settle", rid, "--hours", f"{capacity.settle_hours(held, short):.4f}"])
+                except Exception as me:   # never masks the error that is already on its way out
+                    s_ = types.SimpleNamespace(returncode=-1, stderr=f"{type(me).__name__}: {me}")
+        if s_ is not None and getattr(s_, "returncode", 0) != 0:   # an unsettled reservation counts all week
+            log(f"STOP: the spend meter refused the settle of {rid} (exit {s_.returncode}): "
+                f"{(s_.stderr or '').strip()[:200]}", run_dir)
+            if status != "done":
+                status = "settle refused"
+            break
         if short:
             if waiter.wait(lambda s: log(s, run_dir)):
                 continue
@@ -480,6 +490,7 @@ def main():
     ap.add_argument("--owner", default="grux", help="grux.factory owner label on every box")
     ap.add_argument("--data-scan-vocab", default="", help="identity vocabulary files for s2/data_scan.py (colon list)")
     a = ap.parse_args()
+    lease.install()   # SIGTERM becomes SystemExit from the first create on, so box_loop's finally settles it
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
     a.data = os.path.abspath(a.data)

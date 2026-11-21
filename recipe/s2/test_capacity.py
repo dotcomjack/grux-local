@@ -79,11 +79,18 @@ check("a bad request is not a shortage", not capacity.is_capacity(ValueError("im
 
 
 # --------------------------------------------------------------------------- 3 to 5. the box loop
-def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, refuse_settle=False):
+def read_spent(run):
+    p = os.path.join(run, "spent.json")
+    return json.load(open(p)) if os.path.isfile(p) else None
+
+
+def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, refuse_settle=False, spent_json_dir=False):
     """Run box_loop over `plan`: each item is an Exception to raise from the box or a (status, cost) to return.
     The box clock moves 0.5 h on every read, so a settle that used it instead of 0 reads 0.5000. The meter refuses
     every reserve after `refuse_after`."""
-    run = tempfile.mkdtemp()
+    run = loop.run = tempfile.mkdtemp()
+    if spent_json_dir:   # open(..., "w") and os.replace onto it both raise OSError, like a full disk
+        os.makedirs(os.path.join(run, "spent.json"))
     a = argparse.Namespace(cap=100.0, meter="fake" if meter else "", gpu="H200", meter_lane="test", charter="",
                            capacity_wait_hours=wait_hours, max_boxes=max_boxes)
     calls, settles = [], []
@@ -125,7 +132,7 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, ref
                                    clock=box_clock)
     finally:
         t.time.sleep = saved
-    loop.spent_json = json.load(open(os.path.join(run, "spent.json"))) if os.path.exists(os.path.join(run, "spent.json")) else None
+    loop.spent_json = read_spent(run)
     return status, spent, len(calls), settles, open(os.path.join(run, "run.log")).read()
 
 
@@ -172,6 +179,13 @@ except KeyboardInterrupt:
     ki = "raised"
 check("Ctrl-C mid-box settles its real time, then is re-raised (no reservation left open)",
       ki == "raised" and loop.settles == [0.5], f"{ki} {loop.settles}")
+want = round(0.5 * (t.PRICE["H200"] + t.BOX_EXTRA), 2)
+check("... and books that half hour against --cap in spent.json", read_spent(loop.run) == {"spent": want},
+      f"{read_spent(loop.run)} vs {want}")
+
+st, spent, n, settles, lg = loop([("done", 3.0)], meter=True, spent_json_dir=True)
+check("a spent.json that cannot be written still settles the box (no reservation left open)",
+      st == "done" and settles == [0.5] and "spent.json not written" in lg, f"{st} {settles} {lg[-160:]}")
 check("no settle is ever sent below the floor", capacity.settle_hours(0.0, False) == capacity.SETTLE_FLOOR_HOURS
       and capacity.settle_hours(0.0, True) == capacity.SETTLE_FLOOR_HOURS and capacity.settle_hours(2.0, False) == 2.0)
 
