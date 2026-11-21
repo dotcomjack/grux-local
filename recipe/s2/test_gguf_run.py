@@ -893,6 +893,24 @@ def group_short(*x, **k):
 st, a_ = group_short(lambda *x: "scored")
 check("a shortage past the deadline ends the group no capacity, no box made", st.startswith("no capacity")
       and len(StubTB.made) == 0, f"{st} {len(StubTB.made)}")
+class BilledTB(StubTB):   # the create returned, then setup failed: train_box tags it box_created
+    def __init__(self, *x, **k):
+        e = RuntimeError("503 Service Unavailable from the toolbox proxy")
+        e.box_created = True
+        raise e
+
+
+StubTB = BilledTB
+saved_sleep, g.time.sleep = g.time.sleep, lambda s: None
+try:
+    st, a_ = group(lambda *x: "scored")
+finally:
+    g.time.sleep = saved_sleep
+res, sett = meter_calls()
+check("a box that billed then failed books its real time against the GPU cap (never $0)",
+      sett >= 1 and abs(a_.spent_of("H200") - sett * 0.5 * g.rate("H200")) < 1e-3, f"{st} {sett} {a_.spent_of('H200')}")
+StubTB = ShortTB
+
 ShortTB.short = 5
 os.environ["FAKE_METER_REFUSE_SETTLE"] = "1"
 try:

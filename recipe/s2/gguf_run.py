@@ -797,7 +797,8 @@ def run_group(a, gpu, tiers, shipped, facts, root):
             status_, cost = one_box(a, gpu, tiers, shipped, facts, rid, root)
         except Exception as e:   # a box reclaimed while it starts raises from create
             log(f"{gpu} box {attempt + 1} never came up: {type(e).__name__}: {str(e)[:160]}", root)
-            status_, cost, short = "evicted", 0.0, capacity.is_capacity(e)
+            # a box that billed and then failed (train_box marks it) books its real time below, never $0
+            status_, cost, short = "evicted", None if getattr(e, "box_created", False) else 0.0, capacity.is_capacity(e)
         finally:   # settled on every way out, a SystemExit or a full disk included; a shortage created nothing
             held = capacity.settle_hours((now() - t_box) / 3600, short)
             s_ = meter_call(a, ["settle", rid, "--hours", f"{held:.4f}"])
@@ -898,7 +899,14 @@ def attach_spend(a):
     def add(gpu, x):
         with LOCK:
             spent[gpu] = round(spent.get(gpu, 0.0) + x, 4)
-            json.dump(spent, open(spent_path, "w"))
+            try:   # closed and synced before the replace: a full disk keeps the old file (as train_run.box_loop)
+                with open(spent_path + ".tmp", "w") as f:
+                    json.dump(spent, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(spent_path + ".tmp", spent_path)
+            except OSError as e:
+                print(f"spent.json not written ({e}); spent is {spent}", file=sys.stderr)
     a.spent_of = lambda g: spent.get(g, 0.0)
     a.add_spent = add
     a.cap_of = lambda g: a.pro_cap if g == a.pro_gpu and g != a.gpu else a.cap

@@ -89,7 +89,7 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, ref
     The box clock moves 0.5 h on every read, so a settle that used it instead of 0 reads 0.5000. The meter refuses
     every reserve after `refuse_after`."""
     run = loop.run = tempfile.mkdtemp()
-    if spent_json_dir:   # open(..., "w") and os.replace onto it both raise OSError, like a full disk
+    if spent_json_dir:   # os.replace onto a directory raises OSError, like a full disk
         os.makedirs(os.path.join(run, "spent.json"))
     a = argparse.Namespace(cap=100.0, meter="fake" if meter else "", gpu="H200", meter_lane="test", charter="",
                            capacity_wait_hours=wait_hours, max_boxes=max_boxes)
