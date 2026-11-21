@@ -411,19 +411,22 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
         except Exception as e:   # a box reclaimed while it starts raises from create (measured 2026-10-22)
             came_up, err, status, cost = False, e, "evicted", 0.0
             log(f"box {boxes + 1} never came up: {type(e).__name__}: {str(e)[:160]}", run_dir)
+        except BaseException:   # Ctrl-C or SIGTERM mid-box: settle its real time first, or it stays open all week
+            if rid:
+                meter(["settle", rid, "--hours", f"{capacity.settle_hours((clock() - t_box) / 3600, False):.4f}"])
+            raise
         short = not came_up and capacity.is_capacity(err)
+        spent += cost
+        json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))   # before any STOP
         if rid:   # a shortage created nothing: it settles at the meter's floor, so a long wait books about $0
             held = capacity.settle_hours((clock() - t_box) / 3600, short)
             s_ = meter(["settle", rid, "--hours", f"{held:.4f}"])
             if getattr(s_, "returncode", 0) != 0:   # an unsettled reservation counts its full estimate all week
                 log(f"STOP: the spend meter refused the settle of {rid} (exit {s_.returncode}): "
                     f"{(s_.stderr or '').strip()[:200]}", run_dir)
-                spent += cost
                 if status != "done":
                     status = "settle refused"
                 break
-        spent += cost
-        json.dump({"spent": round(spent, 2)}, open(os.path.join(run_dir, "spent.json"), "w"))
         if short:
             if waiter.wait(lambda s: log(s, run_dir)):
                 continue

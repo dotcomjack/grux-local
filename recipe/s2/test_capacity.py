@@ -15,6 +15,7 @@ No box, no meter, no model: everything here is a stub. Prints PASS or FAIL per c
   python3 recipe/s2/test_capacity.py
 """
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -86,6 +87,7 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, ref
     a = argparse.Namespace(cap=100.0, meter="fake" if meter else "", gpu="H200", meter_lane="test", charter="",
                            capacity_wait_hours=wait_hours, max_boxes=max_boxes)
     calls, settles = [], []
+    loop.settles = settles   # readable even when box_loop raises
     plan = list(plan)
 
     def box(*x):
@@ -123,6 +125,7 @@ def loop(plan, wait_hours=12.0, max_boxes=8, meter=False, refuse_after=None, ref
                                    clock=box_clock)
     finally:
         t.time.sleep = saved
+    loop.spent_json = json.load(open(os.path.join(run, "spent.json"))) if os.path.exists(os.path.join(run, "spent.json")) else None
     return status, spent, len(calls), settles, open(os.path.join(run, "run.log")).read()
 
 
@@ -158,6 +161,17 @@ check("a meter refusal in the middle of a wait stops the run, not 0", st == "met
 st, spent, n, settles, lg = loop([SHORT] * 50, meter=True, refuse_settle=True)
 check("a settle the meter refuses stops the run at once (no new reservation)", st == "settle refused"
       and t.exit_code(st) == 8 and n == 1 and "STOP: the spend meter refused the settle" in lg, f"{st} {n}")
+st, spent, n, settles, lg = loop([("evicted", 20.0)], meter=True, refuse_settle=True)
+check("a refused settle still writes the box's cost to spent.json (the next run's --cap starts right)",
+      st == "settle refused" and loop.spent_json == {"spent": 20.0}, f"{st} {loop.spent_json}")
+
+try:
+    loop([KeyboardInterrupt()], meter=True)
+    ki = "not raised"
+except KeyboardInterrupt:
+    ki = "raised"
+check("Ctrl-C mid-box settles its real time, then is re-raised (no reservation left open)",
+      ki == "raised" and loop.settles == [0.5], f"{ki} {loop.settles}")
 check("no settle is ever sent below the floor", capacity.settle_hours(0.0, False) == capacity.SETTLE_FLOOR_HOURS
       and capacity.settle_hours(0.0, True) == capacity.SETTLE_FLOOR_HOURS and capacity.settle_hours(2.0, False) == 2.0)
 
