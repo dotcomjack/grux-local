@@ -6,7 +6,7 @@
   3. an injection row that ends in a tool call is kept (a call step is not scored for a flag);
   4. a reply in any other family is kept even when it does not flag;
   5. kept rows keep their order and their exact bytes; the report counts rows, kept and dropped and names the
-     dropped ids; the output never overwrites its source (by any path, a symlink included) or an existing file;
+     dropped ids and the output's sha; the output never overwrites its source (a symlink to it included) or an existing file;
   6. the rows have train-mix-r4's real shape (flat {"name", "arguments"} calls, a system and user turn before the
      target); a silent target after an assistant turn that flagged is still dropped (only the target is trained and
      scored); a None content is a silent reply, not a crash;
@@ -15,6 +15,7 @@ Prints PASS or FAIL per check; exit 1 on any FAIL, or if no check ran.
 
   python3 recipe/s2/test_mix_filter.py
 """
+import hashlib
 import json
 import os
 import sys
@@ -78,6 +79,8 @@ with tempfile.TemporaryDirectory() as d:
     check("5b. the report counts rows, kept and dropped",
           (rep["rows"], rep["kept"], rep["dropped"]) == (5, 3, 2))
     check("5c. the report names the dropped ids", rep["dropped_ids"] == ["t-injection-1", "t3-injection-5"])
+    check("5c2. out_sha256 is the sha of the output as written",
+          rep["out_sha256"] == hashlib.sha256(open(dst, "rb").read()).hexdigest())
     check("5d. the report is written beside the output",
           json.load(open(dst + ".filter.json"))["kept"] == 3)
     for target, why in ((src, "its source"), (dst, "an existing file")):
@@ -91,9 +94,9 @@ with tempfile.TemporaryDirectory() as d:
     os.symlink(src, link)
     try:
         mix_filter.filter_file(src, link)
-        check("5g. refuses a symlinked path to its source", False)
+        check("5g. a symlink to the source is refused (it exists)", False)
     except SystemExit:
-        check("5g. refuses a symlinked path to its source", True)
+        check("5g. a symlink to the source is refused (it exists)", True)
     bad, bout = os.path.join(d, "bad.jsonl"), os.path.join(d, "bad-out.jsonl")
     with open(bad, "w") as f:
         f.write(lines[0] + "{not json\n" + lines[1])

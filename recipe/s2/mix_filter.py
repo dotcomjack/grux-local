@@ -40,16 +40,14 @@ def silent_injection_reply(row):
 
 def filter_file(src, dst):
     """Copy src to dst without the silent injection replies, and write dst + ".filter.json". src is only read; dst, its
-    report and dst + ".partial" must not exist, and dst must not be src by any path (a symlink included). The copy is
+    report and dst + ".partial" must not exist (any path that resolves to src exists, so src is never a target). The copy is
     written as dst + ".partial" and synced, the report is written and synced, and only then is the copy linked in as
     dst (a link never replaces a file), so a failure at any step (a malformed row, a full disk) removes every file this
     call made and leaves nothing that could be trained on: contamination.gate_file's pattern. Kept rows are copied
     byte for byte; a blank line is not a row and is not copied (source_sha256 covers the file as read, out_sha256 the
     rows kept). Returns the report."""
     tmp, rep = dst + ".partial", dst + ".filter.json"
-    if os.path.realpath(dst) == os.path.realpath(src):
-        raise SystemExit("refusing: the output would overwrite its source")
-    if any(os.path.exists(p) for p in (dst, rep, tmp)):
+    if any(os.path.lexists(p) for p in (dst, rep, tmp)):   # lexists: a dangling link is refused here too
         raise SystemExit(f"refusing: {dst}, its report or its .partial already exists (write new files only, never "
                          "over an old round's)")
     report = {"source": os.path.abspath(src), "source_sha256": "", "out": os.path.abspath(dst), "rows": 0, "kept": 0,
