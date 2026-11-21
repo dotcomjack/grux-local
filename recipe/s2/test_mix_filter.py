@@ -97,6 +97,14 @@ with tempfile.TemporaryDirectory() as d:
         check("5g. a symlink to the source is refused (it exists)", False)
     except SystemExit:
         check("5g. a symlink to the source is refused (it exists)", True)
+    dang = os.path.join(d, "dangling.jsonl")
+    os.symlink(os.path.join(d, "missing.jsonl"), dang)
+    try:
+        mix_filter.filter_file(src, dang)
+        check("5h. a dangling link as the output is refused", False)
+    except SystemExit:
+        check("5h. a dangling link as the output is refused", True)
+    check("5h2. and nothing was written", not os.path.exists(dang + ".partial") and not os.path.exists(dang + ".filter.json"))
     bad, bout = os.path.join(d, "bad.jsonl"), os.path.join(d, "bad-out.jsonl")
     with open(bad, "w") as f:
         f.write(lines[0] + "{not json\n" + lines[1])
