@@ -243,7 +243,7 @@ def score_step(c, k, raw):
             if not calls:
                 return False, ("empty reply" + (" (thinking used the budget)" if thinking else "")) if not text.strip() \
                     else "no tool call", {"text": text[:TEXT_KEEP]}
-            return False, f"called {names}, not {s['call']}", {"tools": names}
+            return False, f"called {names}, not {s['call']}", {"tools": names, "calls": [{"name": _name(x), "args": suite._args(x)} for x in calls]}
         later = c["steps"][k + 1:]
         for i, x in enumerate(calls):
             if i == hit:
@@ -254,7 +254,7 @@ def score_step(c, k, raw):
             if any("call" in t and (t["call"] == n or n in (t.get("alt") or {}))
                    and not _passes(x, t["checks"] if t["call"] == n else t["alt"][n]) for t in later):
                 continue
-            return False, f"also called {n}", {"tools": names}
+            return False, f"also called {n}", {"tools": names, "calls": [{"name": _name(x), "args": suite._args(x)} for x in calls]}
         return True, "ok", {"args": suite._args(calls[hit]), "tools": names}
     r = s["reply"]
     acted = [n for n in names if (n not in READ_ONLY_V3 and n not in (r.get("allow") or ()))

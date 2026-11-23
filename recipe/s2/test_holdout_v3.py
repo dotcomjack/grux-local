@@ -333,5 +333,9 @@ check("8 an args miss keeps the args sent", not _ok and _got.get("calls") == [
     {"name": "create_event", "args": {"title": "x", "start": "2026-10-28T04:00:00"}}])
 _ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "y" * 900}})
 check("8 a failing reply keeps its text whole", not _ok and len(_got.get("text", "")) == 900)
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "", "tool_calls": [
+    {"function": {"name": "list_events", "arguments": {"day": "2026-10-28"}}}]}})
+check("8 a wrong-tool miss keeps the args sent", not _ok and _got.get("calls") == [
+    {"name": "list_events", "args": {"day": "2026-10-28"}}], _why)
 print(f"{'PASS' if not FAILS else 'FAIL'}: {len(FAILS)} failed")
 sys.exit(1 if FAILS else 0)
