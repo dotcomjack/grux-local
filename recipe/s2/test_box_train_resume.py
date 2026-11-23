@@ -11,8 +11,9 @@ import random
 import sys
 
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "box_train.py")).read()
-fns = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name in ("next_draw", "buckets")]
-ns = {"random": random}
+fns = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef)
+       and n.name in ("next_draw", "buckets", "resume_mismatch")]
+ns = {"random": random, "os": os}
 exec(compile(ast.Module(body=fns, type_ignores=[]), "box_train.py", "exec"), ns)
 fails = 0
 
@@ -42,6 +43,16 @@ epoch = sorted(i for d in run(examples, 1, 1, 97, 0) for i in d)
 check("micro 1: one epoch of draws covers every row exactly once", epoch == list(range(97)))
 check("the training loop draws through next_draw only",
       src.count("next_draw(draws, examples, a.micro, a.micro_tokens)") == 2 and "random.seed(7 + start)" not in src
+      and "for _ in range(start * a.accum):" in src
       and "random.shuffle(order)" not in src.split("def next_draw")[0])
+now = {"accum": 8, "micro": 4, "micro_tokens": 24000, "max_len": 6144, "data": "/workspace/train.jsonl"}
+check("a resume with the same draw settings goes on", ns["resume_mismatch"]({"step": 5, "draws": dict(now)}, now) is None)
+check("a resume with another accum, micro or data is refused",
+      all(ns["resume_mismatch"]({"step": 5, "draws": dict(now, **{k: v})}, now)
+          for k, v in (("accum", 4), ("micro", 1), ("micro_tokens", 16000), ("max_len", 8192), ("data", "/x/other.jsonl"))))
+check("a checkpoint from before draws were recorded resumes", ns["resume_mismatch"]({"step": 5}, now) is None)
+check("the refusal is wired into the resume, before any step",
+      'why = resume_mismatch(meta, draw_settings(a))' in src and src.index("resume_mismatch(meta") < src.index("model.train()")
+      and "save_ckpt(model, opt, sched, step + 1, total, a.out, draw_settings(a))" in src)
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

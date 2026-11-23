@@ -121,7 +121,11 @@ def main():
     if ckpt:
         opt.load_state_dict(torch.load(os.path.join(ckpt, "optimizer.pt"), map_location="cuda"))
         sched.load_state_dict(torch.load(os.path.join(ckpt, "scheduler.pt")))
-        start = json.load(open(os.path.join(ckpt, "step.json")))["step"]
+        meta = json.load(open(os.path.join(ckpt, "step.json")))
+        start = meta["step"]
+        why = resume_mismatch(meta, draw_settings(a))
+        if why:
+            sys.exit("REFUSED " + why)
     draws = {"order": [], "queue": []}
     if start:   # replay the draws the steps before `start` made, so a resumed run trains on what an unbroken one would
         for _ in range(start * a.accum):
@@ -157,7 +161,7 @@ def main():
         print(f"step {step + 1}/{total} loss {loss_sum:.4f} lr {sched.get_last_lr()[0]:.2e} "
               f"elapsed {time.time() - t0:.0f}s", flush=True)
         if a.save_every and (step + 1) % a.save_every == 0 and step + 1 < total:
-            save_ckpt(model, opt, sched, step + 1, total, a.out)
+            save_ckpt(model, opt, sched, step + 1, total, a.out, draw_settings(a))
     model.save_pretrained(os.path.join(a.out, "adapter"))
     print("ADAPTER DONE", flush=True)
     save_merged(model, tok, a)
@@ -247,13 +251,30 @@ def check_fast_loss(model, lm_head, few):
     model.train()
 
 
-def save_ckpt(model, opt, sched, step, total, out):
+def draw_settings(a):
+    """What decides the data draws: a resume with any of these changed would replay a different stream."""
+    return {"accum": a.accum, "micro": a.micro, "micro_tokens": a.micro_tokens, "max_len": a.max_len, "data": a.data}
+
+
+def resume_mismatch(meta, now):
+    """None when a checkpoint's draw settings match this run's, else why the resume must stop. A checkpoint from
+    before 2026-11-23 has none recorded; it resumes (its own run reseeded, so nothing it trained matches anyway)."""
+    had = meta.get("draws")
+    if had is None:
+        return None
+    bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if k != "data" and had.get(k) != v]
+    if os.path.basename(str(had.get("data"))) != os.path.basename(str(now["data"])):
+        bad.append(f"data {had.get('data')!r} then, {now['data']!r} now")
+    return ("the checkpoint's data draws differ: " + "; ".join(bad)) if bad else None
+
+
+def save_ckpt(model, opt, sched, step, total, out, draws=None):
     tmp, final = os.path.join(out, "ckpt.tmp"), os.path.join(out, "ckpt")
     os.makedirs(tmp, exist_ok=True)
     model.save_pretrained(os.path.join(tmp, "adapter"))
     torch.save(opt.state_dict(), os.path.join(tmp, "optimizer.pt"))
     torch.save(sched.state_dict(), os.path.join(tmp, "scheduler.pt"))
-    json.dump({"step": step, "total": total}, open(os.path.join(tmp, "step.json"), "w"))
+    json.dump({"step": step, "total": total, "draws": draws}, open(os.path.join(tmp, "step.json"), "w"))
     if os.path.exists(final):
         os.rename(final, final + ".old")
     os.rename(tmp, final)
