@@ -11,6 +11,7 @@ continues from such a checkpoint, replaying the data draws before it (the rows m
 torch random state is not saved, so the numbers are close, not identical); `--merge-only DIR` merges a finished adapter without training.
 """
 import argparse
+import hashlib
 import sys
 import json
 import math
@@ -253,7 +254,14 @@ def check_fast_loss(model, lm_head, few):
 
 def draw_settings(a):
     """What decides the data draws: a resume with any of these changed would replay a different stream."""
-    return {"accum": a.accum, "micro": a.micro, "micro_tokens": a.micro_tokens, "max_len": a.max_len, "data": a.data}
+    if not hasattr(a, "data_sha256"):   # once per run: the file is the same for every checkpoint
+        h = hashlib.sha256()
+        with open(a.data, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        a.data_sha256 = h.hexdigest()
+    return {"accum": a.accum, "micro": a.micro, "micro_tokens": a.micro_tokens, "max_len": a.max_len,
+            "data_sha256": a.data_sha256}
 
 
 def resume_mismatch(meta, now):
@@ -262,9 +270,7 @@ def resume_mismatch(meta, now):
     had = meta.get("draws")
     if had is None:
         return None
-    bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if k != "data" and had.get(k) != v]
-    if os.path.basename(str(had.get("data"))) != os.path.basename(str(now["data"])):
-        bad.append(f"data {had.get('data')!r} then, {now['data']!r} now")
+    bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if had.get(k) != v]   # the data by its sha
     return ("the checkpoint's data draws differ: " + "; ".join(bad)) if bad else None
 
 
