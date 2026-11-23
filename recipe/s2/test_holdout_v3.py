@@ -324,5 +324,14 @@ check(f"7 eval_run's per-case function scores {len(CS)} of {len(CS)} through a s
       all(r["status"] == "scored" and r["pass"] for r in rows), f"{sum(bool(r.get('pass')) for r in rows)} pass")
 srv.shutdown()
 
+# 8. a failing row keeps what the model sent: the args of an args miss, and the reply text past 200 characters
+_c = next(x for x in CS if x["id"] == "h3-chain-051")
+_k = next(i for i, s in enumerate(_c["steps"]) if s.get("call") == "create_event")
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "", "tool_calls": [
+    {"function": {"name": "create_event", "arguments": {"title": "x", "start": "2026-10-28T04:00:00"}}}]}})
+check("8 an args miss keeps the args sent", not _ok and _got.get("calls") == [
+    {"name": "create_event", "args": {"title": "x", "start": "2026-10-28T04:00:00"}}])
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "y" * 900}})
+check("8 a failing reply keeps its text whole", not _ok and len(_got.get("text", "")) == 900)
 print(f"{'PASS' if not FAILS else 'FAIL'}: {len(FAILS)} failed")
 sys.exit(1 if FAILS else 0)
