@@ -7,7 +7,8 @@ the model's own chat template and thinking off, so training text is byte for byt
 
 Spot boxes are evicted without warning (measured 2026-10-22, mid-training). `--save-every N` writes
 out/ckpt (adapter, optimizer, scheduler, step) atomically for the caller to pull out; `--resume DIR`
-continues from such a checkpoint; `--merge-only DIR` merges a finished adapter without training.
+continues from such a checkpoint, replaying the data draws before it (the rows match an unbroken run; dropout's
+torch random state is not saved, so the numbers are close, not identical); `--merge-only DIR` merges a finished adapter without training.
 """
 import argparse
 import sys
@@ -121,26 +122,24 @@ def main():
         opt.load_state_dict(torch.load(os.path.join(ckpt, "optimizer.pt"), map_location="cuda"))
         sched.load_state_dict(torch.load(os.path.join(ckpt, "scheduler.pt")))
         start = json.load(open(os.path.join(ckpt, "step.json")))["step"]
-        random.seed(7 + start)
-        print(f"resumed at step {start}/{total} from {ckpt}", flush=True)
+    draws = {"order": [], "queue": []}
+    if start:   # replay the draws the steps before `start` made, so a resumed run trains on what an unbroken one would
+        for _ in range(start * a.accum):
+            next_draw(draws, examples, a.micro, a.micro_tokens)
+        print(f"resumed at step {start}/{total} from {ckpt}, {start * a.accum} draws replayed", flush=True)
     model.train()
-    order, queue = [], []
     t0 = time.time()
     for step in range(start, total):
         loss_sum = 0.0
         for _ in range(a.accum):
+            idx = next_draw(draws, examples, a.micro, a.micro_tokens)
             if a.micro == 1:
-                if not order:
-                    order = list(range(len(examples)))
-                    random.shuffle(order)
-                p_ids, c_ids = examples[order.pop()]
+                p_ids, c_ids = examples[idx[0]]
                 ids = torch.tensor([p_ids + c_ids], device="cuda")
                 labels = torch.tensor([[-100] * len(p_ids) + c_ids], device="cuda")
                 loss = model(input_ids=ids, labels=labels).loss
             else:
-                if not queue:
-                    queue = buckets(examples, a.micro, a.micro_tokens)
-                batch = [examples[i] for i in queue.pop()]
+                batch = [examples[i] for i in idx]
                 if step < start + 2:   # the first steps' shapes and memory: what an OOM report needs
                     print(f"batch rows {len(batch)} padded {max(len(p) + len(c) for p, c in batch)} "
                           f"answer tokens {sum(len(c) for _, c in batch)}", flush=True)
@@ -170,6 +169,22 @@ def mem(where):
     print(f"MEM {where}: allocated {torch.cuda.memory_allocated() / g:.1f} reserved {torch.cuda.memory_reserved() / g:.1f} "
           f"peak {torch.cuda.max_memory_allocated() / g:.1f} of {torch.cuda.get_device_properties(0).total_memory / g:.1f}",
           flush=True)
+
+
+def next_draw(draws, examples, micro, max_tokens):
+    """The example indices of the next forward pass: one shuffled epoch order at micro 1, else the epoch's length
+    buckets, refilled when spent. Every random draw of training goes through here, so --resume replays the steps
+    before its checkpoint by calling this start x accum times. Until 2026-11-23 a resume reseeded (7 + start) and
+    began a fresh epoch, so a run resumed mid-epoch trained some rows twice and never saw others (the r5 pilot
+    resumed twice)."""
+    if micro == 1:
+        if not draws["order"]:
+            draws["order"] = list(range(len(examples)))
+            random.shuffle(draws["order"])
+        return [draws["order"].pop()]
+    if not draws["queue"]:
+        draws["queue"] = buckets(examples, micro, max_tokens)
+    return draws["queue"].pop()
 
 
 def buckets(examples, micro, max_tokens):
