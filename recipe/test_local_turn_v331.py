@@ -207,8 +207,8 @@ def sorted_everywhere(o):
     return all(sorted_everywhere(v) for v in o) if isinstance(o, list) else True
 
 
-check("the body says think false and keep_alive 30m, num_predict 1024, keys sorted at every level",
-      body["think"] is False and body["keep_alive"] == "30m" and body["options"]["num_predict"] == 1024
+check("the body says think false and keep_alive 30m, num_predict 2000 (chatMaxTokens), keys sorted at every level",
+      body["think"] is False and body["keep_alive"] == "30m" and body["options"]["num_predict"] == 2_000
       and body["options"]["num_ctx"] == 16_384 and sorted_everywhere(body))
 check("on the wire the system message holds no per-turn line, the user's words come last (LocalTurnPrefixTests)",
       body["messages"][0]["role"] == "system" and "NOW: " not in body["messages"][0]["content"]
@@ -251,6 +251,15 @@ r4 = lt.chat_request_v331("what's the tallest mountain in Africa", "gruxai.com/g
 check("a -v4 tag sends signatures in place of descriptions, parameters unchanged",
       any(t["function"]["description"].startswith(t["function"]["name"] + "(") for t in r4["body"]["tools"])
       and r4["offered"] == lt.chat_request_v331("what's the tallest mountain in Africa", MODEL)["offered"])
+
+# Commands V2 (ChatService.swift:221-270): a trigger is answered before any model
+trigs = lt.commands_v2_triggers(lt.src_v331())
+check(f"Commands V2: {len(trigs)} built-in triggers read; the controls fire and a sentence does not",
+      len(trigs) >= 30 and lt.commands_v2_match("smoke v2") and lt.commands_v2_match("idea: buy oat milk")
+      and not lt.commands_v2_match("idea generation is hard, any tips?") and not lt.commands_v2_match("ship it today")
+      and lt.chat_request_v331("smoke v2", MODEL) == {"not_sent": "commands_v2"})
+v2hits = [c["id"] for c in holdout_local.cases() if lt.commands_v2_match(c["utterance"])]
+print(f"COUNT  held-out turns a Commands V2 trigger answers: {len(v2hits)} {v2hits}")
 
 # --------------------------------------------------------------------------- 5. the oracle
 

@@ -610,8 +610,11 @@ def chat_text(c):
 #              (ChatService.swift:1188-1190, OpenAICompatBackend.swift:242-250).
 #   body       "think": false on every native call, "keep_alive": "30m" to this Mac's server, keys sorted at
 #              every level (OpenAICompatBackend.swift:212-214, 296-309).
-#   no request at all: 3.3.1 answers 16 more kinds of ask with no model (ChatService.swift:271-540, 609-623).
-# Unchanged: num_predict 1,024, temperature 0.5, num_ctx by memory, PROMPT_CEILING, the cut line's words.
+#   no request at all: 3.3.1 answers 16 more kinds of ask with no model (ChatService.swift:271-540, 609-623);
+#              the Commands V2 triggers, PIM and the confidence gate answer without one in 3.1.0 too.
+# Unchanged: num_predict 2,000 (ChatService.swift:792, 1062; the 3.1.0 port above sends 1,024, which is the fit's
+# reply budget, not the wire's: held-out v2 is frozen with it), temperature 0.5, num_ctx by memory, PROMPT_CEILING,
+# the cut line's words.
 #
 # The per-utterance classifiers (the fast paths, DraftAsk, ListAsk, WeatherAsk.localNote,
 # ChatIntentClassifier.classify and .pimRoute, GreetingAsk, ConfidenceGate) are NOT re-ported: their answers come
@@ -623,6 +626,10 @@ V331_TAG = "v3.3.1"
 V331_COMMIT = "4b8d1b6e31f7dd98e3f469816098d6adac9b1f7a"
 V331_TOOLS = 119                     # ToolCatalogueTests.expectedToolCount at v3.3.1
 KEEP_ALIVE = "30m"                   # LocalTurn.keepAlive, LocalTurn.swift:64
+CHAT_MAX_TOKENS = 2_000              # ChatService.chatMaxTokens, ChatService.swift:1062: what streamCompleteWithTools
+#                                      sends (ChatService.swift:792). LocalTurn.replyTokens (1,024) only sizes the fit
+#                                      and the cost estimate (ChatService.swift:764, 1203); 3.1.0 also sent 2000
+#                                      (ChatService.swift:488 at v3.1.0), so held-out v2's 1,024 is not the app's.
 TURN_RESERVE_CHARS = 2_700           # LocalTurn.turnReserveChars, LocalTurn.swift:176
 POINTS_PAST_SCORE = 3                # LocalTurn.pointsPastScore, LocalTurn.swift:180
 GROUP_POINTS_PAST_SCORE = 2          # LocalTurn.groupPointsPastScore, LocalTurn.swift:186
@@ -1146,6 +1153,51 @@ def asks_v331(text):
     return _ASKS[text]
 
 
+@functools.lru_cache(maxsize=None)
+def commands_v2_triggers(s):
+    """Every built-in Commands V2 voice trigger, read from the definitions' literals (CommandsV2/*.swift). A fresh
+    install has no user-defined command."""
+    out = []
+    for f in sorted(os.listdir(os.path.join(s, "CommandsV2"))):
+        if f.endswith(".swift"):
+            src = _read(os.path.join("CommandsV2", f), s)
+            for m in re.finditer(r"voiceTriggers:\s*\[\s*\"", src):
+                out += _Parser(src, src.index("[", m.start())).value()
+    return out
+
+
+def commands_v2_match(text):
+    """CommandV2Engine.matchTrigger, CommandV2Engine.swift:569-649, on a fresh install: a `{project}` slot names no
+    known project (ProjectsResolver.namesAKnownProject, IOSDispatcherV2.swift:1678-1700: no alias, no registry, no
+    ~/Projects), any other slot needs a command-shaped literal prefix (two words or a trailing ':' or '-')."""
+    q = text.lower().strip()
+    if not q:
+        return None
+    for trig in commands_v2_triggers(src_v331()):
+        t = trig.lower()
+        if "{" not in t:
+            if q == t:
+                return trig
+            continue
+        rx, slots, i = "^", [], 0
+        while i < len(t):
+            if t[i] == "{" and "}" in t[i:]:
+                end = t.index("}", i)
+                slots.append(t[i + 1:end])
+                rx += "(.+)"
+                i = end + 1
+                continue
+            rx += "\\" + t[i] if t[i] in ".\\+*?()[]^$|" else t[i]
+            i += 1
+        if not re.match(rx + "$", q):
+            continue
+        prefix = t[:t.index("{")].strip()
+        shaped = prefix.endswith(":") or prefix.endswith("-") or len(prefix.split(" ")) >= 2
+        if "project" not in slots and shaped:
+            return trig
+    return None
+
+
 def not_sent_reason(asks):
     """The fast path that answers this message with no model, in send()'s own order, or None."""
     return next((k for k in FAST_PATHS if asks["fast"] == k or (k == "pim" and asks["pim"])
@@ -1236,6 +1288,9 @@ def chat_request_v331(text, model, memory_gb=16):
     itself, no request: {"not_sent": <fast path>}. num_ctx is this Mac's window (LocalTurn.contextTokens), seed 7 is
     the eval's own (suite.SEED), and every other field is the app's (OpenAICompatBackend.ollamaChatBody,
     OpenAICompatBackend.swift:290-309; streamedChatBody, OpenAICompatBackend.swift:552-563)."""
+    # A waiting workflow's gate (ChatService.swift:215) needs a run in flight: a fresh install has none.
+    if commands_v2_match(text):                              # ChatService.swift:221-270
+        return {"not_sent": "commands_v2"}
     asks = asks_v331(text)
     reason = not_sent_reason(asks)
     if reason:
@@ -1243,7 +1298,8 @@ def chat_request_v331(text, model, memory_gb=16):
     turn = assemble_v331(text, model, memory_gb, asks)
     body = {"model": model, "messages": wire_messages_v331(turn["system_blocks"], turn["messages"]), "stream": False,
             "think": False, "keep_alive": KEEP_ALIVE,
-            "options": {"num_ctx": turn["window"], "num_predict": REPLY_TOKENS, "temperature": 0.5, "seed": suite.SEED}}
+            "options": {"num_ctx": turn["window"], "num_predict": CHAT_MAX_TOKENS, "temperature": 0.5,
+                        "seed": suite.SEED}}
     if turn["tools"]:
         body["tools"] = [wire(t) for t in turn["tools"]]
     return {"path": "/api/chat", "body": _sorted(body), "offered": turn["offered"], "prefill": turn["prefill"],
