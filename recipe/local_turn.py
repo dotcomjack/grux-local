@@ -1184,7 +1184,7 @@ def commands_v2_match(text):
             if t[i] == "{" and "}" in t[i:]:
                 end = t.index("}", i)
                 slots.append(t[i + 1:end])
-                rx += "(.+)"
+                rx += "([^\n\r  \u0085]+)"   # ICU's `.`: no line terminator
                 i = end + 1
                 continue
             rx += "\\" + t[i] if t[i] in ".\\+*?()[]^$|" else t[i]
