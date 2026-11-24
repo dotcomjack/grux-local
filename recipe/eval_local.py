@@ -4,7 +4,7 @@ person's Grux would. Records pass, latency and the Ollama runner's memory footpr
 proven on the hardware it is for, not only on a GPU.
 
   python3 eval_local.py --model qwen3.5:4b --run results/mac-<stamp> [--think false] [--per-family N]
-                        [--set holdout|holdout2|holdout_v3|holdout_v4]
+                        [--set holdout|holdout2|holdout_v3|holdout_v4|local]
 
 --set holdout scores S2's frozen held-out set (s2/holdout.py) instead of the S1 suite; --set holdout2 scores
 held-out version 2 (s2/holdout_v2.py), whose chat-shaped cases are sent the way a Grux 3.1.0 local turn sends
@@ -12,6 +12,11 @@ them (local_turn.py) and scored against the tools that turn offered. --set holdo
 (s2/holdout_v3.py): the full Grux turn with every tool at its pinned tag (GRUX_SRC_V3), each job sent step by
 step with the scripted results of the steps before it; num_ctx defaults to that set's own window. --set holdout_v4
 scores held-out version 4 (s2/holdout_v4.py): new jobs, sent and scored by held-out v3's own runner and scorer.
+--set local (output suffix -local) scores held-out v2's 265 chat turns sent the way the current Grux, v3.3.1, sends a
+local turn (s2/holdout_local.py, local_turn.chat_request_v331; GRUX_SRC_V3 at v3.3.1), with v2's scorer against the
+tools that turn offered; --num-ctx is the Mac's own window (8192, 16384 or 32768, default 16384) and decides the tools
+as the app does. A message 3.3.1 answers with no model is written as status "not_sent" with the reason, outside the
+pass rate.
 """
 import argparse
 import json
@@ -267,9 +272,15 @@ def _main():
     ap.add_argument("--think", choices=["unset", "false"], default="false")
     ap.add_argument("--per-family", type=int, default=0, help="first N cases per job (0 = all)")
     ap.add_argument("--num-ctx", type=int, default=None, help="16384, or held-out v3's own window for holdout_v3")
-    ap.add_argument("--set", choices=["s1", "holdout", "holdout2", "holdout_v3", "holdout_v4"], default="s1")
+    ap.add_argument("--set", choices=["s1", "holdout", "holdout2", "holdout_v3", "holdout_v4", "local"], default="s1")
     a = ap.parse_args()
     request, score, cases_fn, suffix = suite.request, suite.score, suite.cases, ""
+    if a.set == "local":   # held-out v2's chat turns as Grux 3.3.1 sends them; num_ctx is this Mac's window
+        sys.path.insert(0, os.path.join(HERE, "s2"))
+        import holdout_local
+        gb = holdout_local.memory_for(a.num_ctx or 16384)
+        request = lambda c, model: holdout_local.request_local(c, model, gb)   # noqa: E731
+        score, cases_fn, suffix = holdout_local.score_local, holdout_local.cases, "-local"
     if a.set == "holdout":
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout
@@ -341,11 +352,16 @@ def _main():
                 out.flush()
                 continue
             req = request(c, a.model)
+            if "not_sent" in req:   # Grux 3.3.1 answers this message itself: nothing goes to a model
+                out.write(json.dumps({"case": c["id"], "family": c["family"], "status": "not_sent",
+                                      "why": req["not_sent"]}) + "\n")
+                out.flush()
+                continue
             t = time.time()
             try:
                 raw = post(req["path"], req["body"])
                 ok, why, got = score(c, raw, req["offered"]) if a.set == "holdout2" and "offered" in req \
-                    else score(c, raw)
+                    else score(c, raw, req) if a.set == "local" else score(c, raw)
                 row = {"case": c["id"], "family": c["family"], "status": "scored", "pass": ok, "why": why,
                        "got": got, "s": round(time.time() - t, 2),
                        "first_token_s": round((raw.get("prompt_eval_duration") or 0) / 1e9 + (raw.get("load_duration") or 0) / 1e9, 2),
@@ -353,6 +369,8 @@ def _main():
                 if "offered" in req:
                     row["offered"] = req["offered"]
                     row["prompt_tokens"] = raw.get("prompt_eval_count")
+                if a.set == "local":
+                    row["tool_list"] = "stable" if req["stable"] else "ranked: " + req["why_ranked"]
             except Exception as e:
                 row = {"case": c["id"], "family": c["family"], "status": "skipped", "error": str(e)[:200],
                        "s": round(time.time() - t, 2)}
