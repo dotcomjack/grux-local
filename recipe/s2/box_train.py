@@ -7,9 +7,11 @@ the model's own chat template and thinking off, so training text is byte for byt
 
 Spot boxes are evicted without warning (measured 2026-10-22, mid-training). `--save-every N` writes
 out/ckpt (adapter, optimizer, scheduler, step) atomically for the caller to pull out; `--resume DIR`
-continues from such a checkpoint; `--merge-only DIR` merges a finished adapter without training.
+continues from such a checkpoint, replaying the data draws before it (the rows match an unbroken run; dropout's
+torch random state is not saved, so the numbers are close, not identical); `--merge-only DIR` merges a finished adapter without training.
 """
 import argparse
+import hashlib
 import sys
 import json
 import math
@@ -120,27 +122,29 @@ def main():
     if ckpt:
         opt.load_state_dict(torch.load(os.path.join(ckpt, "optimizer.pt"), map_location="cuda"))
         sched.load_state_dict(torch.load(os.path.join(ckpt, "scheduler.pt")))
-        start = json.load(open(os.path.join(ckpt, "step.json")))["step"]
-        random.seed(7 + start)
-        print(f"resumed at step {start}/{total} from {ckpt}", flush=True)
+        meta = json.load(open(os.path.join(ckpt, "step.json")))
+        start = meta["step"]
+        why = resume_mismatch(meta, draw_settings(a))
+        if why:
+            sys.exit("REFUSED " + why)
+    draws = {"order": [], "queue": []}
+    if start:   # replay the draws the steps before `start` made, so a resumed run trains on what an unbroken one would
+        for _ in range(start * a.accum):
+            next_draw(draws, examples, a.micro, a.micro_tokens)
+        print(f"resumed at step {start}/{total} from {ckpt}, {start * a.accum} draws replayed", flush=True)
     model.train()
-    order, queue = [], []
     t0 = time.time()
     for step in range(start, total):
         loss_sum = 0.0
         for _ in range(a.accum):
+            idx = next_draw(draws, examples, a.micro, a.micro_tokens)
             if a.micro == 1:
-                if not order:
-                    order = list(range(len(examples)))
-                    random.shuffle(order)
-                p_ids, c_ids = examples[order.pop()]
+                p_ids, c_ids = examples[idx[0]]
                 ids = torch.tensor([p_ids + c_ids], device="cuda")
                 labels = torch.tensor([[-100] * len(p_ids) + c_ids], device="cuda")
                 loss = model(input_ids=ids, labels=labels).loss
             else:
-                if not queue:
-                    queue = buckets(examples, a.micro, a.micro_tokens)
-                batch = [examples[i] for i in queue.pop()]
+                batch = [examples[i] for i in idx]
                 if step < start + 2:   # the first steps' shapes and memory: what an OOM report needs
                     print(f"batch rows {len(batch)} padded {max(len(p) + len(c) for p, c in batch)} "
                           f"answer tokens {sum(len(c) for _, c in batch)}", flush=True)
@@ -158,7 +162,7 @@ def main():
         print(f"step {step + 1}/{total} loss {loss_sum:.4f} lr {sched.get_last_lr()[0]:.2e} "
               f"elapsed {time.time() - t0:.0f}s", flush=True)
         if a.save_every and (step + 1) % a.save_every == 0 and step + 1 < total:
-            save_ckpt(model, opt, sched, step + 1, total, a.out)
+            save_ckpt(model, opt, sched, step + 1, total, a.out, draw_settings(a))
     model.save_pretrained(os.path.join(a.out, "adapter"))
     print("ADAPTER DONE", flush=True)
     save_merged(model, tok, a)
@@ -170,6 +174,22 @@ def mem(where):
     print(f"MEM {where}: allocated {torch.cuda.memory_allocated() / g:.1f} reserved {torch.cuda.memory_reserved() / g:.1f} "
           f"peak {torch.cuda.max_memory_allocated() / g:.1f} of {torch.cuda.get_device_properties(0).total_memory / g:.1f}",
           flush=True)
+
+
+def next_draw(draws, examples, micro, max_tokens):
+    """The example indices of the next forward pass: one shuffled epoch order at micro 1, else the epoch's length
+    buckets, refilled when spent. Every random draw of training goes through here, so --resume replays the steps
+    before its checkpoint by calling this start x accum times. Until 2026-11-23 a resume reseeded (7 + start) and
+    began a fresh epoch, so a run resumed mid-epoch trained some rows twice and never saw others (the r5 pilot
+    resumed twice)."""
+    if micro == 1:
+        if not draws["order"]:
+            draws["order"] = list(range(len(examples)))
+            random.shuffle(draws["order"])
+        return [draws["order"].pop()]
+    if not draws["queue"]:
+        draws["queue"] = buckets(examples, micro, max_tokens)
+    return draws["queue"].pop()
 
 
 def buckets(examples, micro, max_tokens):
@@ -232,13 +252,35 @@ def check_fast_loss(model, lm_head, few):
     model.train()
 
 
-def save_ckpt(model, opt, sched, step, total, out):
+def draw_settings(a):
+    """What decides the data draws: a resume with any of these changed would replay a different stream."""
+    if not hasattr(a, "data_sha256"):   # once per run: the file is the same for every checkpoint
+        h = hashlib.sha256()
+        with open(a.data, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        a.data_sha256 = h.hexdigest()
+    return {"accum": a.accum, "micro": a.micro, "micro_tokens": a.micro_tokens, "max_len": a.max_len,
+            "data_sha256": a.data_sha256}
+
+
+def resume_mismatch(meta, now):
+    """None when a checkpoint's draw settings match this run's, else why the resume must stop. A checkpoint from
+    before 2026-11-23 has none recorded; it resumes (its own run reseeded, so nothing it trained matches anyway)."""
+    had = meta.get("draws")
+    if had is None:
+        return None
+    bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if had.get(k) != v]   # the data by its sha
+    return ("the checkpoint's data draws differ: " + "; ".join(bad)) if bad else None
+
+
+def save_ckpt(model, opt, sched, step, total, out, draws=None):
     tmp, final = os.path.join(out, "ckpt.tmp"), os.path.join(out, "ckpt")
     os.makedirs(tmp, exist_ok=True)
     model.save_pretrained(os.path.join(tmp, "adapter"))
     torch.save(opt.state_dict(), os.path.join(tmp, "optimizer.pt"))
     torch.save(sched.state_dict(), os.path.join(tmp, "scheduler.pt"))
-    json.dump({"step": step, "total": total}, open(os.path.join(tmp, "step.json"), "w"))
+    json.dump({"step": step, "total": total, "draws": draws}, open(os.path.join(tmp, "step.json"), "w"))
     if os.path.exists(final):
         os.rename(final, final + ".old")
     os.rename(tmp, final)

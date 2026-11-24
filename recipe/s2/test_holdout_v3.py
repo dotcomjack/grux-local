@@ -324,5 +324,23 @@ check(f"7 eval_run's per-case function scores {len(CS)} of {len(CS)} through a s
       all(r["status"] == "scored" and r["pass"] for r in rows), f"{sum(bool(r.get('pass')) for r in rows)} pass")
 srv.shutdown()
 
+# 8. a failing row keeps what the model sent: the args of an args miss, and the reply text past 200 characters
+_c = next(x for x in CS if x["id"] == "h3-chain-051")
+_k = next(i for i, s in enumerate(_c["steps"]) if s.get("call") == "create_event")
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "", "tool_calls": [
+    {"function": {"name": "create_event", "arguments": {"title": "x", "start": "2026-10-28T04:00:00"}}}]}})
+check("8 an args miss keeps the args sent", not _ok and _got.get("calls") == [
+    {"name": "create_event", "args": {"title": "x", "start": "2026-10-28T04:00:00"}}])
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "y" * 900}})
+check("8 a failing reply keeps its text whole", not _ok and len(_got.get("text", "")) == 900)
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "", "tool_calls": [
+    {"function": {"name": "list_events", "arguments": {"day": "2026-10-28"}}}]}})
+check("8 a wrong-tool miss keeps the args sent", not _ok and _got.get("calls") == [
+    {"name": "list_events", "args": {"day": "2026-10-28"}}], _why)
+_ok, _why, _got = h.score_step(_c, _k, {"message": {"content": "", "tool_calls": [
+    {"function": {"name": "create_event", "arguments": {"title": "conference prep", "start": "2026-10-28T16:00"}}},
+    {"function": {"name": "complete_task", "arguments": {"id": "t1"}}}]}})
+check("8 an extra-call miss keeps every call's args", not _ok and _why == "also called complete_task"
+      and [x["name"] for x in _got.get("calls") or []] == ["create_event", "complete_task"], _why)
 print(f"{'PASS' if not FAILS else 'FAIL'}: {len(FAILS)} failed")
 sys.exit(1 if FAILS else 0)
