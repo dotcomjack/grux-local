@@ -76,7 +76,7 @@ def parse_footprint_gb(text, key="phys_footprint"):
 def parse_runner_pids(ps_text, model, gguf=None):
     """Pids of the Ollama runner serving exactly `model`, from `ps -axo pid=,args=` lines. An MLX model runs as
     `ollama runner --model <name>`; a GGUF runs as `llama-server --model <blob path>` (Ollama 0.40.8), so it is found
-    by `gguf`, its blob path (gguf_path). Before 2026-11-24 only the first form matched, and every GGUF row read a
+    by `gguf`, its blob path (resolve_gguf). Before 2026-11-24 only the first form matched, and every GGUF row read a
     null footprint: the r5 pilot's llama-server went unseen by the memory guard."""
     pids = []
     for line in (ps_text or "").splitlines():
@@ -175,18 +175,21 @@ def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: []):
 GGUF = {}
 
 
-def gguf_path(model):
-    """The model's GGUF blob path from /api/show, once per model; None for an MLX model or when show fails."""
+def resolve_gguf(model, show=None):
+    """Read the model's GGUF blob path from /api/show ONCE, before the guard starts, and cache it (None for an MLX
+    model, and None after a failed show: a failure is cached too, never retried). Only this call touches the network;
+    runner_pids reads the cache, so a starved or hung Ollama never delays a guard tick or the kill on a breach."""
     if model not in GGUF:
         try:
-            GGUF[model] = parse_gguf_path(_post("/api/show", {"model": model}, timeout=30).get("modelfile"))
+            body = (show or (lambda: _post("/api/show", {"model": model}, timeout=10)))()
+            GGUF[model] = parse_gguf_path(body.get("modelfile"))
         except Exception:
-            return None
+            GGUF[model] = None
     return GGUF[model]
 
 
 def runner_pids(model):
-    return parse_runner_pids(_sh("ps", "-axo", "pid=,args="), model, gguf_path(model))
+    return parse_runner_pids(_sh("ps", "-axo", "pid=,args="), model, GGUF.get(model))
 
 
 def kill_runner(model):
@@ -357,6 +360,7 @@ def _main():
     abort_path = os.path.join(a.run, stem + suffix + ".abort.json")
     if os.path.exists(abort_path):
         os.remove(abort_path)   # a reason from an earlier run must not sit beside this one's result
+    resolve_gguf(a.model)   # before the guard: its ticks and its kill read only the cache
     start_guard(a.model, abort_path)
     t0 = time.time()
     warm = post("/api/chat", {"model": a.model, "stream": False, "think": False,

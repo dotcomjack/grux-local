@@ -112,6 +112,20 @@ check("pid finder never picks a llama-server without the model's blob path",
 check("the GGUF blob path comes from the modelfile's FROM line",
       e.parse_gguf_path(f"# Modelfile\nFROM {BLOB}\nTEMPLATE x") == BLOB)
 check("an MLX tag's modelfile names no blob path", e.parse_gguf_path("FROM grux-local:2b\n") is None)
+def _hang():
+    raise TimeoutError("show hung")
+e.GGUF.clear()
+check("a failed /api/show is cached as None, not retried",
+      e.resolve_gguf("m-fail", show=_hang) is None and "m-fail" in e.GGUF
+      and e.resolve_gguf("m-fail", show=lambda: {"modelfile": f"FROM {BLOB}"}) is None)
+check("a show is read once and cached", e.resolve_gguf("m-ok", show=lambda: {"modelfile": f"FROM {BLOB}"}) == BLOB
+      and e.resolve_gguf("m-ok", show=_hang) == BLOB)
+_post_was, shows = e._post, []
+e._post = lambda *a, **k: shows.append(a) or _hang()
+e.GGUF.pop("m-cold", None)
+e.runner_pids("m-cold")
+e._post = _post_was
+check("runner_pids (the guard path) never calls /api/show", shows == [])
 PSJ = {"models": [{"name": "grux-local-2b-r5pilot:latest", "size": 1540000000}, {"name": "grux-local:2b", "size": 2650000000}]}
 check("an untagged model finds its :latest /api/ps entry", e.ps_entry(PSJ, "grux-local-2b-r5pilot").get("size") == 1540000000)
 check("a tagged model finds only its own entry", e.ps_entry(PSJ, "grux-local:2b").get("size") == 2650000000
