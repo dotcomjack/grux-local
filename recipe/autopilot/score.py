@@ -44,9 +44,21 @@ def check_prompts():
     r = subprocess.run([sys.executable, os.path.join(common.RECIPE, "check_prompts.py")], capture_output=True,
                        text=True, env=os.environ)
     lines = [l for l in r.stdout.splitlines() if l.strip()]
-    if r.returncode != 0 or len(lines) != 2 or not all(l.endswith("MATCH") for l in lines):
-        raise SystemExit("check_prompts.py did not print two MATCH lines; refusing to score:\n" + r.stdout + r.stderr)
-    return lines
+    if r.returncode != 0 or not prompt_lines_ok(lines):
+        raise SystemExit("check_prompts.py did not print MATCH for held-out v1 and v2 (and MATCH or not checked for "
+                         "every other set); refusing to score:\n" + r.stdout + r.stderr)
+    return [l for l in lines if l.startswith(("held-out v1:", "held-out v2:"))]
+
+
+def prompt_lines_ok(lines):
+    """v1 and v2 (the sets this scorer runs) each MATCH exactly once; every other line check_prompts.py prints (v3 and
+    v4 since d40ff45) is a MATCH or its "not checked" note. Anything else, a MISMATCH included, refuses. The old rule
+    wanted exactly two lines, so once check_prompts.py printed a third every score refused."""
+    if sum(l.startswith("held-out v1:") and l.endswith(": MATCH") for l in lines) != 1:
+        return False
+    if sum(l.startswith("held-out v2:") and l.endswith(": MATCH") for l in lines) != 1:
+        return False
+    return all(l.endswith(": MATCH") or (": not checked;" in l and "MISMATCH" not in l) for l in lines)
 
 
 def set_fns(name):
