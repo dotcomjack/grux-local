@@ -1,0 +1,217 @@
+{
+ "runs/r5-published/grux-local-2b-r5-holdout.jsonl": {
+  "sha256": "03c975ac07b32a70083a8fe6d996c72f583eeb1a43b912ed74e88a2e765032c3",
+  "bytes": 105456,
+  "written": "2026-11-24T17:18:03"
+ },
+ "runs/r5-published/grux-local-2b-r5-holdout.meta.json": {
+  "sha256": "dddf6ed1d223921b661353d3e25fff705cc3bd263fd660e2f3971c44d5f5fce0",
+  "bytes": 241,
+  "written": "2026-11-24T17:18:03"
+ },
+ "runs/r5-published/ps-fresh.json": {
+  "sha256": "4694a99b4b66b8d7d673c873781f7e9b495c0153bf2dc9c11bc68dbee6e5960a",
+  "bytes": 429,
+  "written": "2026-11-24T17:07:03"
+ },
+ "runs/r5-published/ps-after.json": {
+  "sha256": "564c3a419248e1bbbaa2557ca5feeeb9f3b9f148c948cc970b3a1fa0a8593a97",
+  "bytes": 429,
+  "written": "2026-11-24T17:18:03"
+ },
+ "runs/r5-published/footprint-after.txt": {
+  "sha256": "649b08e0b2c6483bf53d10cf253e6af9632092697d06596849dbde7d807a802f",
+  "bytes": 2128,
+  "written": "2026-11-24T17:18:03"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-holdout.jsonl": {
+  "sha256": "8fe4ab3657cfaaf56f72cceaddf13857ab4cf821d8296c11232af6b585f66dab",
+  "bytes": 105583,
+  "written": "2026-11-23T19:49:51"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-holdout.meta.json": {
+  "sha256": "127223b682bea8d0f040436d59fe1108b7f27c863e75f48dbbd264639966f9da",
+  "bytes": 244,
+  "written": "2026-11-23T20:32:58"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-holdout2.jsonl": {
+  "sha256": "05f9dde36ee95a8fee9d0e84390109c80f8d6d77599159de57abe2c7cc830eb6",
+  "bytes": 218735,
+  "written": "2026-11-23T19:41:28"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-holdout2.meta.json": {
+  "sha256": "d7c37fc0478b77a2f38fa037dff82b67745a97df58074dabc9ad93bfd67f34a3",
+  "bytes": 244,
+  "written": "2026-11-23T20:32:57"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-local.jsonl": {
+  "sha256": "229fbcc7a35ff4eac2b40cb3d610673a01717e34399ea6e4f65857151f3adc45",
+  "bytes": 142322,
+  "written": "2026-11-23T20:32:52"
+ },
+ "runs/r5-pass1/grux-local-2b-r5pilot-local.meta.json": {
+  "sha256": "0a183d37aecc28404d7ac5293ace567102cdae365c271e3fe853c7cce9cd1bd6",
+  "bytes": 247,
+  "written": "2026-11-23T20:32:52"
+ },
+ "runs/r5-pass1/grux-local_2b-holdout.jsonl": {
+  "sha256": "d5ab8f009624ee84a3217a46fee282424f0e6fa7c396f10ce0f4c24ded7e7452",
+  "bytes": 104700,
+  "written": "2026-11-23T19:02:03"
+ },
+ "runs/r5-pass1/grux-local_2b-holdout.meta.json": {
+  "sha256": "011d9f3bf99d7fff31b9be292b11fe47db1c9f93ace395fbd0ac8ccd885290c7",
+  "bytes": 247,
+  "written": "2026-11-23T20:32:57"
+ },
+ "runs/r5-pass1/grux-local_2b-holdout2.jsonl": {
+  "sha256": "446ec359573cec90154c76bdeb95607e8255ab733456ec0cf859246601e5e77e",
+  "bytes": 217867,
+  "written": "2026-11-23T18:53:19"
+ },
+ "runs/r5-pass1/grux-local_2b-holdout2.meta.json": {
+  "sha256": "56edb9cba7be08005f31246a07cbd161b2a12905fe495dcc38763f650a87bde0",
+  "bytes": 246,
+  "written": "2026-11-23T20:32:56"
+ },
+ "runs/r5-pass1/grux-local_2b-local.jsonl": {
+  "sha256": "46b8f15dec9aee89361511772c6d5e109717ee2c196a2701ca192643a1890c2b",
+  "bytes": 141174,
+  "written": "2026-11-23T20:04:46"
+ },
+ "runs/r5-pass1/grux-local_2b-local.meta.json": {
+  "sha256": "3168a0a0e2d55eeed99f0d59a9eaa201ad2ed65d3926218558ae085cb982ef09",
+  "bytes": 248,
+  "written": "2026-11-23T20:04:46"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-holdout.jsonl": {
+  "sha256": "928ba5c53b9822c5fd77fc83f945e7d8826749ede304f270b5a1213319e6051c",
+  "bytes": 105575,
+  "written": "2026-11-23T22:05:33"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-holdout.meta.json": {
+  "sha256": "2c549ccc3cc8758a7c354ffcfe297b5488959e2db6ff7897091999b4e204afe2",
+  "bytes": 246,
+  "written": "2026-11-23T22:05:33"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-holdout2.jsonl": {
+  "sha256": "01ccdefd5c7eb4903c42bd33ec1384ab416a1cd48e3c6d8a03b43eae1ef2616b",
+  "bytes": 218745,
+  "written": "2026-11-23T21:56:11"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-holdout2.meta.json": {
+  "sha256": "6ab1ad3c736dccff9737be1597a34ec2a5400b52bb493265ebe695cd1d46b8e8",
+  "bytes": 247,
+  "written": "2026-11-23T21:56:11"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-local.jsonl": {
+  "sha256": "de6384104f46b54e8d21c7eaa290357b56303e3812717f69ed7fdae64a562106",
+  "bytes": 142408,
+  "written": "2026-11-23T23:01:05"
+ },
+ "runs/r5-pass2/grux-local-2b-r5pilot-local.meta.json": {
+  "sha256": "12811be7f4128294e5a5cc90cd8eaecc0121a710bb44deaa0770fa26869a8d4a",
+  "bytes": 246,
+  "written": "2026-11-23T23:01:05"
+ },
+ "runs/r5-pass2/grux-local_2b-holdout.jsonl": {
+  "sha256": "3543dbfad0dab1a50985a0f26233c71f4668e5e4de5862092bb50bd79c621d1d",
+  "bytes": 104695,
+  "written": "2026-11-23T21:16:09"
+ },
+ "runs/r5-pass2/grux-local_2b-holdout.meta.json": {
+  "sha256": "35a3a74f1a574fd850b22a9de84e0f11fb9d62100a5de3a8b36ddb8363fc1276",
+  "bytes": 250,
+  "written": "2026-11-23T21:16:09"
+ },
+ "runs/r5-pass2/grux-local_2b-holdout2.jsonl": {
+  "sha256": "65a828cd3d8536d9aa252217bff5d51a2f9b8d046100a68fd6a248eb0dd256da",
+  "bytes": 217824,
+  "written": "2026-11-23T21:07:20"
+ },
+ "runs/r5-pass2/grux-local_2b-holdout2.meta.json": {
+  "sha256": "cdf710c82e6b7283d1503765de809cdbcad3caa10ebf5bb240a299687e5d812a",
+  "bytes": 249,
+  "written": "2026-11-23T21:07:21"
+ },
+ "runs/r5-pass2/grux-local_2b-local.jsonl": {
+  "sha256": "481c98cfe75e72c94a2f61917b0350fc4c8485a877dd86c81688ab82901c7de6",
+  "bytes": 141198,
+  "written": "2026-11-23T22:49:49"
+ },
+ "runs/r5-pass2/grux-local_2b-local.meta.json": {
+  "sha256": "a7e372f3592b223e8dc58d98d11dd532278e8166feaf65b7ceb4e2eb7181c2f0",
+  "bytes": 249,
+  "written": "2026-11-23T22:49:49"
+ },
+ "runs/r5-pass3/grux-local-2b-r5pilot-local.jsonl": {
+  "sha256": "0608490cf94eab78dcf4e7a818b037dd2208828bb0c653b39648f55c48c08c9d",
+  "bytes": 142411,
+  "written": "2026-11-23T23:20:32"
+ },
+ "runs/r5-pass3/grux-local-2b-r5pilot-local.meta.json": {
+  "sha256": "7cde380a05f4caaa1e10e91da2afdd4ad94d828121259e6efd174251071c6ccc",
+  "bytes": 246,
+  "written": "2026-11-23T23:20:32"
+ },
+ "runs/r5-pass3/grux-local_2b-local.jsonl": {
+  "sha256": "fa2fe9ed269dd66bf382df4d51e7ccb791c8a6d08581b11dcd1fc727f5aa4943",
+  "bytes": 141105,
+  "written": "2026-11-23T23:09:17"
+ },
+ "runs/r5-pass3/grux-local_2b-local.meta.json": {
+  "sha256": "1f864a043773a8d0cd0e9522842a4aca5f247eabc38807e537c44bb331b0d9e7",
+  "bytes": 249,
+  "written": "2026-11-23T23:09:17"
+ },
+ "runs/r5-8k/grux-local-2b-r5pilot-local.jsonl": {
+  "sha256": "81e1ba30186fa6f0fd332a6b492efd6cc12957fb66c3cb455cdc0d57b8ccfc4a",
+  "bytes": 142409,
+  "written": "2026-11-23T23:42:04"
+ },
+ "runs/r5-8k/grux-local-2b-r5pilot-local.meta.json": {
+  "sha256": "e1afd93d84a809613f28e1419bff0c565f4b1e2ad4e6776c38c778a5f7eb1775",
+  "bytes": 245,
+  "written": "2026-11-23T23:42:04"
+ },
+ "runs/r5-8k/grux-local_2b-local.jsonl": {
+  "sha256": "256beec771e23ea31b59ffdcd1ed652e4fc4aee3bdd633ea772f9c4974f29416",
+  "bytes": 141220,
+  "written": "2026-11-23T23:30:48"
+ },
+ "runs/r5-8k/grux-local_2b-local.meta.json": {
+  "sha256": "158a1f3aa319fb577b14427fd5bd1161b15b58fbe911edb662813d7608b0840f",
+  "bytes": 248,
+  "written": "2026-11-23T23:30:48"
+ },
+ "runs/r5-smoke/grux-local-2b-r5-holdout2.jsonl": {
+  "sha256": "4e827c56be0379e4c98f37f38c25806a0e2b66397dc7549f3f7a87823f4c1aab",
+  "bytes": 4395,
+  "written": "2026-11-24T16:52:13"
+ },
+ "runs/r5-smoke/grux-local-2b-r5-holdout2.meta.json": {
+  "sha256": "4d77612839dbbbca10b3418c70e5b37649011ec876d7a5c30c82331de9e06f41",
+  "bytes": 240,
+  "written": "2026-11-24T16:52:13"
+ },
+ "runs/r5-smoke/grux-local-2b-r5pilot-holdout2.jsonl": {
+  "sha256": "c11d01583af6aa2114b124aa10b5c63688dbbc44339d934d338de8098bd24706",
+  "bytes": 4396,
+  "written": "2026-11-24T16:52:22"
+ },
+ "runs/r5-smoke/grux-local-2b-r5pilot-holdout2.meta.json": {
+  "sha256": "5cfa6fcdb6d50820ac064c6795368eb0941591aa72b4c8f9fa007146beea06cb",
+  "bytes": 244,
+  "written": "2026-11-24T16:52:22"
+ },
+ "fname-ab/fn8k-grux-local-2b-r5pilot.txt": {
+  "sha256": "8ff07dc1f5a8c4a703e39cbc0e38816462d206c9b27330a7c33dec4a10f7dbe6",
+  "bytes": 3335,
+  "written": "2026-11-23T23:22:15"
+ },
+ "fname-ab/fn8k-grux-local_2b.txt": {
+  "sha256": "61d87761f98e6fb3aacf911417eca5e5561eca58082e5174cbc7edcf68d5c2d7",
+  "bytes": 3010,
+  "written": "2026-11-23T23:21:23"
+ }
+}

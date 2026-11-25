@@ -1,5 +1,8 @@
 # Reproduction: the 2B held-out score from a fresh clone (2026-10-23)
 
+> Dated 2026-10-23. The 2B reproduced here is the first one (manifest `sha256:601cd23c66ef...`); on 2026-11-24
+> `:2b` was rebuilt, and that first 2B's record now stands under `replaced` in [`results/v1.json`](../v1.json).
+
 Who and where: Grux, on a 16 GB Mac mini (Apple M4) with Ollama 0.40.8, on October 23, 2026, starting from a
 fresh clone of this repository at commit 1b7286c and following `recipe/README.md` step 1 word for word:
 

@@ -24,10 +24,10 @@ python3 recipe/summarize.py /tmp/grux-local-check/gruxai.com_grux_grux-local_2b-
 `check_prompts.py` must print `MATCH` for both held-out sets. Each run writes one file per model, named for the
 model with `:` and `/` as `_`, so name the file you mean: a glob would pick whichever model sorts first. The summary
 should read the numbers in
-[`results/v1.json`](../results/v1.json) for that tag: 435 of 464 for the 2B, 454 of 464 for the 4B, 458 of 464 for
+[`results/v1.json`](../results/v1.json) for that tag: 439 of 464 for the 2B, 454 of 464 for the 4B, 458 of 464 for
 the 9B, with the hidden instruction cases out of 70 and the count for each kind of task. Requests go out one at a
 time with a fixed seed and thinking off, as Grux sends them. Chat timing depends on your Mac; v1's timings are from
-a 16 GB Mac mini (Apple M4). Use `:4b` or `:9b` for the larger models, and `--model qwen3.5:4b` (or `:2b`, `:9b`) to
+a 16 GB Mac mini (Apple M4). The 2B is text only and runs on Ollama's llama.cpp runner, the other tags on MLX. Use `:4b` or `:9b` for the larger models, and `--model qwen3.5:4b` (or `:2b`, `:9b`) to
 score the same model before training; v1's before-training score for the 9B is from a MacBook Pro (Apple M4 Pro,
 48 GB).
 
@@ -137,6 +137,7 @@ it yet.
 | Answers | `s2/gen_data.py` | A teacher model (Gemma 4 26B on a GPU box, through Ollama) writes each reply; a reply is kept only when the scorer passes it |
 | Training | `s2/box_train.py` | LoRA on Qwen 3.5 (2B, 4B, 9B), loss on the answer tokens only, checkpoints so a lost spot box resumes |
 | Run | `s2/train_run.py` | Train, merge, import into Ollama as nvfp4, score the held-out set, pull the model out (the published 9B was then quantized separately with NVIDIA ModelOpt, to the mixed NVFP4 and MXFP8 recipe of Ollama's own qwen3.5:9b) |
+| GGUF | `s2/gguf_run.py` | Merge a trained adapter, convert it with llama.cpp to one GGUF file, quantize it (Q4_K_M), import it into Ollama with the library qwen3.5 Modelfile and score it; the published 2B is one of these, built from the round 5 pilot |
 | Sweep | `s2/sweep.py`, `s2/sweep_report.py` | Twelve configurations in parallel, then a scorecard and a winner per Mac size |
 | Scorer | `suite.py`, `eval_local.py` | Grux's prompts and parsers; `eval_local.py` scores a model on this Mac's own Ollama |
 | GPU boxes | `train_box.py`, `gpu_box.py`, `lease.py` | Spot GPU boxes on Daytona, each under a 20-minute lease that a crashed process cannot outlive |

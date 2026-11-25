@@ -4,13 +4,13 @@
 
 | Tag | Made for | Freshly loaded on the 16 GB Mac mini at num_ctx 16,384 (measured) |
 |---|---|---|
-| `gruxai.com/grux/grux-local:2b` | 8 GB Macs | 2.65 GB |
+| `gruxai.com/grux/grux-local:2b` (text only) | 8 GB Macs | 1.54 GB |
 | `gruxai.com/grux/grux-local:4b` (`latest`) | 16 GB Macs and up | 4.44 GB |
 | `gruxai.com/grux/grux-local:9b` | 24 GB Macs and up | 7.25 GB |
 
-Needs a Mac with Apple silicon and Ollama 0.40.8 or later. A second version of the 4B, `gruxai.com/grux/grux-local:4b-v2`, is opt-in: see [4B v2, opt-in](#4b-v2-opt-in).
+Needs a Mac with Apple silicon and Ollama 0.40.8 or later. The 2B takes text only: it was rebuilt in November 2026 and no longer accepts images, see [The 2B, rebuilt](#the-2b-rebuilt). A second version of the 4B, `gruxai.com/grux/grux-local:4b-v2`, is opt-in: see [4B v2, opt-in](#4b-v2-opt-in).
 
-Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama can also report more memory for the model as it works: on the 16 GB Mac mini the 2B read 2.65 GB freshly loaded and 11.37 GB after a full held-out run (464 tasks), and the 4B (`latest`) read 4.44 GB and then 13.11 GB the same way; the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not yet measured.
+Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama can also report more memory for the model as it works: on the 16 GB Mac mini the 4B (`latest`) read 4.44 GB freshly loaded and 13.11 GB after a full held-out run (464 tasks), while the 2B read 1.54 GB both freshly loaded and after the same 464 tasks, though macOS put its runner process at 2,637 MB after them; the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not yet measured.
 
 ## What it is trained to do
 
@@ -29,8 +29,8 @@ None of these is perfect. Below is how often the whole set went right; the count
 |---|---|---|
 | 4B, all 464 tasks | 396 (85%) | **454 (98%)** |
 | 4B, hidden instructions ignored | 55 of 70 | **65 of 70** |
-| 2B, all 464 tasks | 295 (64%) | **435 (94%)** |
-| 2B, hidden instructions ignored | 43 of 70 | **66 of 70** |
+| 2B, all 464 tasks | 295 (64%) | **439 (95%)** |
+| 2B, hidden instructions ignored | 43 of 70 | **64 of 70** |
 
 The 9B's Grux Local numbers are from the same Mac mini. Its before-training numbers are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the same 464 tasks, because the Mac mini had no disk to spare for the stock 9B:
 
@@ -39,9 +39,36 @@ The 9B's Grux Local numbers are from the same Mac mini. Its before-training numb
 | 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
 | 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 1.6 s (2B) and 3.8 s (9B).
+Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 2.4 s (2B) and 3.8 s (9B).
 
 Every number here, with the count for each kind of task, is in [`results/v1.json`](results/v1.json). `python3 results/check.py` checks it against this card, the Grux README and gruxai.com, and checks that each tag's manifest hashes to the digest recorded there.
+
+## The 2B, rebuilt
+
+`gruxai.com/grux/grux-local:2b` now points at a new build, manifest `sha256:1622ac1b80afb8841fc588fbc57eff60284f318d021311322a84df4aa097251e`. It replaced the first 2B (manifest `sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4`), so `ollama pull gruxai.com/grux/grux-local:2b` now gets the new one.
+
+**What changed.** The same base (Qwen/Qwen3.5-2B), trained with LoRA on round 5 data, which is not published here, then converted to a single GGUF file and quantized to Q4_K_M with llama.cpp. Ollama runs it on its llama.cpp runner (`llama-server`), not on MLX like the other tags.
+
+**Text only.** Ollama lists its capabilities as completion, tools and thinking, with no vision, and a chat request that carries an image gets HTTP 400 "Multimodal data provided, but model does not support multimodal requests." The first 2B accepted images. So in Grux, a chat with an image attached fails when it is routed to the local 2B: send the text instead, or use another model for pictures.
+
+Both 2Bs on the same 16 GB Mac mini, Ollama 0.40.8, num_ctx 16,384 unless named: the first 2B and the new one's scored build on the evening of November 23, 2026, and the new one's published bytes on November 24:
+
+| On the 16 GB Mac mini | First 2B | New 2B |
+|---|---|---|
+| Held-out v1, all 464 tasks | 435 (94%) | **439 (95%)** |
+| Held-out v1, hidden instructions ignored | **65 of 70** | 64 of 70 |
+| Held-out v2, all 466 tasks | 371 (80%) | **414 (89%)** |
+| Held-out v2, hidden instructions: task done, steering named | 4 of 70 | **46 of 70** |
+| Local turns as Grux 3.3.1 sends them, 237 tasks, four runs | 163 to 166 | **196 to 197** |
+| Of those, saying plainly what it cannot do | **31 to 32 of 34** | 27 of 34 |
+| File naming at num_ctx 8,192, 92 items | **65 of 92** | 62 of 92 |
+| Chat replies on held-out v1, 95% within | **2.0 s** | 2.4 s |
+
+Where the new 2B is worse: it takes text only; it ignored hidden instructions in one held-out v1 case fewer (64 against 65 that evening, and 66 when the first 2B was published); on the local turns it failed 7 of the 34 that ask for something no tool can do, in every run (1 event created that nobody asked for, 1 call to a tool the turn did not offer, 2 offers of actions no offered tool does, 3 empty replies); it named fewer files well (62 against 65 of 92); and its chat replies were slower, on held-out v1 (see the table) and slightly on held-out v2 (95% within 8.8 s against 8.6 s). Its first word came later on held-out v1 and on the local turns (median 1.09 s against 0.09 s and 0.12 s) and sooner on held-out v2 (0.63 s against 5.68 s).
+
+Held-out v1 and the loaded size were measured on the published bytes. Held-out v2, the local turns and file naming were measured on the scored build, which differs from the published `:2b` only in an appended license file ([`results/reproductions/2026-11-24-2b-v2-license.md`](results/reproductions/2026-11-24-2b-v2-license.md)); on held-out v1 the two gave the same pass or fail on every task. The local turns are held-out v2's 265 chat turns sent the way Grux 3.3.1 sends a local turn, less the 28 that Grux answers without a model; the fourth run was at num_ctx 8,192, what Grux uses on an 8 GB Mac. Every number here and its raw rows are in [`results/v1.json`](results/v1.json) under `2b` and [`results/mini-r5-20261123/`](results/mini-r5-20261123/); the first 2B's record is under `replaced`.
+
+Round 5's 15,842 training rows went through the recipe's training gate (`recipe/s2/contamination.py`), which checks them against held-out v3 and v4 and found none touched ([`train-mix-r5.gate.json`](results/mini-r5-20261123/train-mix-r5.gate.json), its source path shortened to the file name). This repository holds no check of round 5's rows against held-out v1 or v2, so the held-out v2 gain above is not shown to be free of overlap with training.
 
 ## 4B v2, opt-in
 
@@ -89,8 +116,8 @@ it yet. How it works: [`recipe/README.md`](recipe/README.md#held-out-v3-the-full
 ollama pull gruxai.com/grux/grux-local:4b
 ```
 
-On an 8 GB Mac, pull `gruxai.com/grux/grux-local:2b` instead, and on a Mac with 24 GB or more, `gruxai.com/grux/grux-local:9b`. To try 4B v2, pull `gruxai.com/grux/grux-local:4b-v2`. Then in Grux open **Settings, Models, Offline mode (local model)**, turn on **Route chat to a local model**, and enter the same tag in **Model**. Chat then runs on your Mac through Ollama: no API key, no account, and no model provider sees what you ask. Tools you ask for still do their job, so a web search opens Google in Chrome. Next up: Grux's local model picker will suggest it for your Mac on its own.
+On an 8 GB Mac, pull `gruxai.com/grux/grux-local:2b` instead (text only), and on a Mac with 24 GB or more, `gruxai.com/grux/grux-local:9b`. To try 4B v2, pull `gruxai.com/grux/grux-local:4b-v2`. Then in Grux open **Settings, Models, Offline mode (local model)**, turn on **Route chat to a local model**, and enter the same tag in **Model**. Chat then runs on your Mac through Ollama: no API key, no account, and no model provider sees what you ask. Tools you ask for still do their job, so a web search opens Google in Chrome. Next up: Grux's local model picker will suggest it for your Mac on its own.
 
 ## How it was made
 
-LoRA fine-tune of Qwen 3.5 (2B, 4B and 9B, Apache-2.0) on synthetic Grux tasks. The expected result of each task was set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the reply text, and a reply was kept only when Grux's own checker passed it and it was right on top of that: exact dictation, no promised actions, no refusal of the harmless request. No personal data was used. Runs on Ollama's MLX runner: the 2B and 4B in nvfp4, and the 9B in the same mixed recipe as Ollama's own qwen3.5:9b (NVFP4 on linear attention and MLP, MXFP8 on full attention, embeddings and lm_head), quantized with NVIDIA ModelOpt. Licensed Apache-2.0. Built by DotcomJack.
+LoRA fine-tune of Qwen 3.5 (2B, 4B and 9B, Apache-2.0) on synthetic Grux tasks. The expected result of each task was set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the reply text, and a reply was kept only when Grux's own checker passed it and it was right on top of that: exact dictation, no promised actions, no refusal of the harmless request. No personal data was used. That is round 1, behind the 4B and 9B; the 4B v2 was trained on round 2 and the current 2B on round 5, neither of which is published. The 4B runs on Ollama's MLX runner in nvfp4, and the 9B in the same mixed recipe as Ollama's own qwen3.5:9b (NVFP4 on linear attention and MLP, MXFP8 on full attention, embeddings and lm_head), quantized with NVIDIA ModelOpt. The 2B is a GGUF file in Q4_K_M, converted and quantized with llama.cpp, and runs on Ollama's llama.cpp runner. Licensed Apache-2.0. Built by DotcomJack.

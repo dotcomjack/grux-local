@@ -1,0 +1,19 @@
+{
+ "model": "grux-local-2b-r5",
+ "capabilities": [
+  "completion",
+  "tools",
+  "thinking"
+ ],
+ "details": {
+  "parent_model": "gguf-grux-qwen35-2b-Q4_K_M.gguf",
+  "format": "gguf",
+  "family": "qwen35",
+  "families": [
+   "qwen35"
+  ],
+  "parameter_size": "1.9B",
+  "quantization_level": "Q4_K_M",
+  "runner": "llamacpp"
+ }
+}
