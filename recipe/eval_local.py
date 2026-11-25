@@ -73,18 +73,42 @@ def parse_footprint_gb(text, key="phys_footprint"):
     return round(float(m.group(1)) * {"B": 1e-9, "KB": 1e-6, "MB": 1e-3, "GB": 1}[m.group(2)], 2)
 
 
-def parse_runner_pids(ps_text, model):
-    """Pids of the Ollama runner serving exactly `model`, from `ps -axo pid=,args=` lines."""
+def parse_runner_pids(ps_text, model, gguf=None):
+    """Pids of the Ollama runner serving exactly `model`, from `ps -axo pid=,args=` lines. An MLX model runs as
+    `ollama runner --model <name>`; a GGUF runs as `llama-server --model <blob path>` (Ollama 0.40.8), so it is found
+    by `gguf`, its blob path (gguf_path). Before 2026-11-24 only the first form matched, and every GGUF row read a
+    null footprint: the r5 pilot's llama-server went unseen by the memory guard."""
     pids = []
     for line in (ps_text or "").splitlines():
         parts = line.split(None, 1)
         if len(parts) < 2 or not parts[0].isdigit():
             continue
         args = parts[1].split()
-        if (args and os.path.basename(args[0]) == "ollama" and "runner" in args and "--model" in args
-                and args.index("--model") + 1 < len(args) and args[args.index("--model") + 1] == model):
+        if not args or "--model" not in args or args.index("--model") + 1 >= len(args):
+            continue
+        exe, target = os.path.basename(args[0]), args[args.index("--model") + 1]
+        if (exe == "ollama" and "runner" in args and target == model) or (
+                gguf and exe == "llama-server" and target == gguf):
             pids.append(int(parts[0]))
     return pids
+
+
+def parse_gguf_path(modelfile):
+    """The blob path on a modelfile's FROM line when it names one (a GGUF model), else None. An MLX tag's FROM names
+    the tag itself."""
+    for line in (modelfile or "").splitlines():
+        if line.startswith("FROM "):
+            path = line[5:].strip()
+            if os.path.isabs(path) and os.path.basename(path).startswith("sha256-"):
+                return path
+    return None
+
+
+def ps_entry(ps, model):
+    """The /api/ps entry for `model`. Ollama names an untagged model "<name>:latest", so a bare name matched nothing
+    and the r5 pilot's meta read ollama_size_gb 0.0."""
+    names = {model} if ":" in model.split("/")[-1] else {model, model + ":latest"}
+    return next((x for x in ps.get("models", []) if x.get("name") in names), {})
 
 
 def mem_verdict(pressure_level, free_pct):
@@ -148,8 +172,21 @@ def guard_tick(read, unload, abort_path, exit=os._exit, kill=lambda: []):
         exit(7)
 
 
+GGUF = {}
+
+
+def gguf_path(model):
+    """The model's GGUF blob path from /api/show, once per model; None for an MLX model or when show fails."""
+    if model not in GGUF:
+        try:
+            GGUF[model] = parse_gguf_path(_post("/api/show", {"model": model}, timeout=30).get("modelfile"))
+        except Exception:
+            return None
+    return GGUF[model]
+
+
 def runner_pids(model):
-    return parse_runner_pids(_sh("ps", "-axo", "pid=,args="), model)
+    return parse_runner_pids(_sh("ps", "-axo", "pid=,args="), model, gguf_path(model))
 
 
 def kill_runner(model):
@@ -326,7 +363,7 @@ def _main():
                               "messages": [{"role": "user", "content": "ok"}],
                               "options": {"num_ctx": a.num_ctx, "num_predict": 4}})
     ps = post_get("/api/ps")
-    m = next((x for x in ps.get("models", []) if x.get("name") == a.model), {})
+    m = ps_entry(ps, a.model)
     meta = {"model": a.model, "num_ctx": a.num_ctx, "think": a.think, "load_s": round(time.time() - t0, 1),
             "ollama_size_gb": round(m.get("size", 0) / 1e9, 2), "runner_footprint_gb": runner_footprint_gb(a.model),
             "version": post_get("/api/version").get("version"), "guard_runner_pids": runner_pids(a.model)}

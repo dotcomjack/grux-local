@@ -101,6 +101,21 @@ PS = """  101 /opt/homebrew/opt/ollama/bin/ollama serve
 """
 check("pid finder picks the runner for this exact model", e.parse_runner_pids(PS, "gruxai.com/grux/grux-local:9b") == [49207])
 check("pid finder never picks the server or the eval itself", e.parse_runner_pids(PS, "gruxai.com/grux/grux-local:2") == [])
+BLOB = "/Users/dcj/.ollama/models/blobs/sha256-58b9d3c2adaec8438d72a074506d59ebd3d8469f79d7e2a94b38ec545d9584bc"
+PS_GGUF = PS + f"""99111 /opt/homebrew/Cellar/ollama/0.40.8/libexec/lib/ollama/llama-server --model {BLOB} --port 64078 --host 127.0.0.1
+99222 /opt/homebrew/Cellar/ollama/0.40.8/libexec/lib/ollama/llama-server --model {BLOB[:-1]}0 --port 64079
+"""
+check("pid finder picks a GGUF model's llama-server by its blob path",
+      e.parse_runner_pids(PS_GGUF, "grux-local-2b-r5", BLOB) == [99111])
+check("pid finder never picks a llama-server without the model's blob path",
+      e.parse_runner_pids(PS_GGUF, "grux-local-2b-r5") == [])
+check("the GGUF blob path comes from the modelfile's FROM line",
+      e.parse_gguf_path(f"# Modelfile\nFROM {BLOB}\nTEMPLATE x") == BLOB)
+check("an MLX tag's modelfile names no blob path", e.parse_gguf_path("FROM grux-local:2b\n") is None)
+PSJ = {"models": [{"name": "grux-local-2b-r5pilot:latest", "size": 1540000000}, {"name": "grux-local:2b", "size": 2650000000}]}
+check("an untagged model finds its :latest /api/ps entry", e.ps_entry(PSJ, "grux-local-2b-r5pilot").get("size") == 1540000000)
+check("a tagged model finds only its own entry", e.ps_entry(PSJ, "grux-local:2b").get("size") == 2650000000
+      and e.ps_entry(PSJ, "grux-local:4b") == {})
 
 check("footprint parses in MB", e.parse_footprint_gb("    phys_footprint: 7128 MB\n    phys_footprint_peak: 7647 MB") == 7.13)
 check("footprint parses in GB", e.parse_footprint_gb("    phys_footprint: 12.5 GB") == 12.5)
