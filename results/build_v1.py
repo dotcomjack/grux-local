@@ -312,6 +312,9 @@ if sys.argv[1:2] == ["--v1-tags-from"]:
     tags = {k: v for k, v in json.load(open(sys.argv[2]))["tags"].items() if k in ("2b", "4b", "9b")}
     assert list(tags) == ["2b", "4b", "9b"], list(tags)
 else:
+    if "--first-2b" not in sys.argv:   # v1_tags() builds the 2B that was replaced on 2026-11-24
+        sys.exit("refused: a full build writes the first 2B (601cd23c) as the 2b tag. Run it with --first-2b, then "
+                 "`build_v1.py --from <that output> --2b-r5 mini-r5-20261123` to put the current 2B back")
     tags = v1_tags()
 tags["4b-v2"] = tag_4b_v2()
 

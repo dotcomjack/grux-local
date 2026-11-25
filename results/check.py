@@ -449,8 +449,10 @@ def rebuilt_rows(tag, d):
          rf"File naming[^0-9]{{0,30}}?8,192, {fa['of']} items {fb['pass']} of {fb['of']} {fa['pass']} of {fa['of']}"),
         ("rebuilt", f"{T} rebuilt, chat p95: {b['chat_p95_s']:.1f} to {a['chat_p95_s']:.1f} s",
          rf"Chat replies on held-out v1, 95% within {b['chat_p95_s']:.1f} s {a['chat_p95_s']:.1f} s"),
+        # One median for held-out v1 and the local turns: the sentence states one, so they must be the same.
         ("rebuilt", f"{T} rebuilt, first token",
-         rf"median {ft['holdout_v1']['grux_local']:.2f} s against {ft['holdout_v1']['previous_2b_same_machine']:.2f} s "
+         (rf"median {ft['holdout_v1']['grux_local']:.2f} s against" if ft["holdout_v1"]["grux_local"]
+          == ft["local_num_ctx_8192"]["grux_local"] else r"(?!)") + rf" {ft['holdout_v1']['previous_2b_same_machine']:.2f} s "
          rf"and {ft['local_num_ctx_8192']['previous_2b_same_machine']:.2f} s\) and sooner on held-out v2 "
          rf"\({ft['holdout_v2']['grux_local']:.2f} s against {ft['holdout_v2']['previous_2b_same_machine']:.2f} s\)"),
         ("rebuilt", f"{T} rebuilt, the {sum(fails.values())} honesty failures by reason",
@@ -468,7 +470,10 @@ def rebuilt_rows(tag, d):
         rows.append(("worse", f"{T} rebuilt ignored fewer hidden instructions on held-out v1",
                      rf"\b{a['hidden_instructions_ignored']} against {b['hidden_instructions_ignored']}\b"))
     if a["chat_p95_s"] > b["chat_p95_s"]:
-        rows.append(("worse", f"{T} rebuilt is slower on held-out v1 chat", r"chat replies on held-out v1 were slower"))
+        rows.append(("worse", f"{T} rebuilt is slower on held-out v1 chat", r"chat replies were slower, on held-out v1"))
+    if a2["chat_p95_s"] > b2["chat_p95_s"]:
+        rows.append(("worse", f"{T} rebuilt is slower on held-out v2 chat",
+                     rf"on held-out v2 \(95% within {a2['chat_p95_s']:.1f} s against {b2['chat_p95_s']:.1f} s\)"))
     if fa["pass"] < fb["pass"]:
         rows.append(("worse", f"{T} rebuilt names fewer files", rf"\b{fa['pass']} against {fb['pass']} of {fa['of']}\b"))
     if d["holdout_v1_scored_build_flips"] == 0:
@@ -501,9 +506,10 @@ def rebuilt_headline(d):
                  rf"\({ha} against {hb} of\s+{hof}\)"))
     if fa["pass"] < fb["pass"]:
         rows.append(("worse", f"{T} rebuilt, file naming", rf"\({fa['pass']} against {fb['pass']} of {fa['of']}\)"))
-    if a["chat_p95_s"] > b["chat_p95_s"]:
+    if a["chat_p95_s"] > b["chat_p95_s"] or a2["chat_p95_s"] > b2["chat_p95_s"]:
         rows.append(("worse", f"{T} rebuilt, chat speed",
-                     rf"95% within {a['chat_p95_s']:.1f} s against {b['chat_p95_s']:.1f} s\)"))
+                     rf"95% within {a['chat_p95_s']:.1f} s against {b['chat_p95_s']:.1f} s on held-out v1, and "
+                     rf"{a2['chat_p95_s']:.1f} s against {b2['chat_p95_s']:.1f} s on held-out v2\)"))
     return rows
 
 
