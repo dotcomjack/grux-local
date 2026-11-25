@@ -148,7 +148,7 @@ R5_SCORED = "sha256:03ac1e39c81e3451e557662f0cb68d6917b0a0e4743b713b326228bb7d50
 R5_RUNTIME = "Ollama 0.40.8, llama.cpp runner (llama-server), GGUF Q4_K_M, one request at a time, thinking off as Grux sends it"
 
 
-def r5_2b(d, replaced):
+def r5_2b(d, replaced, v2_task_set):
     """The 2B built from the round 5 pilot: the scored build grux-local-2b-r5pilot (manifest 03ac1e39) with the
     shipped license layer appended (results/reproductions/2026-11-24-2b-v2-license.md), published as
     gruxai.com/grux/grux-local:2b, manifest 1622ac1b. Held-out v1 and the loaded sizes are read from the published
@@ -259,9 +259,8 @@ def r5_2b(d, replaced):
             "previous_2b_same_machine_model": f"grux-local:2b, the 2B this one replaced, manifest "
                                               f"{replaced['manifest_digest']}, scored on the same Mac mini the evening "
                                               "before",
-            "holdout_v2": {"task_set": "Grux held-out set version 2: 466 tasks (recipe/s2/holdout_v2.py), each "
-                                       "chat-shaped task sent the way a Grux 3.1.0 local turn sends it",
-                           "grux_local": v2_new, "previous_2b_same_machine": v2_old},
+            # The same set the 4b-v2 was scored on, in the same words: a reader of v1.json finds it described once.
+            "holdout_v2": {"task_set": v2_task_set, "grux_local": v2_new, "previous_2b_same_machine": v2_old},
             "local_turns": {"task_set": "held-out v2's 265 chat turns sent the way Grux 3.3.1 sends a local turn "
                                         "(recipe/eval_local.py --set local); a turn Grux answers without a model is "
                                         "not sent, so each run scores the rest. Four runs of each model, the last "
@@ -289,7 +288,7 @@ if sys.argv[1:2] == ["--from"]:
         (used,) = [u for u in v1["loaded_after_use"] if u["tag"] == "2b"]
         replaced = {"tag": "2b", "replaced_by": R5_DIGEST, **old, "runtime": v1["runtime"], "input": "text and images",
                     "loaded_after_use": {k: v for k, v in used.items() if k != "tag"}}
-    new = r5_2b(sys.argv[4], replaced)
+    new = r5_2b(sys.argv[4], replaced, v1["tags"]["4b-v2"]["holdout_v2"]["task_set"])
     assert new["before_training"] == replaced["before_training"]
     out = dict(v1)
     out["runtime"] = "Ollama 0.40.8, MLX runner, one request at a time, thinking off as Grux sends it, except for a " \
