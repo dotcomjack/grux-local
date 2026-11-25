@@ -366,6 +366,9 @@ def _main():
     warm = post("/api/chat", {"model": a.model, "stream": False, "think": False,
                               "messages": [{"role": "user", "content": "ok"}],
                               "options": {"num_ctx": a.num_ctx, "num_predict": 4}})
+    if GGUF.get(a.model) is None:   # a show that failed before the load gets one more try, outside the guard thread
+        GGUF.pop(a.model, None)
+        resolve_gguf(a.model)
     ps = post_get("/api/ps")
     m = ps_entry(ps, a.model)
     meta = {"model": a.model, "num_ctx": a.num_ctx, "think": a.think, "load_s": round(time.time() - t0, 1),

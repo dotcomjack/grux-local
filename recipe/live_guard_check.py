@@ -27,8 +27,10 @@ import eval_local as e  # noqa: E402
 def child(model, mode, abort_path):
     e.post("/api/generate", {"model": model, "prompt": "ok", "stream": False,
                              "options": {"num_predict": 2, "num_ctx": 4096}}, timeout=180)
+    e.resolve_gguf(model)   # as _main does before its guard: runner_pids reads only this cache
     pids = e.runner_pids(model)
-    print(json.dumps({"pids": pids, "footprint_gb": e.runner_footprint_gb(model)}), flush=True)
+    print(json.dumps({"pids": pids, "footprint_gb": e.runner_footprint_gb(model), "gguf": e.GGUF.get(model) is not None}),
+          flush=True)
     e.MEM_FREE_PCT_MIN = 101
     if mode == "kill":
         e.BASE = "http://127.0.0.1:9"
@@ -67,7 +69,9 @@ def main():
         checks = [
             ("exit 7", p.returncode == 7),
             ("a runner was loaded", len(pids) == 1),
-            ("footprint read live", (first["footprint_gb"] or 0) > 1),
+            # An MLX runner's footprint holds its weights (2.67 GB for the 2B); a GGUF's llama-server maps its weights
+            # from disk, so its footprint starts small (0.24 GB for the r5 2B, measured 2026-11-24) and grows with use.
+            ("footprint read live", (first["footprint_gb"] or 0) > (0.1 if first.get("gguf") else 1)),
             ("abort file names the reason", "floor" in got.get("why", "")),
             ("runner pid gone", bool(pids) and not alive(pids[0])),
         ]
