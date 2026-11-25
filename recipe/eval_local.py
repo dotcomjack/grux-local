@@ -177,7 +177,8 @@ GGUF = {}
 
 def resolve_gguf(model, show=None):
     """Read the model's GGUF blob path from /api/show ONCE, before the guard starts, and cache it (None for an MLX
-    model, and None after a failed show: a failure is cached too, never retried). Only this call touches the network;
+    model, and None after a failed show: a failure is cached too, and _main retries it once, after the warm load).
+    Only this call touches the network;
     runner_pids reads the cache, so a starved or hung Ollama never delays a guard tick or the kill on a breach."""
     if model not in GGUF:
         try:
