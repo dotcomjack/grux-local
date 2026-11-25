@@ -1,0 +1,12 @@
+{
+ "model": "grux-local-2b-r5pilot",
+ "num_ctx": 16384,
+ "think": "false",
+ "load_s": 3.5,
+ "ollama_size_gb": 0.0,
+ "runner_footprint_gb": null,
+ "version": "0.40.8",
+ "guard_runner_pids": [],
+ "peak_runner_footprint_gb": null,
+ "wall_s": 675.6
+}

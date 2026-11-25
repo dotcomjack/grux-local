@@ -27,6 +27,12 @@ The registry check ties the numbers to the files: each tag's manifest must hash 
 --blobs N fires N ranged GETs at once across every blob of every tag, the way `ollama pull` does, and
 fails if more than 5% do not answer 206: on 2026-10-23 the preview passed every check while production
 dropped about 1 blob request in 10 at the upstream, which only a burst of real ranged GETs showed.
+A tag that replaced an earlier build (today the 2B, rebuilt 2026-11-24) is checked as it is now on every surface but
+the blog, which is dated: the blog is checked against v1.json as it stood when it was written, with each tag in
+"replaced" back in place of the tag that replaced it, so the old 2B's numbers pass there and fail everywhere else.
+A tag whose "input" is "text only" must be said to be text only on the card, the Grux README and the site, with the
+image attachment that fails in Grux named; on the card, its comparison with the build it replaced must carry every
+row, and every place it is worse.
 Exit 0 only when every surface passes; a surface with nothing matched is a FAIL, never a pass.
 """
 import argparse
@@ -156,7 +162,9 @@ def runs_of(d, top):
         out.append((d.get("before_training_machine", top), d["grux_local_on_before_training_machine"]))
     if "v1_4b_same_machine" in d:
         out.append((mine, d["v1_4b_same_machine"]))
-    for k in ("grux_local", "v1_4b_same_machine"):
+    if "previous_2b_same_machine" in d:
+        out.append((mine, d["previous_2b_same_machine"]))
+    for k in ("grux_local", "v1_4b_same_machine", "previous_2b_same_machine"):
         if k in d.get("holdout_v2", {}):
             out.append((mine, d["holdout_v2"][k]))
     return out
@@ -220,10 +228,11 @@ def baselines(v1):
         nums = []
         for r in runs:
             p, h, sh = r["pass"], r["hidden_instructions_ignored"], pct(r["pass"], r["of"])
-            # A bare number, but never a piece of a date, a path or a version ("2026-10-24", "v1.2").
-            nums += [("count", rf"(?<![\d.,/-]){p}(?![\d/-]|[.,]\d|%)", other(mac, "n", p)),
+            # A bare number, but never a piece of a date, a path or a version ("2026-10-24", "v1.2"), nor an HTTP
+            # status ("HTTP 400", the text-only 2B's answer to an image).
+            nums += [("count", rf"(?<![\d.,/-])(?<!HTTP ){p}(?![\d/-]|[.,]\d|%)", other(mac, "n", p)),
                      ("share", rf"(?<![\d.,/-]){sh}%", other(mac, "pct", sh)),
-                     ("hidden count", rf"(?<![\d.,/-]){h}(?![\d/-]|[.,]\d|%)", True)]
+                     ("hidden count", rf"(?<![\d.,/-])(?<!HTTP ){h}(?![\d/-]|[.,]\d|%)", True)]
             if kind == "all":
                 x = f"{r['chat_p95_s']:.1f}"
                 nums.append(("chat p95", rf"(?<![\d.]){re.escape(x)} ?s(?:econds)?\b", other(mac, "s", x)))
@@ -379,10 +388,140 @@ def own_machine_headline(d):
     return out
 
 
+WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
+# How the card says each reason the scorer gives for a failed chat-honesty turn ("acted: ['create_event']").
+HONESTY_REASONS = {"empty reply": ("empty reply", "empty replies"),
+                   "acted": ("event created that nobody asked for", "events created that nobody asked for"),
+                   "called a tool this turn did not offer": ("call to a tool the turn did not offer",
+                                                             "calls to a tool the turn did not offer"),
+                   "claims an action no offered tool does": ("offer of an action no offered tool does",
+                                                             "offers of actions no offered tool does")}
+
+
+def span(xs):
+    """"163 to 166", or "27" when every run gave the same number."""
+    lo, hi = min(xs), max(xs)
+    return f"{lo}" if lo == hi else f"{lo} to {hi}"
+
+
+def text_only_rows(tag, d):
+    """A text-only tag must be said to be text only, and the Grux chat that fails with it named."""
+    if d.get("input") != "text only":
+        return []
+    T = re.escape(d["size"])
+    return [("text only", f"{d['size']} text only",
+             rf"grux-local:{re.escape(tag)}(?![\w-])[^0-9.]{{0,40}}?\btext only\b|\b{T}\b[^.]{{0,60}}?\btext only\b"),
+            ("text only", f"{d['size']} image attachment fails in Grux",
+             rf"\bimage attached fails\b[^.]{{0,60}}?\blocal {T}\b")]
+
+
+def rebuilt_rows(tag, d):
+    """The card's comparison of a rebuilt tag with the build it replaced, on the same Mac: every row, and every
+    place the new build is worse, from v1.json."""
+    T, a, b = d["size"], d["grux_local"], d["previous_2b_same_machine"]
+    a2, b2 = d["holdout_v2"]["grux_local"], d["holdout_v2"]["previous_2b_same_machine"]
+    of, of2, hc = a["of"], a2["of"], a["hidden_instruction_cases"]
+    runs = d["local_turns"]["runs"]
+    la, lb = [r["grux_local"] for r in runs], [r["previous_2b_same_machine"] for r in runs]
+    ha = [r["families"]["chat_honesty"]["pass"] for r in la]
+    hb = [r["families"]["chat_honesty"]["pass"] for r in lb]
+    hof = la[0]["families"]["chat_honesty"]["of"]
+    fa, fb = d["file_naming"]["grux_local"], d["file_naming"]["previous_2b_same_machine"]
+    ft = d["first_token_median_s"]
+    fails = d["local_turns"]["chat_honesty_failures_last_run"]
+    rows = [
+        ("rebuilt", f"{T} rebuilt, held-out v1: {b['pass']} to {a['pass']} of {of}",
+         rf"Held-out v1, all (?:{of} )?tasks {b['pass']} \({pct(b['pass'], of)}%\) {a['pass']} \({pct(a['pass'], of)}%\)"),
+        ("rebuilt", f"{T} rebuilt, held-out v1 hidden: {b['hidden_instructions_ignored']} to {a['hidden_instructions_ignored']}",
+         rf"Held-out v1, hidden instructions ignored {b['hidden_instructions_ignored']} of {hc} "
+         rf"{a['hidden_instructions_ignored']} of {hc}"),
+        ("rebuilt", f"{T} rebuilt, held-out v2: {b2['pass']} to {a2['pass']} of {of2}",
+         rf"Held-out v2, all (?:{of2} )?tasks {b2['pass']} \({pct(b2['pass'], of2)}%\) {a2['pass']} \({pct(a2['pass'], of2)}%\)"),
+        ("rebuilt", f"{T} rebuilt, held-out v2 hidden: {b2['hidden_instructions_ignored']} to {a2['hidden_instructions_ignored']}",
+         rf"Held-out v2, hidden instructions[^0-9]{{0,60}}? {b2['hidden_instructions_ignored']} of {hc} "
+         rf"{a2['hidden_instructions_ignored']} of {hc}"),
+        ("rebuilt", f"{T} rebuilt, local turns: {span([r['pass'] for r in lb])} to {span([r['pass'] for r in la])}",
+         rf"Local turns.{{0,60}}? {la[0]['of']} tasks, {WORDS[len(runs)]} runs {span([r['pass'] for r in lb])} "
+         rf"{span([r['pass'] for r in la])}"),
+        ("rebuilt", f"{T} rebuilt, honesty on local turns: {span(hb)} to {span(ha)} of {hof}",
+         rf"what it cannot do {span(hb)} of {hof} {span(ha)} of {hof}"),
+        ("rebuilt", f"{T} rebuilt, file naming: {fb['pass']} to {fa['pass']} of {fa['of']}",
+         rf"File naming[^0-9]{{0,30}}?8,192, {fa['of']} items {fb['pass']} of {fb['of']} {fa['pass']} of {fa['of']}"),
+        ("rebuilt", f"{T} rebuilt, chat p95: {b['chat_p95_s']:.1f} to {a['chat_p95_s']:.1f} s",
+         rf"Chat replies on held-out v1, 95% within {b['chat_p95_s']:.1f} s {a['chat_p95_s']:.1f} s"),
+        ("rebuilt", f"{T} rebuilt, first token",
+         rf"median {ft['holdout_v1']['grux_local']:.2f} s against {ft['holdout_v1']['previous_2b_same_machine']:.2f} s "
+         rf"and {ft['local_num_ctx_8192']['previous_2b_same_machine']:.2f} s\) and sooner on held-out v2 "
+         rf"\({ft['holdout_v2']['grux_local']:.2f} s against {ft['holdout_v2']['previous_2b_same_machine']:.2f} s\)"),
+        ("rebuilt", f"{T} rebuilt, the {sum(fails.values())} honesty failures by reason",
+         rf"failed {sum(fails.values())} of the {hof} that ask for something no tool can do, in every run \("
+         # In v1.json's order; a reason with no wording here is a KeyError, never a reason left off.
+         + ", ".join(f"{n} {HONESTY_REASONS[k][n != 1]}" for k, n in fails.items()) + r"\)"),
+        ("rebuilt", f"{T} rebuilt, runner footprint after use",
+         rf"\b{d['runner_footprint_after_use_mb']:,} MB\b"),
+        ("rebuilt", f"{T} rebuilt, its manifest", re.escape(d["manifest_digest"])),
+        ("rebuilt", f"{T} rebuilt, its training gate",
+         rf"\b{d['training_gate']['rows']:,} training rows\b.{{0,200}}?\b"
+         + ("found none touched" if d["training_gate"]["held_out_touched"] == 0 else "(?!)")),
+    ]
+    if a["hidden_instructions_ignored"] < b["hidden_instructions_ignored"]:
+        rows.append(("worse", f"{T} rebuilt ignored fewer hidden instructions on held-out v1",
+                     rf"\b{a['hidden_instructions_ignored']} against {b['hidden_instructions_ignored']}\b"))
+    if a["chat_p95_s"] > b["chat_p95_s"]:
+        rows.append(("worse", f"{T} rebuilt is slower on held-out v1 chat", r"chat replies on held-out v1 were slower"))
+    if fa["pass"] < fb["pass"]:
+        rows.append(("worse", f"{T} rebuilt names fewer files", rf"\b{fa['pass']} against {fb['pass']} of {fa['of']}\b"))
+    if d["holdout_v1_scored_build_flips"] == 0:
+        rows.append(("same", f"{T} rebuilt: published and scored builds agree on held-out v1",
+                     r"the same pass or fail on every task"))
+    else:   # a surface may not call the scored build the published one's stand-in then
+        rows.append(("same", f"{T} rebuilt: published and scored builds differ on "
+                             f"{d['holdout_v1_scored_build_flips']} held-out v1 tasks", r"(?!)"))
+    return rows
+
+
+def rebuilt_headline(d):
+    """The Grux README's paragraph for a rebuilt tag: both held-out sets against the build it replaced, and every
+    place it is worse."""
+    a, b = d["grux_local"], d["previous_2b_same_machine"]
+    a2, b2 = d["holdout_v2"]["grux_local"], d["holdout_v2"]["previous_2b_same_machine"]
+    runs = d["local_turns"]["runs"]
+    ha = span([r["grux_local"]["families"]["chat_honesty"]["pass"] for r in runs])
+    hb = span([r["previous_2b_same_machine"]["families"]["chat_honesty"]["pass"] for r in runs])
+    hof = runs[0]["grux_local"]["families"]["chat_honesty"]["of"]
+    fa, fb = d["file_naming"]["grux_local"], d["file_naming"]["previous_2b_same_machine"]
+    T = d["size"]
+    rows = [("headline", f"{T} rebuilt, both held-out sets",
+             rf"\bit got {a2['pass']} of {a2['of']} on held-out v2 against {b2['pass']}, and {a['pass']} of {a['of']} "
+             rf"on held-out v1 against {b['pass']}\b")]
+    if a["hidden_instructions_ignored"] < b["hidden_instructions_ignored"]:
+        rows.append(("worse", f"{T} rebuilt, fewer hidden instructions",
+                     rf"\({a['hidden_instructions_ignored']} against {b['hidden_instructions_ignored']}\)"))
+    rows.append(("worse" if ha != hb else "headline", f"{T} rebuilt, honesty on local turns",
+                 rf"\({ha} against {hb} of\s+{hof}\)"))
+    if fa["pass"] < fb["pass"]:
+        rows.append(("worse", f"{T} rebuilt, file naming", rf"\({fa['pass']} against {fb['pass']} of {fa['of']}\)"))
+    if a["chat_p95_s"] > b["chat_p95_s"]:
+        rows.append(("worse", f"{T} rebuilt, chat speed",
+                     rf"95% within {a['chat_p95_s']:.1f} s against {b['chat_p95_s']:.1f} s\)"))
+    return rows
+
+
+def blog_view(v1):
+    """v1.json as it stood when the dated blog was written: each replaced build back in its tag."""
+    old = json.loads(json.dumps(v1))
+    for r in v1.get("replaced", []):
+        old["tags"][r["tag"]] = {k: v for k, v in r.items() if k not in ("tag", "replaced_by", "loaded_after_use",
+                                                                          "runtime", "input")}
+        old["loaded_after_use"] = [{"tag": r["tag"], **r["loaded_after_use"]} if u["tag"] == r["tag"] else u
+                                   for u in old["loaded_after_use"]]
+    return old
+
+
 def expected(v1):
     t = v1["tags"]
-    rows, own, allowed = [], [], {"pairs": set(), "of_tasks": collections.defaultdict(set), "of_hidden": set(),
-                                  "gb": set(), "s": set()}
+    rows, own, texts, rebuilt = [], [], [], []
+    allowed = {"pairs": set(), "of_tasks": collections.defaultdict(set), "of_hidden": set(), "gb": set(), "s": set()}
     for tag, d in t.items():
         if "v1_4b_same_machine" in d:   # a tag measured on its own Mac (its machine is checked in baselines)
             own += own_machine_rows(tag, d)
@@ -413,6 +552,20 @@ def expected(v1):
         allowed["of_hidden"] |= {a["hidden_instructions_ignored"], b["hidden_instructions_ignored"]}
         allowed["gb"].add(f"{d['loaded_gb']:.2f}")
         allowed["s"].add(f"{a['chat_p95_s']:.1f}")
+        texts += text_only_rows(tag, d)
+        if "previous_2b_same_machine" in d:
+            rebuilt += rebuilt_rows(tag, d)
+            for r in [r for _, r in runs_of(d, v1["machine"])]:
+                allowed["pairs"].add((r["pass"], pct(r["pass"], r["of"])))
+                allowed["of_tasks"][r["of"]].add(r["pass"])
+                allowed["of_hidden"].add(r["hidden_instructions_ignored"])
+                allowed["s"].add(f"{r['chat_p95_s']:.1f}")
+            for r in d["local_turns"]["runs"]:
+                for k in ("grux_local", "previous_2b_same_machine"):
+                    h = r[k]["families"]["chat_honesty"]
+                    allowed["of_tasks"][h["of"]].add(h["pass"])
+            for k in ("grux_local", "previous_2b_same_machine"):
+                allowed["of_tasks"][d["file_naming"][k]["of"]].add(d["file_naming"][k]["pass"])
     for u in v1.get("loaded_after_use", []):
         allowed["gb"] |= {f"{u['fresh_gb']:.2f}", f"{u['after_gb']:.2f}"}
     big, small, nine = t["4b"], t["2b"], t["9b"]
@@ -429,13 +582,14 @@ def expected(v1):
                                         rf"{small['grux_local']['pass']} of {of}\b"),
             ("headline", "9B headline", rf"9B, made for {re.escape(nine['made_for'])}, went from "
                                         rf"{nine['before_training']['pass']} to {nine['grux_local']['pass']} of {of}\b"),
-        ] + (own_machine_headline(v2) if v2 else []),
+        ] + (own_machine_headline(v2) if v2 else []) + texts + [
+            r for tag, d in t.items() if "previous_2b_same_machine" in d for r in rebuilt_headline(d)],
         "site": [
             ("headline", "4B lead", rf"the 4B got {big['grux_local']['pass']} right, against "
                                     rf"{big['before_training']['pass']} for the same model before training"),
-        ] + own,
-        # The model card carries the whole 4b-v2 section; the Grux README one line (above).
-        "card": own,
+        ] + own + texts,
+        # The model card carries the whole 4b-v2 section and the rebuilt 2B's; the Grux README one line (above).
+        "card": own + texts + rebuilt,
         # The dotcomjack.com announcement (2026-10-23) carries prose, not the tables.
         "blog": [
             ("headline", "blog task count", rf"across {of} held-out Grux tasks"),
@@ -528,7 +682,12 @@ def main():
     a = ap.parse_args()
     v1 = json.load(open(a.results))
     rows, headline, allowed, of, hc = expected(v1)
+    old = blog_view(v1)
+    _, headline_old, allowed_old, _, _ = expected(old)
+    headline["blog"] = headline_old["blog"]
     scoped, problems = baselines(v1)
+    scoped_old, problems_old = baselines(old)
+    problems += [p for p in problems_old if p not in problems]
     failed = len(problems)
     for p in problems:
         print(f"FAIL v1.json: {p}")
@@ -549,9 +708,11 @@ def main():
         text = text_of(ours, src)
         want = ([] if name == "blog" else rows) + headline.get(name, [])
         miss = [label for _, label, rx in want if not re.search(rx, text)]
-        n, bad = shape(text, allowed, of, hc)
-        claims = absolutes(text, v1)
-        n_scope, loose = unscoped(text, sentences_of(ours), table_spans(ours, text), scoped, v1)
+        view = old if name == "blog" else v1
+        n, bad = shape(text, allowed_old if name == "blog" else allowed, of, hc)
+        claims = absolutes(text, view)
+        n_scope, loose = unscoped(text, sentences_of(ours), table_spans(ours, text),
+                                  scoped_old if name == "blog" else scoped, view)
         # Prose (the blog) has no table shapes, so there every row matching is the floor instead.
         ok = not miss and not bad and not claims and not loose and (n > 0 or (name == "blog" and bool(want)))
         failed += not ok
