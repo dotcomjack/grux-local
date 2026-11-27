@@ -33,7 +33,9 @@ the blog, which is dated: the blog is checked against v1.json as it stood when i
 "replaced" back in place of the tag that replaced it, so the old 2B's numbers pass there and fail everywhere else.
 A tag whose "input" is "text only" must be said to be text only on the card, the Grux README and the site, with the
 image attachment that fails in Grux named; on the card, its comparison with the build it replaced must carry every
-row, and every place it is worse.
+row, and every place it is worse. A tag republished with only a parameter changed (the 2B on 2026-11-27, num_batch
+256: its "num_batch_change") must carry, on the card, its comparison with the build before it, every local turn that
+moved, every place it is worse and the waiver that let it ship; on the Grux README, one line of what it did.
 Exit 0 only when every surface passes; a surface with nothing matched is a FAIL, never a pass.
 """
 import argparse
@@ -391,7 +393,7 @@ def own_machine_headline(d):
     return out
 
 
-WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
+WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
 # How the card says each reason the scorer gives for a failed chat-honesty turn ("acted: ['create_event']").
 HONESTY_REASONS = {"empty reply": ("empty reply", "empty replies"),
                    "acted": ("event created that nobody asked for", "events created that nobody asked for"),
@@ -399,12 +401,20 @@ HONESTY_REASONS = {"empty reply": ("empty reply", "empty replies"),
                                                              "calls to a tool the turn did not offer"),
                    "claims an action no offered tool does": ("offer of an action no offered tool does",
                                                              "offers of actions no offered tool does")}
+# The sets a first word is timed on, as the card names them.
+FIRST_WORD = [("holdout_v1", "held-out v1"), ("holdout_v2", "held-out v2"),
+              ("local_num_ctx_8192", "the local turns at num_ctx 8,192")]
 
 
 def span(xs):
     """"163 to 166", or "27" when every run gave the same number."""
     lo, hi = min(xs), max(xs)
     return f"{lo}" if lo == hi else f"{lo} to {hi}"
+
+
+def runs_said(rs):
+    """"163 to 166 (four runs)", "196 (one run)": the totals of a list of local-turn runs and how many there were."""
+    return rf"{span([r['pass'] for r in rs])} \({WORDS[len(rs)]} runs?\)"
 
 
 def text_only_rows(tag, d):
@@ -419,13 +429,13 @@ def text_only_rows(tag, d):
 
 
 def rebuilt_rows(tag, d):
-    """The card's comparison of a rebuilt tag with the build it replaced, on the same Mac: every row, and every
-    place the new build is worse, from v1.json."""
+    """The card's comparison of a rebuilt tag with the first build of that tag, on the same Mac: every row, and every
+    place the new build is worse, from v1.json. Each side's local-turn runs are listed apart (the two builds were not
+    run in pairs), and a slower chat or a later first word is said for exactly the sets where it is."""
     T, a, b = d["size"], d["grux_local"], d["previous_2b_same_machine"]
     a2, b2 = d["holdout_v2"]["grux_local"], d["holdout_v2"]["previous_2b_same_machine"]
     of, of2, hc = a["of"], a2["of"], a["hidden_instruction_cases"]
-    runs = d["local_turns"]["runs"]
-    la, lb = [r["grux_local"] for r in runs], [r["previous_2b_same_machine"] for r in runs]
+    la, lb = d["local_turns"]["grux_local"], d["local_turns"]["previous_2b_same_machine"]
     ha = [r["families"]["chat_honesty"]["pass"] for r in la]
     hb = [r["families"]["chat_honesty"]["pass"] for r in lb]
     hof = la[0]["families"]["chat_honesty"]["of"]
@@ -444,20 +454,18 @@ def rebuilt_rows(tag, d):
          rf"Held-out v2, hidden instructions[^0-9]{{0,60}}? {b2['hidden_instructions_ignored']} of {hc} "
          rf"{a2['hidden_instructions_ignored']} of {hc}"),
         ("rebuilt", f"{T} rebuilt, local turns: {span([r['pass'] for r in lb])} to {span([r['pass'] for r in la])}",
-         rf"Local turns.{{0,60}}? {la[0]['of']} tasks, {WORDS[len(runs)]} runs {span([r['pass'] for r in lb])} "
-         rf"{span([r['pass'] for r in la])}"),
+         rf"Local turns.{{0,60}}? {la[0]['of']} tasks {runs_said(lb)} {runs_said(la)}"),
         ("rebuilt", f"{T} rebuilt, honesty on local turns: {span(hb)} to {span(ha)} of {hof}",
          rf"what it cannot do {span(hb)} of {hof} {span(ha)} of {hof}"),
         ("rebuilt", f"{T} rebuilt, file naming: {fb['pass']} to {fa['pass']} of {fa['of']}",
          rf"File naming[^0-9]{{0,30}}?8,192, {fa['of']} items {fb['pass']} of {fb['of']} {fa['pass']} of {fa['of']}"),
-        ("rebuilt", f"{T} rebuilt, chat p95: {b['chat_p95_s']:.1f} to {a['chat_p95_s']:.1f} s",
+        ("rebuilt", f"{T} rebuilt, chat p95 on held-out v1: {b['chat_p95_s']:.1f} to {a['chat_p95_s']:.1f} s",
          rf"Chat replies on held-out v1, 95% within {b['chat_p95_s']:.1f} s {a['chat_p95_s']:.1f} s"),
-        # One median for held-out v1 and the local turns: the sentence states one, so they must be the same.
-        ("rebuilt", f"{T} rebuilt, first token",
-         (rf"median {ft['holdout_v1']['grux_local']:.2f} s against" if ft["holdout_v1"]["grux_local"]
-          == ft["local_num_ctx_8192"]["grux_local"] else r"(?!)") + rf" {ft['holdout_v1']['previous_2b_same_machine']:.2f} s "
-         rf"and {ft['local_num_ctx_8192']['previous_2b_same_machine']:.2f} s\) and sooner on held-out v2 "
-         rf"\({ft['holdout_v2']['grux_local']:.2f} s against {ft['holdout_v2']['previous_2b_same_machine']:.2f} s\)"),
+        ("rebuilt", f"{T} rebuilt, chat p95 on held-out v2: {b2['chat_p95_s']:.1f} to {a2['chat_p95_s']:.1f} s",
+         rf"Chat replies on held-out v2, 95% within {b2['chat_p95_s']:.1f} s {a2['chat_p95_s']:.1f} s"),
+    ] + [("rebuilt", f"{T} rebuilt, first word on {name}",
+          rf"First word on {re.escape(name)}, median {ft[k]['previous_2b_same_machine']:.2f} s {ft[k]['grux_local']:.2f} s")
+         for k, name in FIRST_WORD] + [
         ("rebuilt", f"{T} rebuilt, the {sum(fails.values())} honesty failures by reason",
          rf"failed {sum(fails.values())} of the {hof} that ask for something no tool can do, in every run \("
          # In v1.json's order; a reason with no wording here is a KeyError, never a reason left off.
@@ -472,31 +480,117 @@ def rebuilt_rows(tag, d):
     if a["hidden_instructions_ignored"] < b["hidden_instructions_ignored"]:
         rows.append(("worse", f"{T} rebuilt ignored fewer hidden instructions on held-out v1",
                      rf"\b{a['hidden_instructions_ignored']} against {b['hidden_instructions_ignored']}\b"))
-    if a["chat_p95_s"] > b["chat_p95_s"]:
-        rows.append(("worse", f"{T} rebuilt is slower on held-out v1 chat", r"chat replies were slower, on held-out v1"))
-    if a2["chat_p95_s"] > b2["chat_p95_s"]:
-        rows.append(("worse", f"{T} rebuilt is slower on held-out v2 chat",
-                     rf"on held-out v2 \(95% within {a2['chat_p95_s']:.1f} s against {b2['chat_p95_s']:.1f} s\)"))
+    slow = [n for n, x, y in (("held-out v1", a, b), ("held-out v2", a2, b2)) if x["chat_p95_s"] > y["chat_p95_s"]]
+    if slow:
+        rows.append(("worse", f"{T} rebuilt is slower on {' and '.join(slow)} chat",
+                     rf"chat replies were slower on {' and on '.join(slow)}\b"))
+    late = [n for k, n in FIRST_WORD if ft[k]["grux_local"] > ft[k]["previous_2b_same_machine"]]
+    if late:
+        rows.append(("worse", f"{T} rebuilt says its first word later on {' and '.join(late)}",
+                     rf"first word came later on {re.escape(' and on '.join(late))}\b"))
     if fa["pass"] < fb["pass"]:
         rows.append(("worse", f"{T} rebuilt names fewer files", rf"\b{fa['pass']} against {fb['pass']} of {fa['of']}\b"))
-    if d["holdout_v1_scored_build_flips"] == 0:
-        rows.append(("same", f"{T} rebuilt: published and scored builds agree on held-out v1",
-                     r"the same pass or fail on every task"))
-    else:   # a surface may not call the scored build the published one's stand-in then
-        rows.append(("same", f"{T} rebuilt: published and scored builds differ on "
-                             f"{d['holdout_v1_scored_build_flips']} held-out v1 tasks", r"(?!)"))
+    again = d["holdout_v1_second_run"]
+    if again["flips"] == 0 and again["pass"] == a["pass"]:
+        rows.append(("same", f"{T} rebuilt: its two held-out v1 runs agree",
+                     r"[Tt]he two held-out v1 runs gave the same pass or fail on every task"))
+    else:   # a surface may not say the two runs agree then
+        rows.append(("same", f"{T} rebuilt: its two held-out v1 runs differ on {again['flips']} tasks", r"(?!)"))
+    return rows
+
+
+def num_batch_rows(tag, d):
+    """The card's comparison of the tag with the build it replaced when only a parameter changed (the 2B's num_batch,
+    2026-11-27): every row, every case that moved on the local turns, and every place the new build is worse, from
+    v1.json's num_batch_change. A surface that says the two builds agree on a set where they do not cannot pass."""
+    c, T = d["num_batch_change"], d["size"]
+    o1, n1 = c["holdout_v1"]["replaced"], c["holdout_v1"]["grux_local"]
+    o2, n2 = c["holdout_v2"]["replaced"], c["holdout_v2"]["grux_local"]
+    lo, ln = c["local_turns"]["replaced"], c["local_turns"]["grux_local"]
+    o8, n8 = [r for r in lo if r["num_ctx"] == 8192], [r for r in ln if r["num_ctx"] == 8192]
+    o16, n16 = [r for r in lo if r["num_ctx"] == 16384], [r for r in ln if r["num_ctx"] == 16384]
+    assert len(o8) == len(n8) == 1, "one run of each at num_ctx 8,192"
+    o8, n8 = o8[0], n8[0]
+    hc8 = n8["hidden_instruction_cases"]
+    ft, fo, fn = c["first_token_median_s"], c["file_naming"]["replaced"], c["file_naming"]["grux_local"]
+    gb_o, gb_n = c["loaded_gb"]["replaced"], c["loaded_gb"]["grux_local"]
+    moved, b128 = c["local_turns"]["num_ctx_8192"], c["local_turns"]["num_batch_128_num_ctx_8192"]
+    rows = [
+        ("num_batch", f"{T} num_batch: the manifest it replaced", re.escape(c["replaced_manifest"])),
+        ("num_batch", f"{T} num_batch: the parameter", rf"\bnum_batch {d['params']['num_batch']}\b"),
+        ("num_batch", f"{T} num_batch: held-out v1 {o1['pass']} and {n1['pass']}",
+         rf"Held-out v1, all {o1['of']} tasks {o1['pass']} \({pct(o1['pass'], o1['of'])}%\) "
+         rf"{n1['pass']} \({pct(n1['pass'], n1['of'])}%\)"),
+        ("num_batch", f"{T} num_batch: held-out v2 {o2['pass']} and {n2['pass']}",
+         rf"Held-out v2, all {o2['of']} tasks {o2['pass']} \({pct(o2['pass'], o2['of'])}%\) "
+         rf"{n2['pass']} \({pct(n2['pass'], n2['of'])}%\)"),
+        ("num_batch", f"{T} num_batch: local turns at 8,192, {o8['pass']} and {n8['pass']}",
+         rf"Local turns at num_ctx 8,192, {n8['of']} tasks {o8['pass']} {n8['pass']}"),
+        ("num_batch", f"{T} num_batch: their hidden instructions, {o8['hidden_instructions_ignored']} and "
+                      f"{n8['hidden_instructions_ignored']} of {hc8}",
+         rf"Of those, hidden instructions[^0-9]{{0,60}}? {o8['hidden_instructions_ignored']} of {hc8} "
+         rf"{n8['hidden_instructions_ignored']} of {hc8}"),
+        ("num_batch", f"{T} num_batch: local turns at 16,384",
+         rf"Local turns at num_ctx 16,384, {n8['of']} tasks {runs_said(o16)} {runs_said(n16)}"),
+        ("num_batch", f"{T} num_batch: loaded {gb_o:.2f} and {gb_n:.2f} GB",
+         rf"Freshly loaded at num_ctx 16,384 {gb_o:.2f} GB {gb_n:.2f} GB"),
+        ("num_batch", f"{T} num_batch: file naming {fo['pass']} and {fn['pass']} of {fn['of']}",
+         rf"File naming at num_ctx 8,192, {fn['of']} items {fo['pass']} of {fo['of']} {fn['pass']} of {fn['of']}"),
+        ("num_batch", f"{T} num_batch: file naming time",
+         rf"File naming time, median and 95th percentile {fo['p50_ms']} ms and {fo['p95_ms']} ms "
+         rf"{fn['p50_ms']} ms and {fn['p95_ms']} ms"),
+    ] + [("num_batch", f"{T} num_batch: first word on {name}",
+          rf"First word on {re.escape(name)}, median {ft[k]['replaced']:.2f} s {ft[k]['grux_local']:.2f} s")
+         for k, name in FIRST_WORD] + [
+        ("num_batch", f"{T} num_batch: chat p95 on {name}",
+         rf"Chat replies on {name}, 95% within {o['chat_p95_s']:.1f} s {n['chat_p95_s']:.1f} s")
+        for name, o, n in (("held-out v1", o1, n1), ("held-out v2", o2, n2), ("the local turns at num_ctx 8,192", o8, n8))]
+    # The sets where the two builds gave the same pass or fail on every task, named only when they did.
+    same = c["holdout_v1"]["flips"] == c["holdout_v2"]["flips"] == c["s1"]["flips"] == 0
+    rows.append(("num_batch", f"{T} num_batch: the same pass or fail on held-out v1, v2 and S1",
+                 (rf"held-out v1 \({o1['of']} tasks\), held-out v2 \({o2['of']}\) and the S1 suite \({c['s1']['grux_local']['of']}\)"
+                  r"[^.]{0,80}?the same pass or fail on every task") if same else r"(?!)"))
+    for k in moved["lost"] + moved["gained"]:
+        rows.append(("num_batch", f"{T} num_batch: case {k} named", rf"\b{re.escape(k)}\b"))
+    rows.append(("num_batch", f"{T} num_batch: {len(moved['lost'])} lost and {len(moved['gained'])} gained at 8,192",
+                 rf"\blost {WORDS[len(moved['lost'])]} hidden-instruction cases\b" if all("injection" in k for k in moved["lost"])
+                 else r"(?!)"))
+    rows.append(("num_batch", f"{T} num_batch: num_batch 128 lost the same cases",
+                 rf"\bnum_batch 128\b[^.]{{0,80}}?\blost the same {WORDS[len(moved['lost'])]}\b"
+                 if set(b128["lost"]) == set(moved["lost"]) else r"(?!)"))
+    rows.append(("num_batch", f"{T} num_batch: the waiver", r"\bDotcomJack waived the rule for this build on November 27, 2026\b"))
+    # Every place it is worse than the build it replaced, said as "new against old".
+    worse = []
+    if n8["pass"] < o8["pass"]:
+        worse.append(rf"\b{n8['pass']} against {o8['pass']}\b")
+    if n8["hidden_instructions_ignored"] < o8["hidden_instructions_ignored"]:
+        worse.append(rf"\b{n8['hidden_instructions_ignored']} against {o8['hidden_instructions_ignored']} of {hc8}\b")
+    worse += [rf"{ft[k]['grux_local']:.2f} s against {ft[k]['replaced']:.2f} s"
+              for k, _ in FIRST_WORD if ft[k]["grux_local"] > ft[k]["replaced"]]
+    worse += [rf"{n['chat_p95_s']:.1f} s against {o['chat_p95_s']:.1f} s"
+              for o, n in ((o1, n1), (o2, n2), (o8, n8)) if float(f"{n['chat_p95_s']:.1f}") > float(f"{o['chat_p95_s']:.1f}")]
+    worse += [rf"{fn[k]} ms against {fo[k]} ms" for k in ("p50_ms", "p95_ms") if fn[k] > fo[k]]
+    if fn["pass"] < fo["pass"]:
+        worse.append(rf"\b{fn['pass']} against {fo['pass']} of {fn['of']}\b")
+    if gb_n > gb_o:
+        worse.append(rf"{gb_n:.2f} GB against {gb_o:.2f} GB")
+    fpo, fpn = c["runner_footprint_after_use_mb"]["replaced"], c["runner_footprint_after_use_mb"]["grux_local"]
+    rows.append(("num_batch", f"{T} num_batch: runner footprint {fpo:,} and {fpn:,} MB",
+                 rf"after 464 held-out v1 tasks {fpo:,} MB {fpn:,} MB"))
+    if fpn > fpo:
+        worse.append(rf"{fpn:,} MB against {fpo:,} MB")
+    rows += [("worse", f"{T} num_batch is worse: {w}", w) for w in worse]
     return rows
 
 
 def rebuilt_headline(d):
-    """The Grux README's paragraph for a rebuilt tag: both held-out sets against the build it replaced, and every
-    place it is worse."""
+    """The Grux README's paragraph for a rebuilt tag: both held-out sets against the first build, every place it is
+    worse, and, when only a parameter changed since, what that did."""
     a, b = d["grux_local"], d["previous_2b_same_machine"]
     a2, b2 = d["holdout_v2"]["grux_local"], d["holdout_v2"]["previous_2b_same_machine"]
-    runs = d["local_turns"]["runs"]
-    ha = span([r["grux_local"]["families"]["chat_honesty"]["pass"] for r in runs])
-    hb = span([r["previous_2b_same_machine"]["families"]["chat_honesty"]["pass"] for r in runs])
-    hof = runs[0]["grux_local"]["families"]["chat_honesty"]["of"]
+    ha = span([r["families"]["chat_honesty"]["pass"] for r in d["local_turns"]["grux_local"]])
+    hb = span([r["families"]["chat_honesty"]["pass"] for r in d["local_turns"]["previous_2b_same_machine"]])
+    hof = d["local_turns"]["grux_local"][0]["families"]["chat_honesty"]["of"]
     fa, fb = d["file_naming"]["grux_local"], d["file_naming"]["previous_2b_same_machine"]
     T = d["size"]
     rows = [("headline", f"{T} rebuilt, both held-out sets",
@@ -509,10 +603,22 @@ def rebuilt_headline(d):
                  rf"\({ha} against {hb} of\s+{hof}\)"))
     if fa["pass"] < fb["pass"]:
         rows.append(("worse", f"{T} rebuilt, file naming", rf"\({fa['pass']} against {fb['pass']} of {fa['of']}\)"))
-    if a["chat_p95_s"] > b["chat_p95_s"] or a2["chat_p95_s"] > b2["chat_p95_s"]:
+    slow = [(n, x, y) for n, x, y in (("held-out v1", a, b), ("held-out v2", a2, b2)) if x["chat_p95_s"] > y["chat_p95_s"]]
+    if len(slow) == 1:
+        n, x, y = slow[0]
+        rows.append(("worse", f"{T} rebuilt, chat speed on {n}",
+                     rf"in chat speed on {n} \(95% within {x['chat_p95_s']:.1f} s against {y['chat_p95_s']:.1f} s\)"))
+    elif slow:
         rows.append(("worse", f"{T} rebuilt, chat speed",
                      rf"95% within {a['chat_p95_s']:.1f} s against {b['chat_p95_s']:.1f} s on held-out v1, and "
                      rf"{a2['chat_p95_s']:.1f} s against {b2['chat_p95_s']:.1f} s on held-out v2\)"))
+    c = d.get("num_batch_change")
+    if c:
+        k = "local_num_ctx_8192"
+        o8, n8 = ([r for r in c["local_turns"][s] if r["num_ctx"] == 8192][0] for s in ("replaced", "grux_local"))
+        rows.append(("headline", f"{T} num_batch line",
+                     rf"\bnum_batch {d['params']['num_batch']}\b.{{0,200}}?from {c['first_token_median_s'][k]['replaced']:.2f} s "
+                     rf"to {c['first_token_median_s'][k]['grux_local']:.2f} s\b.{{0,200}}?\({n8['pass']} against {o8['pass']}\)"))
     return rows
 
 
@@ -569,12 +675,27 @@ def expected(v1):
                 allowed["of_tasks"][r["of"]].add(r["pass"])
                 allowed["of_hidden"].add(r["hidden_instructions_ignored"])
                 allowed["s"].add(f"{r['chat_p95_s']:.1f}")
-            for r in d["local_turns"]["runs"]:
-                for k in ("grux_local", "previous_2b_same_machine"):
-                    h = r[k]["families"]["chat_honesty"]
-                    allowed["of_tasks"][h["of"]].add(h["pass"])
             for k in ("grux_local", "previous_2b_same_machine"):
+                for r in d["local_turns"][k]:
+                    h = r["families"]["chat_honesty"]
+                    allowed["of_tasks"][h["of"]].add(h["pass"])
                 allowed["of_tasks"][d["file_naming"][k]["of"]].add(d["file_naming"][k]["pass"])
+        if "num_batch_change" in d:   # the build it replaced, beside it on the card
+            c = d["num_batch_change"]
+            rebuilt += num_batch_rows(tag, d)
+            for k in ("holdout_v1", "holdout_v2"):
+                r = c[k]["replaced"]
+                allowed["pairs"].add((r["pass"], pct(r["pass"], r["of"])))
+                allowed["of_tasks"][r["of"]].add(r["pass"])
+                allowed["of_hidden"].add(r["hidden_instructions_ignored"])
+                allowed["s"].add(f"{r['chat_p95_s']:.1f}")
+            allowed["gb"].add(f"{c['loaded_gb']['replaced']:.2f}")
+            # "N of 67": the hidden instructions among the local turns, every run of every build named
+            for r in c["local_turns"]["replaced"] + c["local_turns"]["grux_local"]:
+                allowed["of_tasks"][r["hidden_instruction_cases"]].add(r["hidden_instructions_ignored"])
+                if r["num_ctx"] == 8192:
+                    allowed["s"].add(f"{r['chat_p95_s']:.1f}")
+            allowed["of_tasks"][c["file_naming"]["replaced"]["of"]].add(c["file_naming"]["replaced"]["pass"])
     for u in v1.get("loaded_after_use", []):
         allowed["gb"] |= {f"{u['fresh_gb']:.2f}", f"{u['after_gb']:.2f}"}
     big, small, nine = t["4b"], t["2b"], t["9b"]
