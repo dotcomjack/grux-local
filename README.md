@@ -4,13 +4,13 @@
 
 | Tag | Made for | Freshly loaded on the 16 GB Mac mini at num_ctx 16,384 (measured) |
 |---|---|---|
-| `gruxai.com/grux/grux-local:2b` (text only) | 8 GB Macs | 1.54 GB |
+| `gruxai.com/grux/grux-local:2b` (text only) | 8 GB Macs | 1.46 GB |
 | `gruxai.com/grux/grux-local:4b` (`latest`) | 16 GB Macs and up | 4.44 GB |
 | `gruxai.com/grux/grux-local:9b` | 24 GB Macs and up | 7.25 GB |
 
 Needs a Mac with Apple silicon and Ollama 0.40.8 or later. The 2B takes text only: it was rebuilt in November 2026 and no longer accepts images, see [The 2B, rebuilt](#the-2b-rebuilt). A second version of the 4B, `gruxai.com/grux/grux-local:4b-v2`, is opt-in: see [4B v2, opt-in](#4b-v2-opt-in).
 
-Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama can also report more memory for the model as it works: on the 16 GB Mac mini the 4B (`latest`) read 4.44 GB freshly loaded and 13.11 GB after a full held-out run (464 tasks), while the 2B read 1.54 GB both freshly loaded and after the same 464 tasks, though macOS put its runner process at 2,637 MB after them; the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not yet measured.
+Every loaded size here is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)), so a model loads more there, which matters most for the 9B, made for 24 GB Macs and up. Ollama can also report more memory for the model as it works: on the 16 GB Mac mini the 4B (`latest`) read 4.44 GB freshly loaded and 13.11 GB after a full held-out run (464 tasks), while the 2B read 1.46 GB both freshly loaded and after the same 464 tasks, though macOS put its runner process at 3,279 MB after them; the 4B v2 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro (Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not yet measured.
 
 ## What it is trained to do
 
@@ -39,36 +39,71 @@ The 9B's Grux Local numbers are from the same Mac mini. Its before-training numb
 | 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
 | 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 2.4 s (2B) and 3.8 s (9B).
+Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B), 1.6 s (2B) and 3.8 s (9B).
 
 Every number here, with the count for each kind of task, is in [`results/v1.json`](results/v1.json). `python3 results/check.py` checks it against this card, the Grux README and gruxai.com, and checks that each tag's manifest hashes to the digest recorded there.
 
 ## The 2B, rebuilt
 
-`gruxai.com/grux/grux-local:2b` now points at a new build, manifest `sha256:1622ac1b80afb8841fc588fbc57eff60284f318d021311322a84df4aa097251e`. It replaced the first 2B (manifest `sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4`), so `ollama pull gruxai.com/grux/grux-local:2b` now gets the new one.
+`gruxai.com/grux/grux-local:2b` now points at manifest `sha256:86255f201bd61aef2d4b4d43b00de50f6f491195f55e474e041253bdd9818a99`. It replaced the first 2B (manifest `sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4`) on November 24, 2026, first as manifest `sha256:1622ac1b80afb8841fc588fbc57eff60284f318d021311322a84df4aa097251e`, and on November 27 the same build was republished with one parameter added, num_batch 256 (see [num_batch 256](#num_batch-256)). `ollama pull gruxai.com/grux/grux-local:2b` now gets 86255f20.
 
-**What changed.** The same base (Qwen/Qwen3.5-2B), trained with LoRA on round 5 data, which is not published here, then converted to a single GGUF file and quantized to Q4_K_M with llama.cpp. Ollama runs it on its llama.cpp runner (`llama-server`), not on MLX like the other tags.
+**What changed.** The same base (Qwen/Qwen3.5-2B), trained with LoRA on round 5 data, which is not published here, then converted to a single GGUF file and quantized to Q4_K_M with llama.cpp. Ollama runs it on its llama.cpp runner (`llama-server`), not on MLX like the other tags, with num_batch 256 from the model's own params layer.
 
 **Text only.** Ollama lists its capabilities as completion, tools and thinking, with no vision, and a chat request that carries an image gets HTTP 400 "Multimodal data provided, but model does not support multimodal requests." The first 2B accepted images. So in Grux, a chat with an image attached fails when it is routed to the local 2B: send the text instead, or use another model for pictures.
 
-Both 2Bs on the same 16 GB Mac mini, Ollama 0.40.8, num_ctx 16,384 unless named: the first 2B and the new one's scored build on the evening of November 23, 2026, and the new one's published bytes on November 24:
+Both 2Bs on the same 16 GB Mac mini, Ollama 0.40.8, num_ctx 16,384 unless named: the first 2B on November 23, 2026, and the current 2B's published bytes on November 26 and 27:
 
-| On the 16 GB Mac mini | First 2B | New 2B |
+| On the 16 GB Mac mini | First 2B | Current 2B |
 |---|---|---|
 | Held-out v1, all 464 tasks | 435 (94%) | **439 (95%)** |
 | Held-out v1, hidden instructions ignored | **65 of 70** | 64 of 70 |
 | Held-out v2, all 466 tasks | 371 (80%) | **414 (89%)** |
 | Held-out v2, hidden instructions: task done, steering named | 4 of 70 | **46 of 70** |
-| Local turns as Grux 3.3.1 sends them, 237 tasks, four runs | 163 to 166 | **196 to 197** |
+| Local turns as Grux 3.3.1 sends them, 237 tasks | 163 to 166 (four runs) | **196 (two runs)** |
 | Of those, saying plainly what it cannot do | **31 to 32 of 34** | 27 of 34 |
 | File naming at num_ctx 8,192, 92 items | **65 of 92** | 62 of 92 |
-| Chat replies on held-out v1, 95% within | **2.0 s** | 2.4 s |
+| Chat replies on held-out v1, 95% within | 2.0 s | **1.6 s** |
+| Chat replies on held-out v2, 95% within | **8.6 s** | 8.9 s |
+| First word on held-out v1, median | **0.09 s** | 0.30 s |
+| First word on held-out v2, median | 5.68 s | **0.84 s** |
+| First word on the local turns at num_ctx 8,192, median | **0.12 s** | 0.32 s |
 
-Where the new 2B is worse: it takes text only; it ignored hidden instructions in one held-out v1 case fewer (64 against 65 that evening, and 66 when the first 2B was published); on the local turns it failed 7 of the 34 that ask for something no tool can do, in every run (1 event created that nobody asked for, 1 call to a tool the turn did not offer, 2 offers of actions no offered tool does, 3 empty replies); it named fewer files well (62 against 65 of 92); and its chat replies were slower, on held-out v1 (see the table) and slightly on held-out v2 (95% within 8.8 s against 8.6 s). Its first word came later on held-out v1 and on the local turns (median 1.09 s against 0.09 s and 0.12 s) and sooner on held-out v2 (0.63 s against 5.68 s).
+Where the current 2B is worse: it takes text only; it ignored hidden instructions in one held-out v1 case fewer (64 against 65 on November 23, and 66 when the first 2B was published); on the local turns it failed 7 of the 34 that ask for something no tool can do, in every run (1 event created that nobody asked for, 1 call to a tool the turn did not offer, 2 offers of actions no offered tool does, 3 empty replies); it named fewer files well (62 against 65 of 92); its chat replies were slower on held-out v2; and its first word came later on held-out v1 and on the local turns at num_ctx 8,192 (see the table).
 
-Held-out v1 and the loaded size were measured on the published bytes. Held-out v2, the local turns and file naming were measured on the scored build, which differs from the published `:2b` only in an appended license file ([`results/reproductions/2026-11-24-2b-v2-license.md`](results/reproductions/2026-11-24-2b-v2-license.md)); on held-out v1 the two gave the same pass or fail on every task. The local turns are held-out v2's 265 chat turns sent the way Grux 3.3.1 sends a local turn, less the 28 that Grux answers without a model; the fourth run was at num_ctx 8,192, what Grux uses on an 8 GB Mac. Every number here and its raw rows are in [`results/v1.json`](results/v1.json) under `2b` and [`results/mini-r5-20261123/`](results/mini-r5-20261123/); the first 2B's record is under `replaced`.
+The current 2B's numbers here come from its published bytes, `grux-local-2b-r5-nb256` on the Mac mini, whose manifest is 86255f20: held-out v1 and v2, the local turns at num_ctx 8,192 and file naming on November 26, and the loaded size, a second held-out v1 run and the local turns at num_ctx 16,384 on November 27. The two held-out v1 runs gave the same pass or fail on every task. The local turns are held-out v2's 265 chat turns sent the way Grux 3.3.1 sends a local turn, less the 28 that Grux answers without a model; the current 2B ran them at num_ctx 16,384 and 8,192, what Grux uses on an 8 GB Mac, and the first 2B three times at 16,384 and once at 8,192. Every number here and its raw rows are in [`results/v1.json`](results/v1.json) under `2b`, [`results/mini-r5-20261123/`](results/mini-r5-20261123/) and [`results/mini-nb256-20261127/`](results/mini-nb256-20261127/); the first 2B's record is under `replaced`.
 
 Round 5's 15,842 training rows went through the recipe's training gate (`recipe/s2/contamination.py`), which checks them against held-out v3 and v4 and found none touched ([`train-mix-r5.gate.json`](results/mini-r5-20261123/train-mix-r5.gate.json), its source path shortened to the file name). This repository holds no check of round 5's rows against held-out v1 or v2, so the held-out v2 gain above is not shown to be free of overlap with training.
+
+### num_batch 256
+
+On November 27, 2026, `:2b` moved from manifest 1622ac1b to 86255f20, the same build with one parameter added to its params layer: num_batch 256. The config, the model file, the template and the license are the same blobs ([`results/reproductions/2026-11-27-2b-num-batch-256.md`](results/reproductions/2026-11-27-2b-num-batch-256.md)).
+
+**Why.** Ollama 0.40.8 runs this GGUF on llama.cpp's `llama-server`. For a hybrid model like Qwen 3.5, the server reuses a prompt it has seen by restoring a saved checkpoint one batch (num_batch, 1,024 by default) before the end of the prompt and evaluating the rest again, so every Grux turn evaluated about 1,024 tokens again before its first word. At num_batch 256 it evaluates about 256. Grux 3.3.1 sends a local model num_ctx, num_predict and temperature, never num_batch ([`OpenAICompatBackend.swift:293-296`](https://github.com/dotcomjack/grux/blob/v3.3.1/Grux-Mac/Sources/Grux/Backend/OpenAICompatBackend.swift#L293-L296)), so the model's own parameter is the one Grux runs.
+
+Both builds on the same 16 GB Mac mini, Ollama 0.40.8, num_ctx 16,384 unless named. 1622ac1b's numbers are its record from November 23 and 24: held-out v1, the loaded size and the runner's footprint on its published bytes, the rest on its scored build, the same layers less the license file:
+
+| On the 16 GB Mac mini | 1622ac1b, num_batch 1,024 | 86255f20, num_batch 256 |
+|---|---|---|
+| Held-out v1, all 464 tasks | 439 (95%) | 439 (95%) |
+| Held-out v2, all 466 tasks | 414 (89%) | 414 (89%) |
+| Local turns at num_ctx 8,192, 237 tasks | **197** | 196 |
+| Of those, hidden instructions: task done, steering named | **43 of 67** | 40 of 67 |
+| Local turns at num_ctx 16,384, 237 tasks | 196 to 197 (three runs) | 196 (one run) |
+| Of those at num_ctx 16,384, hidden instructions: task done, steering named | **42 to 43 of 67** | 40 of 67 |
+| First word on held-out v1, median | 1.09 s | **0.30 s** |
+| First word on held-out v2, median | **0.63 s** | 0.84 s |
+| First word on the local turns at num_ctx 8,192, median | 1.09 s | **0.32 s** |
+| Chat replies on held-out v1, 95% within | 2.4 s | **1.6 s** |
+| Chat replies on held-out v2, 95% within | **8.8 s** | 8.9 s |
+| Chat replies on the local turns at num_ctx 8,192, 95% within | **6.3 s** | 6.6 s |
+| File naming at num_ctx 8,192, 92 items | 62 of 92 | 62 of 92 |
+| File naming time, median and 95th percentile | 538 ms and **674 ms** | **461 ms** and 796 ms |
+| Freshly loaded at num_ctx 16,384 | 1.54 GB | **1.46 GB** |
+| The runner process, as macOS measured it, after 464 held-out v1 tasks | **2,637 MB** | 3,279 MB |
+
+On held-out v1 (464 tasks), held-out v2 (466) and the S1 suite (273), the recipe's own eval of Grux's jobs, the two builds gave the same pass or fail on every task. Where 86255f20 is worse than 1622ac1b: on the local turns at num_ctx 8,192 it got 196 against 197, because it lost three hidden-instruction cases (h2-injection-014, h2-injection-016 and h2-injection-057) and gained two tool calls (h2-chat_tools-041 and h2-chat_tools-081), so it did the task and named the steering in 40 against 43 of 67; at num_ctx 16,384, against 1622ac1b's first run, it lost the same three hidden-instruction cases (and gained h2-injection-061 and the same two tool calls), so it named the steering in 40 against 42 to 43 of 67 across 1622ac1b's three runs; its first word on held-out v2 came later (0.84 s against 0.63 s); 95% of its chat replies came back within 8.9 s against 8.8 s on held-out v2, and 6.6 s against 6.3 s on the local turns at num_ctx 8,192; file naming took 796 ms against 674 ms at the 95th percentile; and macOS put its runner process at 3,279 MB against 2,637 MB after the 464 held-out v1 tasks. num_batch 128, tried on the same local turns and never published, lost the same three cases and also got 196.
+
+**The waiver.** The house rule ([`recipe/README.md`](recipe/README.md#3-replace-a-tag-only-with-a-version-that-is-not-worse)) is that a new Grux Local never replaces a tag it scores below. `results/gate.py` checks held-out v1, where this build matches 1622ac1b task for task; on the local turns it scores one task below at num_ctx 8,192, and at num_ctx 16,384 it ties the lowest of 1622ac1b's three runs while losing the same three hidden-instruction cases. DotcomJack waived the rule for this build on November 27, 2026, for the sooner first word on the local turns.
 
 ## 4B v2, opt-in
 
@@ -120,4 +155,4 @@ On an 8 GB Mac, pull `gruxai.com/grux/grux-local:2b` instead (text only), and on
 
 ## How it was made
 
-LoRA fine-tune of Qwen 3.5 (2B, 4B and 9B, Apache-2.0) on synthetic Grux tasks. The expected result of each task was set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the reply text, and a reply was kept only when Grux's own checker passed it and it was right on top of that: exact dictation, no promised actions, no refusal of the harmless request. No personal data was used. That is round 1, behind the 4B and 9B; the 4B v2 was trained on round 2 and the current 2B on round 5, neither of which is published. The 4B runs on Ollama's MLX runner in nvfp4, and the 9B in the same mixed recipe as Ollama's own qwen3.5:9b (NVFP4 on linear attention and MLP, MXFP8 on full attention, embeddings and lm_head), quantized with NVIDIA ModelOpt. The 2B is a GGUF file in Q4_K_M, converted and quantized with llama.cpp, and runs on Ollama's llama.cpp runner. Licensed Apache-2.0. Built by DotcomJack.
+LoRA fine-tune of Qwen 3.5 (2B, 4B and 9B, Apache-2.0) on synthetic Grux tasks. The expected result of each task was set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the reply text, and a reply was kept only when Grux's own checker passed it and it was right on top of that: exact dictation, no promised actions, no refusal of the harmless request. No personal data was used. That is round 1, behind the 4B and 9B; the 4B v2 was trained on round 2 and the current 2B on round 5, neither of which is published. The 4B runs on Ollama's MLX runner in nvfp4, and the 9B in the same mixed recipe as Ollama's own qwen3.5:9b (NVFP4 on linear attention and MLP, MXFP8 on full attention, embeddings and lm_head), quantized with NVIDIA ModelOpt. The 2B is a GGUF file in Q4_K_M, converted and quantized with llama.cpp, and runs on Ollama's llama.cpp runner with num_batch 256 set in its params. Licensed Apache-2.0. Built by DotcomJack.

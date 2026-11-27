@@ -1,0 +1,65 @@
+llama_context: n_batch               = 1024
+llama_context: n_ubatch              = 1024
+slot print_timing: id  0 | task 0 | prompt eval time =    5549.95 ms /  5383 tokens (    1.03 ms per token,   969.92 tokens per second)
+[GIN] 2026/11/26 - 21:07:46 | 200 |  6.488872292s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 15 | restored context checkpoint (pos_min = 4358, pos_max = 4358, n_tokens = 4359, n_past = 4359, size = 19.266 MiB)
+slot print_timing: id  0 | task 15 | prompt eval time =    1131.19 ms /  1025 tokens (    1.10 ms per token,   906.13 tokens per second)
+[GIN] 2026/11/26 - 21:07:47 | 200 |  1.281264625s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 26 | restored context checkpoint (pos_min = 4359, pos_max = 4359, n_tokens = 4360, n_past = 4360, size = 19.266 MiB)
+slot print_timing: id  0 | task 26 | prompt eval time =    1131.63 ms /  1025 tokens (    1.10 ms per token,   905.77 tokens per second)
+[GIN] 2026/11/26 - 21:07:48 | 200 |  1.277589375s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 37 | restored context checkpoint (pos_min = 4360, pos_max = 4360, n_tokens = 4361, n_past = 4361, size = 19.266 MiB)
+slot print_timing: id  0 | task 37 | prompt eval time =    1110.61 ms /  1019 tokens (    1.09 ms per token,   917.51 tokens per second)
+[GIN] 2026/11/26 - 21:07:50 | 200 |  1.247431958s |       127.0.0.1 | POST     "/api/chat"
+llama_context: n_batch               = 512
+llama_context: n_ubatch              = 512
+slot print_timing: id  0 | task 0 | prompt eval time =    5558.37 ms /  5383 tokens (    1.03 ms per token,   968.45 tokens per second)
+[GIN] 2026/11/26 - 21:07:56 | 200 |  6.522548542s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 20 | restored context checkpoint (pos_min = 4870, pos_max = 4870, n_tokens = 4871, n_past = 4871, size = 19.266 MiB)
+slot print_timing: id  0 | task 20 | prompt eval time =     589.21 ms /   513 tokens (    1.15 ms per token,   870.65 tokens per second)
+[GIN] 2026/11/26 - 21:07:57 | 200 |  740.134959ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 31 | restored context checkpoint (pos_min = 4871, pos_max = 4871, n_tokens = 4872, n_past = 4872, size = 19.266 MiB)
+slot print_timing: id  0 | task 31 | prompt eval time =     593.79 ms /   513 tokens (    1.16 ms per token,   863.94 tokens per second)
+[GIN] 2026/11/26 - 21:07:58 | 200 |  738.657334ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 42 | restored context checkpoint (pos_min = 4872, pos_max = 4872, n_tokens = 4873, n_past = 4873, size = 19.266 MiB)
+slot print_timing: id  0 | task 42 | prompt eval time =     573.35 ms /   507 tokens (    1.13 ms per token,   884.28 tokens per second)
+[GIN] 2026/11/26 - 21:07:58 | 200 |      728.37ms |       127.0.0.1 | POST     "/api/chat"
+llama_context: n_batch               = 256
+llama_context: n_ubatch              = 256
+slot print_timing: id  0 | task 0 | prompt eval time =    5711.45 ms /  5383 tokens (    1.06 ms per token,   942.49 tokens per second)
+[GIN] 2026/11/26 - 21:08:05 | 200 |  6.669981459s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 31 | restored context checkpoint (pos_min = 5126, pos_max = 5126, n_tokens = 5127, n_past = 5127, size = 19.266 MiB)
+slot print_timing: id  0 | task 31 | prompt eval time =     319.16 ms /   257 tokens (    1.24 ms per token,   805.23 tokens per second)
+[GIN] 2026/11/26 - 21:08:06 | 200 |  471.746583ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 42 | restored context checkpoint (pos_min = 5127, pos_max = 5127, n_tokens = 5128, n_past = 5128, size = 19.266 MiB)
+slot print_timing: id  0 | task 42 | prompt eval time =     319.86 ms /   257 tokens (    1.24 ms per token,   803.48 tokens per second)
+[GIN] 2026/11/26 - 21:08:06 | 200 |  472.985916ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 53 | restored context checkpoint (pos_min = 5128, pos_max = 5128, n_tokens = 5129, n_past = 5129, size = 19.266 MiB)
+slot print_timing: id  0 | task 53 | prompt eval time =     304.21 ms /   251 tokens (    1.21 ms per token,   825.09 tokens per second)
+[GIN] 2026/11/26 - 21:08:07 | 200 |  456.259875ms |       127.0.0.1 | POST     "/api/chat"
+llama_context: n_batch               = 128
+llama_context: n_ubatch              = 128
+slot print_timing: id  0 | task 0 | prompt eval time =    5737.18 ms /  5383 tokens (    1.07 ms per token,   938.27 tokens per second)
+[GIN] 2026/11/26 - 21:08:13 | 200 |  6.700747584s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 52 | restored context checkpoint (pos_min = 5254, pos_max = 5254, n_tokens = 5255, n_past = 5255, size = 19.266 MiB)
+slot print_timing: id  0 | task 52 | prompt eval time =     183.77 ms /   129 tokens (    1.42 ms per token,   701.95 tokens per second)
+[GIN] 2026/11/26 - 21:08:14 | 200 |     345.154ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 63 | restored context checkpoint (pos_min = 5255, pos_max = 5255, n_tokens = 5256, n_past = 5256, size = 19.266 MiB)
+slot print_timing: id  0 | task 63 | prompt eval time =     185.13 ms /   129 tokens (    1.44 ms per token,   696.80 tokens per second)
+[GIN] 2026/11/26 - 21:08:14 | 200 |  342.933125ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 74 | restored context checkpoint (pos_min = 5256, pos_max = 5256, n_tokens = 5257, n_past = 5257, size = 19.266 MiB)
+slot print_timing: id  0 | task 74 | prompt eval time =     170.04 ms /   123 tokens (    1.38 ms per token,   723.37 tokens per second)
+[GIN] 2026/11/26 - 21:08:14 | 200 |  324.911042ms |       127.0.0.1 | POST     "/api/chat"
+llama_context: n_batch               = 64
+llama_context: n_ubatch              = 64
+slot print_timing: id  0 | task 0 | prompt eval time =    6188.92 ms /  5383 tokens (    1.15 ms per token,   869.78 tokens per second)
+[GIN] 2026/11/26 - 21:08:22 | 200 |  7.157261125s |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 94 | restored context checkpoint (pos_min = 5318, pos_max = 5318, n_tokens = 5319, n_past = 5319, size = 19.266 MiB)
+slot print_timing: id  0 | task 94 | prompt eval time =     120.29 ms /    65 tokens (    1.85 ms per token,   540.38 tokens per second)
+[GIN] 2026/11/26 - 21:08:22 | 200 |   266.52875ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 105 | restored context checkpoint (pos_min = 5319, pos_max = 5319, n_tokens = 5320, n_past = 5320, size = 19.266 MiB)
+slot print_timing: id  0 | task 105 | prompt eval time =     120.39 ms /    65 tokens (    1.85 ms per token,   539.89 tokens per second)
+[GIN] 2026/11/26 - 21:08:22 | 200 |  264.518209ms |       127.0.0.1 | POST     "/api/chat"
+slot   operator(): id  0 | task 116 | restored context checkpoint (pos_min = 5320, pos_max = 5320, n_tokens = 5321, n_past = 5321, size = 19.266 MiB)
+slot print_timing: id  0 | task 116 | prompt eval time =     104.91 ms /    59 tokens (    1.78 ms per token,   562.41 tokens per second)
+[GIN] 2026/11/26 - 21:08:22 | 200 |  247.554542ms |       127.0.0.1 | POST     "/api/chat"

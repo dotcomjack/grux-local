@@ -1,0 +1,2 @@
+FROM grux-local-2b-r5
+PARAMETER num_batch 256

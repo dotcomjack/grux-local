@@ -15,6 +15,16 @@ which mini-r5-20261123/sources.py printed there). From a clone, in results/:
 It takes every other tag, the top-level fields and the other loaded_after_use entries from v1.json unchanged
 (asserted), moves the 2B it replaces into "replaced" with its after-use reading, and is a fixed point: run on its own
 output it writes the same bytes.
+
+On 2026-11-27 the 2B moved again, to manifest 86255f20: the same build with num_batch 256 in its params layer. Its
+record is built from the raw rows in mini-nb256-20261127/ (checked against that folder's SOURCES.json, which its
+sources.py printed on the Mac mini), beside the first 2B's and 1622ac1b's rows in mini-r5-20261123/. From results/:
+
+  python3 build_v1.py --from v1.json --2b-nb256 mini-r5-20261123 mini-nb256-20261127 > v1.new.json && mv v1.new.json v1.json
+
+It changes only the 2b tag and its loaded_after_use entry (asserted): "replaced" keeps the first 2B's record as it
+was, so the dated blog's view is unchanged, and 1622ac1b's numbers stand inside the new tag, under
+"num_batch_change", beside this build's. It is a fixed point too.
 """
 import collections
 import datetime
@@ -276,7 +286,288 @@ def r5_2b(d, replaced, v2_task_set):
                             **naming}}
 
 
+FIRST_2B = "sha256:601cd23c66ef4c834dec0c3f518c3663f2abe2298f62249b7337eb0845fb3ee4"
+NB_DIGEST = "sha256:86255f201bd61aef2d4b4d43b00de50f6f491195f55e474e041253bdd9818a99"
+NB_MODEL = "grux-local-2b-r5-nb256"
+NB_RUNTIME = ("Ollama 0.40.8, llama.cpp runner (llama-server), GGUF Q4_K_M, num_batch 256 from the model's own params "
+              "layer, one request at a time, thinking off as Grux sends it")
+LOCAL_TASK_SET = ("held-out v2's 265 chat turns sent the way Grux 3.3.1 sends a local turn (recipe/eval_local.py --set "
+                  "local); a turn Grux answers without a model is not sent, so each run scores the rest")
+
+
+def nb256_2b(r5d, nbd, first, v2_task_set):
+    """The 2B republished on 2026-11-27: manifest 86255f20, built on the Mac mini with `ollama create` from 1622ac1b
+    (grux-local-2b-r5) plus PARAMETER num_batch 256 (nbd/Modelfile256), so only the params layer differs. Every row
+    of the new build was run on those exact bytes (grux-local-2b-r5-nb256), so there is no scored build beside a
+    published one. It stands beside the first 2B (`first`, the replaced record, and its rows in r5d, scored on
+    2026-11-23) as 1622ac1b did, and beside 1622ac1b itself under num_batch_change."""
+    import hashlib
+
+    def checked(d):
+        src = json.load(open(f"{d}/SOURCES.json"))
+
+        def path(rel):   # a raw file, checked against the hash recorded on the Mac mini
+            p = f"{d}/{rel}"
+            assert hashlib.sha256(open(p, "rb").read()).hexdigest() == src[rel]["sha256"], p
+            return p
+        return src, path
+    rsrc, R = checked(r5d)
+    nsrc, N = checked(nbd)
+
+    def run(path, src, rel, **kw):
+        return summary(path(rel), measured=src[rel]["written"][:10], **kw)
+
+    def meta(path, rel, model):
+        m = json.load(open(path(rel)))
+        assert m["version"] == "0.40.8" and m["think"] == "false" and m["model"] == model, (rel, m)
+        return m
+
+    def new(rel, ctx, **kw):   # a run of the published bytes, never an r5pilot or 1622ac1b row
+        assert meta(N, rel.replace(".jsonl", ".meta.json"), NB_MODEL)["num_ctx"] == ctx, rel
+        return run(N, nsrc, rel, **kw)
+
+    def old2b(rel, **kw):   # the first 2B, grux-local:2b (601cd23c), on 2026-11-23
+        m = meta(R, rel.replace(".jsonl", ".meta.json"), "grux-local:2b")
+        return m["num_ctx"], run(R, rsrc, rel, **kw)
+
+    def cases(p):
+        return {r["case"]: r for r in load(p)}
+
+    def flips(a, b):   # cases whose pass or fail differs; a turn not sent must be not sent in both
+        x, y = cases(a), cases(b)
+        assert set(x) == set(y) and {k for k in x if x[k]["status"] != "scored"} == \
+            {k for k in y if y[k]["status"] != "scored"}, (a, b)
+        return sorted(k for k in x if bool(x[k].get("pass")) != bool(y[k].get("pass")))
+
+    def ttft(p):   # median seconds to the first token, over every task sent
+        xs = sorted(r["first_token_s"] for r in load(p) if r.get("status") == "scored")
+        return round((xs[len(xs) // 2] + xs[(len(xs) - 1) // 2]) / 2, 2)
+
+    def naming(path, src, rel, model):
+        line = json.loads(open(path(rel)).readline())
+        assert line["model"] == model, line
+        return {"measured": src[rel]["written"][:10], "pass": line["useful"], "of": line["of"],
+                "p50_ms": line["p50_ms"], "p95_ms": line["p95_ms"]}
+
+    # The two manifests, as blobs from the Mac mini's store: the same config and every layer but params.
+    def manifest(digest):
+        raw = open(N(f"blobs/sha256-{digest[7:]}"), "rb").read()
+        assert "sha256:" + hashlib.sha256(raw).hexdigest() == digest, digest
+        return json.loads(raw)
+    mn, mo = manifest(NB_DIGEST), manifest(R5_DIGEST)
+    pn, po = ([l for l in m["layers"] if l["mediaType"].endswith(".params")] for m in (mn, mo))
+    assert len(pn) == len(po) == 1 and mn["config"] == mo["config"], (pn, po)
+
+    def blobs(m, skip):   # each layer as the blob it names; an entry's "from" (the local name it was made from) is not
+        return sorted((l["mediaType"], l["digest"], l["size"]) for l in m["layers"] if l not in skip)
+    assert blobs(mn, pn) == blobs(mo, po), "a layer other than params differs"
+    params = {p[0]["digest"]: json.load(open(N(f"blobs/sha256-{p[0]['digest'][7:]}"))) for p in (pn, po)}
+    pnew, pold = params[pn[0]["digest"]], params[po[0]["digest"]]
+    assert pnew == {**pold, "num_batch": 256} and "num_batch" not in pold, (pnew, pold)
+
+    pub = "runs/nb256-published"
+    ps = {}
+    for k in ("fresh", "after"):   # eval_local's meta reads Ollama's size too, but these are the /api/ps answers
+        (m,) = json.load(open(N(f"{pub}/ps-{k}.json")))["models"]
+        assert "sha256:" + m["digest"] == NB_DIGEST and m["context_length"] == 16384, m
+        assert (m["details"]["format"], m["details"]["quantization_level"], m.get("runner")) == ("gguf", "Q4_K_M", "llamacpp")
+        ps[k] = round(m["size"] / 1e9, 2)
+    fp = open(N(f"{pub}/footprint-after.txt")).read()
+    assert fp.lstrip("= \n").startswith("llama-server ["), fp[:120]
+    footprint_mb = int(re.search(r"phys_footprint: (\d+) MB", fp).group(1))
+    show = json.load(open(N("show.json")))
+    assert show["model"] == NB_MODEL and show["details"]["runner"] == "llamacpp", show
+    assert "vision" not in show["capabilities"], show["capabilities"]
+
+    nb = "runs/nb256/grux-local-2b-r5-nb256"
+    v1 = new(nb + "-holdout.jsonl", 16384)
+    v1_again = new(f"{pub}/grux-local-2b-r5-nb256-holdout.jsonl", 16384)
+    v2 = new(nb + "-holdout2.jsonl", 16384)
+    s1 = s1_count(N(nb + ".jsonl"))
+    assert meta(N, nb + ".meta.json", NB_MODEL)["num_ctx"] == 16384
+    loc_rel = [(16384, f"{pub}/grux-local-2b-r5-nb256-local.jsonl"), (8192, "runs/nb256-8k/grux-local-2b-r5-nb256-local.jsonl")]
+    local = [{"num_ctx": c, **new(rel, c, scored_only=True)} for c, rel in loc_rel]
+
+    _, v1_old = old2b("runs/r5-pass1/grux-local_2b-holdout.jsonl")
+    _, v2_old = old2b("runs/r5-pass1/grux-local_2b-holdout2.jsonl")
+    for s, x in (("holdout", v1_old), ("holdout2", v2_old)):   # its second pass gave the same totals
+        _, y = old2b(f"runs/r5-pass2/grux-local_2b-{s}.jsonl")
+        assert (x["pass"], x["hidden_instructions_ignored"]) == (y["pass"], y["hidden_instructions_ignored"]), s
+    local_old = []
+    for p in ("r5-pass1", "r5-pass2", "r5-pass3", "r5-8k"):
+        c, r = old2b(f"runs/{p}/grux-local_2b-local.jsonl", scored_only=True)
+        local_old.append({"num_ctx": c, **r})
+
+    # The chat-honesty turns the new build failed in its last local run (num_ctx 8,192), by reason: the same ones in
+    # its 16,384 run, and the same ones 1622ac1b failed in all four of its runs.
+    def honesty_fails(p):
+        return {r["case"]: r["why"].split(":")[0] for r in load(p)
+                if r["family"] == "chat_honesty" and r["status"] == "scored" and not r["pass"]}
+    last = honesty_fails(N(loc_rel[-1][1]))
+    assert set(honesty_fails(N(loc_rel[0][1]))) == set(last) == set(honesty_fails(R("runs/r5-8k/grux-local-2b-r5pilot-local.jsonl")))
+
+    # 1622ac1b beside it: held-out v1 on its published bytes, the rest on its scored build (the same layers less the
+    # license file, results/reproductions/2026-11-24-2b-v2-license.md), each meta checked for the model it names.
+    def r5(path, src, rel, model, **kw):
+        m = meta(path, rel.replace(".jsonl", ".meta.json"), model)
+        return m["num_ctx"], run(path, src, rel, **kw)
+    _, v1_r5 = r5(R, rsrc, "runs/r5-published/grux-local-2b-r5-holdout.jsonl", "grux-local-2b-r5")
+    _, v2_r5 = r5(R, rsrc, "runs/r5-pass1/grux-local-2b-r5pilot-holdout2.jsonl", "grux-local-2b-r5pilot")
+    meta(N, "runs/r5-pass1/grux-local-2b-r5pilot.meta.json", "grux-local-2b-r5pilot")
+    s1_r5 = s1_count(N("runs/r5-pass1/grux-local-2b-r5pilot.jsonl"))
+    local_r5 = []
+    for p in ("r5-pass1", "r5-pass2", "r5-pass3", "r5-8k"):
+        c, r = r5(R, rsrc, f"runs/{p}/grux-local-2b-r5pilot-local.jsonl", "grux-local-2b-r5pilot", scored_only=True)
+        local_r5.append({"num_ctx": c, **r})
+    l8 = flips(R("runs/r5-8k/grux-local-2b-r5pilot-local.jsonl"), N(loc_rel[-1][1]))
+    l16 = flips(R("runs/r5-pass1/grux-local-2b-r5pilot-local.jsonl"), N(loc_rel[0][1]))
+    newcases = {c: cases(N(rel)) for c, rel in loc_rel}
+
+    def moved(fl, ctx):
+        return {"lost": [k for k in fl if not newcases[ctx][k]["pass"]], "gained": [k for k in fl if newcases[ctx][k]["pass"]]}
+
+    # num_batch 128 (manifest f8542525, nbd/Modelfile128, never published) on the same local turns at 8,192: the
+    # sweep's other point with full rows.
+    nb128 = "runs/nb128-8k/grux-local-2b-r5-nb128-local.jsonl"
+    assert meta(N, nb128.replace(".jsonl", ".meta.json"), "grux-local-2b-r5-nb128")["num_ctx"] == 8192
+    f128 = flips(R("runs/r5-8k/grux-local-2b-r5pilot-local.jsonl"), N(nb128))
+    c128 = cases(N(nb128))
+
+    fn_new = naming(N, nsrc, "fname-ab/fn8k-grux-local-2b-r5-nb256.txt", NB_MODEL)
+    fn_old = naming(R, rsrc, "fname-ab/fn8k-grux-local_2b.txt", "grux-local:2b")
+    fn_r5 = naming(R, rsrc, "fname-ab/fn8k-grux-local-2b-r5pilot.txt", "grux-local-2b-r5pilot")
+    gate = json.load(open(f"{r5d}/train-mix-r5.gate.json"))
+    assert gate["source"] == "train-mix-r5.jsonl" and gate["dropped"] == 0 and gate["kept"] == gate["rows"], gate
+
+    def count(r):
+        return {k: r[k] for k in ("measured", "pass", "of", "hidden_instructions_ignored", "chat_p95_s")}
+    first_v2 = "runs/r5-pass1/grux-local_2b-holdout2.jsonl"
+    return {"name": "gruxai.com/grux/grux-local:2b", "aliases": [], "size": "2B", "made_for": "8 GB Macs",
+            "base_model": "Qwen/Qwen3.5-2B", "manifest_digest": NB_DIGEST, "loaded_gb": ps["fresh"],
+            # Its own runtime: the top-level one is the MLX runner, which every other tag runs on.
+            "runtime": NB_RUNTIME,
+            "params": pnew,
+            "input": "text only",
+            "capabilities": show["capabilities"],
+            "text_only_note": "Ollama lists no vision capability for it, and a chat request that carries an image "
+                              "answers HTTP 400 \"Multimodal data provided, but model does not support multimodal "
+                              "requests.\" The first 2B accepted images.",
+            "scored_as": f"the published build itself: every row of this tag ran on {NB_MODEL} on the Mac mini, "
+                         f"manifest {NB_DIGEST}",
+            "grux_local": v1,
+            # A second held-out v1 run of the same bytes, the one around which the after-use sizes were read.
+            "holdout_v1_second_run": {"measured": v1_again["measured"], "pass": v1_again["pass"], "of": v1_again["of"],
+                                      "flips": len(flips(N(nb + "-holdout.jsonl"),
+                                                         N(f"{pub}/grux-local-2b-r5-nb256-holdout.jsonl")))},
+            "runner_footprint_after_use_mb": footprint_mb,
+            "runner_footprint_note": "the llama-server process's phys_footprint, as macOS's footprint tool printed it "
+                                     "after the second run's 464 held-out v1 tasks; Ollama's /api/ps size (loaded_gb, "
+                                     "loaded_after_use) leaves part of it out",
+            "before_training": first["before_training"],
+            "before_training_model": first["before_training_model"],
+            "before_training_machine": first["before_training_machine"],
+            "previous_2b_same_machine": v1_old,
+            "previous_2b_same_machine_model": f"grux-local:2b, the first 2B, manifest {first['manifest_digest']}, "
+                                              f"scored on the same Mac mini on {rsrc[first_v2]['written'][:10]}",
+            # The same set the 4b-v2 was scored on, in the same words: a reader of v1.json finds it described once.
+            "holdout_v2": {"task_set": v2_task_set, "grux_local": v2, "previous_2b_same_machine": v2_old},
+            "local_turns": {"task_set": LOCAL_TASK_SET + ". The new build's two runs are at num_ctx 16,384 and "
+                                                         "8,192, the first 2B's four at 16,384 three times, then 8,192, "
+                                                         "what Grux asks for on an 8 GB Mac",
+                            "grux_local": local, "previous_2b_same_machine": local_old,
+                            "chat_honesty_failures_last_run": dict(sorted(collections.Counter(last.values()).items()))},
+            "first_token_median_s": {s: {"grux_local": ttft(N(n)), "previous_2b_same_machine": ttft(R(o))} for s, n, o in (
+                ("holdout_v1", nb + "-holdout.jsonl", "runs/r5-pass1/grux-local_2b-holdout.jsonl"),
+                ("holdout_v2", nb + "-holdout2.jsonl", first_v2),
+                ("local_num_ctx_8192", loc_rel[-1][1], "runs/r5-8k/grux-local_2b-local.jsonl"))},
+            "training_gate": {"rows": gate["rows"], "checked_against": ["held-out v3", "held-out v4"],
+                              "held_out_touched": len(gate["held_out_touched"]),
+                              "note": "no check of round 5's rows against held-out v1 or v2 is in this repository"},
+            "file_naming": {"task_set": "Grux 3.3.1's own file-naming prompt on held-out file naming's 92 text "
+                                        "items, at num_ctx 8,192; a name counts when it carries the item's key words",
+                            "grux_local": fn_new, "previous_2b_same_machine": fn_old},
+            "num_batch_change": {
+                "replaced_manifest": R5_DIGEST,
+                "change": "the params layer only: config, model, template and license are the same blobs",
+                "params_digest": pn[0]["digest"], "replaced_params_digest": po[0]["digest"], "replaced_params": pold,
+                "why": "Ollama 0.40.8 runs this GGUF on llama-server, which for a hybrid model like Qwen 3.5 restores "
+                       "a context checkpoint one ubatch (-ub, which is num_batch, 1024 by default) before the end of "
+                       "the prompt and evaluates the rest again, so every turn redid about 1,024 tokens; at "
+                       "num_batch 256, about 256. Grux 3.3.1 sends num_ctx, num_predict and temperature, never "
+                       "num_batch (Grux-Mac/Sources/Grux/Backend/OpenAICompatBackend.swift:293-296 at v3.3.1), so "
+                       "the model's own parameter is the one Grux runs",
+                "replaced_rows": "held-out v1 and the loaded size on 1622ac1b's published bytes; held-out v2, s1, "
+                                 "the local turns and file naming on its scored build, the same layers less the "
+                                 "license file (results/reproductions/2026-11-24-2b-v2-license.md)",
+                "loaded_gb": {"grux_local": ps["fresh"], "replaced": first_r5_gb(R)},
+                # The same reading on both builds (footprint -p on llama-server after 464 held-out v1 tasks).
+                "runner_footprint_after_use_mb": {"grux_local": footprint_mb, "replaced": int(re.search(
+                    r"phys_footprint: (\d+) MB", open(R("runs/r5-published/footprint-after.txt")).read()).group(1))},
+                "holdout_v1": {"grux_local": count(v1), "replaced": count(v1_r5),
+                               "flips": len(flips(N(nb + "-holdout.jsonl"), R("runs/r5-published/grux-local-2b-r5-holdout.jsonl")))},
+                "holdout_v2": {"grux_local": count(v2), "replaced": count(v2_r5),
+                               "flips": len(flips(N(nb + "-holdout2.jsonl"), R("runs/r5-pass1/grux-local-2b-r5pilot-holdout2.jsonl")))},
+                "s1": {"grux_local": s1, "replaced": s1_r5,
+                       "flips": len(flips(N(nb + ".jsonl"), N("runs/r5-pass1/grux-local-2b-r5pilot.jsonl")))},
+                "local_turns": {"grux_local": local, "replaced": local_r5,
+                                "num_ctx_8192": moved(l8, 8192), "num_ctx_16384_against_first_run": moved(l16, 16384),
+                                "num_batch_128_num_ctx_8192": {"pass": sum(bool(r["pass"]) for r in c128.values()
+                                                                           if r["status"] == "scored"),
+                                                               "lost": [k for k in f128 if not c128[k]["pass"]],
+                                                               "gained": [k for k in f128 if c128[k]["pass"]]}},
+                "first_token_median_s": {s: {"grux_local": ttft(N(n)), "replaced": ttft(R(o))} for s, n, o in (
+                    ("holdout_v1", nb + "-holdout.jsonl", "runs/r5-published/grux-local-2b-r5-holdout.jsonl"),
+                    ("holdout_v2", nb + "-holdout2.jsonl", "runs/r5-pass1/grux-local-2b-r5pilot-holdout2.jsonl"),
+                    ("local_num_ctx_8192", loc_rel[-1][1], "runs/r5-8k/grux-local-2b-r5pilot-local.jsonl"))},
+                "file_naming": {"grux_local": fn_new, "replaced": fn_r5},
+                "gate": "results/gate.py checks held-out v1 against the tag it would replace, and this build passes "
+                        "it there (the same pass or fail on every task); on the local turns at num_ctx 8,192 it "
+                        "scores one below 1622ac1b, which the house rule forbids (recipe/README.md, section 3)",
+                "waiver": "DotcomJack waived the rule for this build on 2026-11-27, for the faster first word"}}
+
+
+def s1_count(p):
+    """The recipe's S1 suite (eval_local.py with no --set): pass and of only, since it has no hidden-instruction family."""
+    rows = load(p)
+    assert all(r.get("status") == "scored" for r in rows), p
+    return {"pass": sum(bool(r["pass"]) for r in rows), "of": len(rows)}
+
+
+def first_r5_gb(R):
+    """1622ac1b's fresh /api/ps size at num_ctx 16384, from its published bytes."""
+    (m,) = json.load(open(R("runs/r5-published/ps-fresh.json")))["models"]
+    assert "sha256:" + m["digest"] == R5_DIGEST and m["context_length"] == 16384, m
+    return round(m["size"] / 1e9, 2)
+
+
+if sys.argv[1:2] == ["--from"] and sys.argv[3:4] == ["--2b-nb256"]:
+    # Only the 2b tag and its loaded_after_use entry change; "replaced" (the first 2B) and every other field stay.
+    v1 = json.load(open(sys.argv[2]))
+    (first,) = [r for r in v1["replaced"] if r["tag"] == "2b"]
+    assert first["manifest_digest"] == FIRST_2B and v1["tags"]["2b"]["manifest_digest"] in (R5_DIGEST, NB_DIGEST)
+    new = nb256_2b(sys.argv[4], sys.argv[5], first, v1["tags"]["4b-v2"]["holdout_v2"]["task_set"])
+    ps_after = json.load(open(f"{sys.argv[5]}/runs/nb256-published/ps-after.json"))["models"][0]
+    assert "sha256:" + ps_after["digest"] == NB_DIGEST, ps_after
+    out = dict(v1)
+    out["loaded_after_use"] = [{"tag": "2b", "machine": MAC_MINI, "num_ctx": 16384, "fresh_gb": new["loaded_gb"],
+                                "after_gb": round(ps_after["size"] / 1e9, 2),
+                                "after_tasks": new["holdout_v1_second_run"]["of"]}
+                               if u["tag"] == "2b" else u for u in v1["loaded_after_use"]]
+    out["tags"] = {k: (new if k == "2b" else v) for k, v in v1["tags"].items()}
+    for k, v in v1.items():
+        if k not in ("loaded_after_use", "tags"):
+            assert out[k] == v, k
+    assert {k: v for k, v in out["tags"].items() if k != "2b"} == {k: v for k, v in v1["tags"].items() if k != "2b"}
+    assert [u for u in out["loaded_after_use"] if u["tag"] != "2b"] == [u for u in v1["loaded_after_use"] if u["tag"] != "2b"]
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.dont_write_bytecode = True
+    import check   # the dated blog is checked against this view: it must not move
+    assert check.blog_view(out) == check.blog_view(v1)
+    print(json.dumps(out, indent=1))
+    sys.exit(0)
 if sys.argv[1:2] == ["--from"]:
+    if json.load(open(sys.argv[2]))["tags"]["2b"]["manifest_digest"] not in (FIRST_2B, R5_DIGEST):
+        sys.exit("refused: the 2b is no longer the first 2B or 1622ac1b; build it with --2b-nb256")
     # Every tag but the 2B, and everything else, from the last v1.json: the raw files behind them are not in
     # this repository (they are on the Mac mini and the MacBook Pro, see above).
     v1 = json.load(open(sys.argv[2]))
@@ -314,7 +605,8 @@ if sys.argv[1:2] == ["--v1-tags-from"]:
 else:
     if "--first-2b" not in sys.argv:   # v1_tags() builds the 2B that was replaced on 2026-11-24
         sys.exit("refused: a full build writes the first 2B (601cd23c) as the 2b tag. Run it with --first-2b, then "
-                 "`build_v1.py --from <that output> --2b-r5 mini-r5-20261123` to put the current 2B back")
+                 "`build_v1.py --from <that output> --2b-r5 mini-r5-20261123`, then `build_v1.py --from <that output> "
+                 "--2b-nb256 mini-r5-20261123 mini-nb256-20261127` to put the current 2B back")
     tags = v1_tags()
 tags["4b-v2"] = tag_4b_v2()
 

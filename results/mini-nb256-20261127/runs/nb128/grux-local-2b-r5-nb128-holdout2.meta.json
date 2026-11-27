@@ -1,0 +1,14 @@
+{
+ "model": "grux-local-2b-r5-nb128",
+ "num_ctx": 16384,
+ "think": "false",
+ "load_s": 0.1,
+ "ollama_size_gb": 1.45,
+ "runner_footprint_gb": 3.31,
+ "version": "0.40.8",
+ "guard_runner_pids": [
+  15624
+ ],
+ "peak_runner_footprint_gb": 9.47,
+ "wall_s": 2088.8
+}
