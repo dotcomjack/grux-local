@@ -721,8 +721,8 @@ def pull_path(registry, v1):
             continue
         problems, targets = [], set()
         for l in blobs:
-            blob = f"{base}/v2/grux/grux-local/blobs/{l['digest']}"
             try:
+                blob = f"{base}/v2/grux/grux-local/blobs/{l['digest']}"
                 st, h = _raw("HEAD", blob)
                 if st in (301, 302, 303, 307, 308) and urllib.parse.urlsplit(h.get("location", "")).hostname not in (None, host):
                     problems.append(f"{l['digest'][7:19]} HEAD {st} to {urllib.parse.urlsplit(h['location']).hostname} (Ollama blocks a cross-host redirect here)")
@@ -745,7 +745,7 @@ def pull_path(registry, v1):
                     problems.append(f"{l['digest'][7:19]} Location answered {st2} to a ranged GET, not 206")
                 targets.add(urllib.parse.urlsplit(loc).hostname)
             except Exception as e:
-                problems.append(f"{l['digest'][7:19]} error {e}")
+                problems.append(f"{str(l.get('digest', '(no digest)') if isinstance(l, dict) else l)[7:19] or l!r} error {e!r}")
         ok = not problems
         failed += not ok
         if ok:

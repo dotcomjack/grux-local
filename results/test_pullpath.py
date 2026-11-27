@@ -12,7 +12,8 @@ network beyond 127.0.0.1.
   8. a Location that drops https to http fails on an https registry (checked on the rule, no TLS server);
   9. a 404 carrying a Location fails (Ollama accepts only 200 or a redirect);
  10. a manifest with no layers is one FAIL line, not a traceback that stops the run;
- 11. a relative Location is resolved against the blob URL, as Go does.
+ 11. a relative Location is resolved against the blob URL, as Go does;
+ 12. a layer with no digest is a problem on that tag, not a traceback.
 Prints PASS or FAIL per check; exit 1 on any FAIL, or if no check ran.
 
   python3 results/test_pullpath.py
@@ -60,7 +61,7 @@ class H(http.server.BaseHTTPRequestHandler):
         host = self.headers.get("Host", "")
         m, path = MODE["m"], self.path
         if "/manifests/" in path:
-            body = json.dumps(MLX if path.endswith("/mlx") else {"schemaVersion": 2} if path.endswith("/broken") else GGUF).encode()
+            body = json.dumps(MLX if path.endswith("/mlx") else {"schemaVersion": 2} if path.endswith("/broken") else {**GGUF, "layers": GGUF["layers"] + [{"mediaType": "application/vnd.ollama.image.params", "size": 1}]} if path.endswith("/nodigest") else GGUF).encode()
             return self._send(200, [("Content-Length", str(len(body)))], body)
         if "/blobs/" not in path:
             return self._send(404, [("Content-Length", "0")])
@@ -131,6 +132,8 @@ f, o = run("good", tags=("broken",))
 check_("10. a manifest with no layers is one FAIL line", f == 1 and "no usable manifest" in o)
 f, o = run("relative")
 check_("11. a relative Location is resolved against the blob URL", f == 0 and "PASS pullpath" in o)
+f, o = run("good", tags=("nodigest",))
+check_("12. a layer with no digest is a problem on that tag, not a traceback", f == 1 and "FAIL pullpath nodigest" in o)
 srv.shutdown()
 if not results:
     print("FAIL no check ran")
