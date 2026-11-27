@@ -701,7 +701,9 @@ def pull_path(registry, v1):
     host", the error that failed every :2b pull for about 20 minutes on 2026-11-24; and (2) GETs it once to find a
     direct URL, then calls resp.Location(): an answer with no Location ("http: no Location header in response", what
     a preview host gives) fails too, and the Location must answer a ranged GET with 206. MLX tags (tensor layers) take
-    the transfer path, which blob_burst covers. Returns failed lines."""
+    the transfer path, which blob_burst covers. Not modelled: Ollama's private-address refusal for a redirect target
+    (redirect.go ValidateRedirectTarget; our target is pages.dev) and its user agent (this sends UA, so a rule keyed
+    on Ollama's agent would not show here). Returns the number of tags that failed."""
     base, failed = registry.rstrip("/"), 0
     host = urllib.parse.urlsplit(base).hostname
     for tag in v1["tags"]:
@@ -709,14 +711,16 @@ def pull_path(registry, v1):
         try:
             body, _ = fetch(url, {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
             m = json.loads(body)
+            blobs = [m["config"]] + list(m["layers"])   # Ollama appends the config to the layers it pulls
+            gguf = not any(l["mediaType"].endswith(".tensor") for l in m["layers"])
         except Exception as e:
-            print(f"FAIL pullpath {tag}: no manifest ({e})")
+            print(f"FAIL pullpath {tag}: no usable manifest ({e!r})")
             failed += 1
             continue
-        if any(l["mediaType"].endswith(".tensor") for l in m["layers"]):
+        if not gguf:
             continue
         problems, targets = [], set()
-        for l in [m["config"]] + m["layers"]:
+        for l in blobs:
             blob = f"{base}/v2/grux/grux-local/blobs/{l['digest']}"
             try:
                 st, h = _raw("HEAD", blob)
@@ -726,9 +730,13 @@ def pull_path(registry, v1):
                     problems.append(f"{l['digest'][7:19]} HEAD {st}, length {h.get('content-length')} (want {l['size']})")
                 st, h = _raw("GET", blob)
                 loc = h.get("location")
+                if st not in (200, 301, 302, 303, 307, 308):   # download.go run(): any other status is an error
+                    problems.append(f"{l['digest'][7:19]} GET {st} (Ollama accepts only 200 or a redirect here)")
+                    continue
                 if not loc:
                     problems.append(f"{l['digest'][7:19]} GET {st} with no Location (Ollama needs one to find the blob)")
                     continue
+                loc = urllib.parse.urljoin(blob, loc)   # Go's resp.Location() resolves a relative one the same way
                 if base.startswith("https://") and not loc.startswith("https://"):
                     problems.append(f"{l['digest'][7:19]} Location {loc[:60]} drops https (Ollama refuses the downgrade)")
                     continue
