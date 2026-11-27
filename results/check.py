@@ -23,7 +23,8 @@ Each surface is a path or a URL; the blog is the dotcomjack.com announcement, ch
   claims an absolute behaviour claim ("it ignores instructions hidden in...", "are not followed",
          "it says so instead of pretending") fails while v1.json shows that family below 100%: no
          tag is perfect at it, so the surface must say "trained to" and let the table carry the rate.
-The registry check ties the numbers to the files: each tag's manifest must hash to v1.json's digest.
+The registry check ties the numbers to the files: each tag's manifest must hash to v1.json's digest. The pullpath
+check walks Ollama 0.40.8's GGUF pull (HEAD same-host, GET with a Location that answers 206) for each GGUF tag.
 --blobs N fires N ranged GETs at once across every blob of every tag, the way `ollama pull` does, and
 fails if more than 5% do not answer 206: on 2026-10-23 the preview passed every check while production
 dropped about 1 blob request in 10 at the upstream, which only a burst of real ranged GETs showed.
@@ -40,11 +41,13 @@ import collections
 import concurrent.futures
 import hashlib
 import html
+import http.client
 import json
 import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -679,6 +682,82 @@ def blob_burst(registry, v1, n):
     return ok
 
 
+def _raw(method, url, headers=None):
+    """One request, no redirect followed, no body read: (status, lowercased headers). A blob body is never pulled."""
+    u = urllib.parse.urlsplit(url)
+    conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.netloc, timeout=30)
+    try:
+        conn.request(method, u.path + (f"?{u.query}" if u.query else ""), headers={**UA, **(headers or {})})
+        r = conn.getresponse()
+        return r.status, {k.lower(): v for k, v in r.getheaders()}
+    finally:
+        conn.close()
+
+
+def pull_path(registry, v1):
+    """Ollama 0.40.8's pull, step by step, for every tag whose layers are not tensor blobs (a GGUF, like the 2b since
+    2026-11-24). Such a pull goes through server/images.go downloadBlob, which (1) HEADs a layer with a same-host-only
+    redirect policy (remoteBlobLayer, makeRequest): a cross-host redirect there is "blocked redirect to a different
+    host", the error that failed every :2b pull for about 20 minutes on 2026-11-24; and (2) GETs it once to find a
+    direct URL, then calls resp.Location(): an answer with no Location ("http: no Location header in response", what
+    a preview host gives) fails too, and the Location must answer a ranged GET with 206. MLX tags (tensor layers) take
+    the transfer path, which blob_burst covers. Not modelled: Ollama's private-address refusal for a redirect target
+    (redirect.go ValidateRedirectTarget; our target is pages.dev) and its user agent (this sends UA, so a rule keyed
+    on Ollama's agent would not show here). Returns the number of tags that failed."""
+    base, failed = registry.rstrip("/"), 0
+    host = urllib.parse.urlsplit(base).hostname
+    for tag in v1["tags"]:
+        url = f"{base}/v2/grux/grux-local/manifests/{tag}"
+        try:
+            body, _ = fetch(url, {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+            m = json.loads(body)
+            blobs = [m["config"]] + list(m["layers"])   # Ollama appends the config to the layers it pulls
+            gguf = not any(l["mediaType"].endswith(".tensor") for l in m["layers"])
+        except Exception as e:
+            print(f"FAIL pullpath {tag}: no usable manifest ({e!r})")
+            failed += 1
+            continue
+        if not gguf:
+            continue
+        problems, targets = [], set()
+        for l in blobs:
+            try:
+                blob = f"{base}/v2/grux/grux-local/blobs/{l['digest']}"
+                st, h = _raw("HEAD", blob)
+                if st in (301, 302, 303, 307, 308) and urllib.parse.urlsplit(h.get("location", "")).hostname not in (None, host):
+                    problems.append(f"{l['digest'][7:19]} HEAD {st} to {urllib.parse.urlsplit(h['location']).hostname} (Ollama blocks a cross-host redirect here)")
+                elif st != 200 or h.get("content-length") != str(l["size"]):
+                    problems.append(f"{l['digest'][7:19]} HEAD {st}, length {h.get('content-length')} (want {l['size']})")
+                st, h = _raw("GET", blob)
+                loc = h.get("location")
+                if st not in (200, 301, 302, 303, 307, 308):   # download.go run(): any other status is an error
+                    problems.append(f"{l['digest'][7:19]} GET {st} (Ollama accepts only 200 or a redirect here)")
+                    continue
+                if not loc:
+                    problems.append(f"{l['digest'][7:19]} GET {st} with no Location (Ollama needs one to find the blob)")
+                    continue
+                loc = urllib.parse.urljoin(blob, loc)   # Go's resp.Location() resolves a relative one the same way
+                if base.startswith("https://") and not loc.startswith("https://"):
+                    problems.append(f"{l['digest'][7:19]} Location {loc[:60]} drops https (Ollama refuses the downgrade)")
+                    continue
+                st2, h2 = _raw("GET", loc, {"Range": "bytes=0-0"})
+                if st2 != 206:
+                    problems.append(f"{l['digest'][7:19]} Location answered {st2} to a ranged GET, not 206")
+                targets.add(urllib.parse.urlsplit(loc).hostname)
+            except Exception as e:
+                problems.append(f"{str(l.get('digest', '(no digest)') if isinstance(l, dict) else l)[7:19] or l!r} error {e!r}")
+        ok = not problems
+        failed += not ok
+        if ok:
+            print(f"PASS pullpath {tag}: {len(m['layers']) + 1} blobs, each HEAD answered on {host}, each GET redirected "
+                  f"to {', '.join(sorted(targets))} and answered 206 there")
+        else:
+            print(f"FAIL pullpath {tag}: {len(problems)} problems across {len(m['layers']) + 1} blobs on {host}")
+        for p in problems[:8]:
+            print(f"     {p}")
+    return failed
+
+
 def main():
     ap = argparse.ArgumentParser()
     for k, v in LIVE.items():
@@ -746,6 +825,7 @@ def main():
             failed += not ok
             print(f"{'PASS' if ok else 'FAIL'} registry {ref}: body {got if got.startswith('error') else got[:19]}, header {str(served)[:19]}, "
                   f"v1.json {d['manifest_digest'][:19]} ({url})")
+    failed += pull_path(a.registry, v1)
     if a.blobs:
         failed += not blob_burst(a.registry, v1, a.blobs)
     print("ALL PASS" if not failed else f"{failed} FAILED")
