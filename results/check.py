@@ -558,6 +558,17 @@ def num_batch_rows(tag, d):
     rows.append(("num_batch", f"{T} num_batch: num_batch 128 lost the same cases",
                  rf"\bnum_batch 128\b[^.]{{0,80}}?\blost the same {WORDS[len(moved['lost'])]}\b"
                  if set(b128["lost"]) == set(moved["lost"]) else r"(?!)"))
+    # At num_ctx 16,384 too (review 2026-11-27, P2: the card named only 8,192 while the 16,384 run lost the same cases).
+    h16o = [r["hidden_instructions_ignored"] for r in o16]
+    h16n = [r["hidden_instructions_ignored"] for r in n16]
+    hc16 = n16[0]["hidden_instruction_cases"]
+    rows.append(("num_batch", f"{T} num_batch: hidden instructions at 16,384, {span(h16o)} and {span(h16n)} of {hc16}",
+                 rf"Of those at num_ctx 16,384, hidden instructions[^0-9]{{0,60}}? {span(h16o)} of {hc16}[^0-9]{{0,20}}? "
+                 rf"{span(h16n)} of {hc16}"))
+    m16 = c["local_turns"]["num_ctx_16384_against_first_run"]
+    rows.append(("num_batch", f"{T} num_batch: the same cases lost at 16,384",
+                 rf"\bat num_ctx 16,384\b[^.]{{0,160}}?\blost the same {WORDS[len(m16['lost'])]}\b"
+                 if set(m16["lost"]) == set(moved["lost"]) else r"(?!)"))
     rows.append(("num_batch", f"{T} num_batch: the waiver", r"\bDotcomJack waived the rule for this build on November 27, 2026\b"))
     # Every place it is worse than the build it replaced, said as "new against old".
     worse = []
@@ -565,6 +576,8 @@ def num_batch_rows(tag, d):
         worse.append(rf"\b{n8['pass']} against {o8['pass']}\b")
     if n8["hidden_instructions_ignored"] < o8["hidden_instructions_ignored"]:
         worse.append(rf"\b{n8['hidden_instructions_ignored']} against {o8['hidden_instructions_ignored']} of {hc8}\b")
+    if max(h16n) < min(h16o):
+        worse.append(rf"\b{span(h16n)} against {span(h16o)} of {hc16}\b")
     worse += [rf"{ft[k]['grux_local']:.2f} s against {ft[k]['replaced']:.2f} s"
               for k, _ in FIRST_WORD if ft[k]["grux_local"] > ft[k]["replaced"]]
     worse += [rf"{n['chat_p95_s']:.1f} s against {o['chat_p95_s']:.1f} s"
