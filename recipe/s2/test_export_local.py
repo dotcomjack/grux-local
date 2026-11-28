@@ -360,10 +360,18 @@ cut = stub_sample(plain, pg)
 cut["done_reason"] = "length"   # a reply Ollama stopped at num_predict: the scorer passes it, it never ended
 as_text = stub_sample(tool_job, dict(g, tool_calls=[{"function": dict(
     g["tool_calls"][0]["function"], arguments=json.dumps(g["tool_calls"][0]["function"]["arguments"]))}]))
-s8, r8, e8 = export_rows([cut, as_text])
-check("a passing reply cut off at num_predict is not a row; it is counted as truncated",
-      cut["pass"] and not e8 and s8["dropped"]["truncated"] == 1 and [r["id"].split("#")[0] for r in r8]
-      == [tool_job["id"]], (e8, s8.get("dropped")))
+honest = next(c for c in SENT if c["family"] == "chat_honesty")
+unsaid = stub_sample(honest, tl.ideal_reply(honest, tl.request_local(honest, MODEL))["message"])
+unsaid["done_reason"] = None   # a runtime that does not say why it stopped: not trained, counted apart
+s8, r8, e8 = export_rows([cut, as_text, unsaid])
+check("a passing reply cut off at num_predict is not a row: counted as truncated, its job listed as passed but not "
+      "trained; one with no done_reason is counted apart",
+      cut["pass"] and unsaid["pass"] and not e8 and s8["dropped"]["truncated"] == 1
+      and s8["dropped"]["no_done_reason"] == 1 and [r["id"].split("#")[0] for r in r8] == [tool_job["id"]]
+      and s8["families"]["chat_plain"]["passed_not_trained"] == [plain["id"]]
+      and s8["families"]["chat_plain"]["zero_pass"] == [], (e8, s8.get("dropped")))
+check("the export names the model the rows' ABOUT_YOU line names", s8["model_name_in_prompt"] == "Grux Local",
+      s8.get("model_name_in_prompt"))
 check("tool arguments the model sent as a JSON string become the object render_target walks",
       as_text["pass"] and r8 and r8[0]["target"]["tool_calls"][0]["arguments"]
       == g["tool_calls"][0]["function"]["arguments"] and render_target(r8[0]["target"]).endswith("<|im_end|>\n"))

@@ -9,7 +9,8 @@ box_train.py's shape, the shape export_v3.py and gen_data.py write: the request 
 s2/train_local.py (deterministic) and compared with the request the sample recorded, and the model's reply as the
 target. A sample is paired only with the job it answered (job_sha) and the exact messages and tools it was sent.
 
-Jobs with no passing sample are where the model is weakest: they are listed by family and not trained on. Every row
+Jobs with no passing sample are where the model is weakest: they are listed by family (zero_pass) and not trained on;
+so are the jobs whose passing samples were all dropped below (passed_not_trained). Every row
 is checked before it is written, the reply included: contamination.TrainGate (a held-out v4 text, a v4 clone, a v3
 or v4 frame) and data_scan's key shapes and identity terms; a flagged row is dropped and counted by kind. The file then
 goes through the two gates a launcher reads: contamination.gate_file writes the gated copy and its .gate.json (it
@@ -89,8 +90,8 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
         raise SystemExit(f"refused: samples from {len(models)} models ({models}); rejection sampling trains a model on "
                          "its own replies, so export one model's run")
     gate = ct.TrainGate()
-    drop = {"job_gone": 0, "truncated": 0, "job_changed": 0, "request_changed": 0, "prefilled": 0, "duplicate": 0,
-            "over_cap": 0, "gate": {}, "data_scan": {}}
+    drop = {"job_gone": 0, "truncated": 0, "no_done_reason": 0, "job_changed": 0, "request_changed": 0,
+            "prefilled": 0, "duplicate": 0, "over_cap": 0, "gate": {}, "data_scan": {}}
     seen, kept, sampled, passing, rebuilt = {}, {}, {}, {}, {}
     out_rows = []
     for _, _, r in sorted(rows_in, key=lambda x: (x[2].get("seed") or 0, x[0], x[1])):
@@ -105,7 +106,7 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
             continue
         passing[case["id"]] = passing.get(case["id"], 0) + 1
         if r.get("done_reason") != "stop":   # cut off at num_predict: render_target would train it as finished
-            drop["truncated"] += 1
+            drop["truncated" if r.get("done_reason") else "no_done_reason"] += 1
             continue
         if r.get("job_sha") != train_local.case_sha([case]):
             drop["job_changed"] += 1
@@ -160,9 +161,13 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
                      "share_with_a_pass": round(sum(bool(passing.get(i)) for i in tried) / len(tried), 3) if tried else None,
                      "samples": sum(sampled.get(i, 0) for i in jobs), "passing_samples": sum(passing.get(i, 0) for i in jobs),
                      "zero_pass": sorted(i for i in tried if not passing.get(i)),
+                     "passed_not_trained": sorted(i for i in tried if passing.get(i) and not kept.get(i)),
                      "not_sampled": sorted(i for i in jobs if not sampled.get(i))}
     tried = [i for i in by_id if sampled.get(i)]
-    summary = {"run": os.path.abspath(run_dir), "model": models[0] if models else None, "per_case": per_case,
+    summary = {"run": os.path.abspath(run_dir), "model": models[0] if models else None,
+               # ABOUT_YOU in every row's system prompt names this (local_turn.display_name): the model trained on these
+               # rows reads its own name the same way only when its tag gives the same name
+               "model_name_in_prompt": train_local.lt.display_name(models[0]) if models else None, "per_case": per_case,
                "jobs_sent": len(by_id), "jobs_sampled": len(tried),
                "jobs_with_a_pass": sum(bool(passing.get(i)) for i in tried),
                "share_with_a_pass": round(sum(bool(passing.get(i)) for i in tried) / len(tried), 3) if tried else None,
@@ -192,7 +197,8 @@ def main():
     s = export(a.run, a.out or a.run, a.per_case, a.vocab or os.environ.get("GRUX_DATA_SCAN_VOCAB", ""))
     for fam, f in s["families"].items():
         print(f"{fam:13s} jobs {f['jobs']:5d}  sampled {f['sampled']:5d}  with a pass {f['with_a_pass']:5d} "
-              f"({f['share_with_a_pass']})  rows {f['rows']:5d}  zero-pass {len(f['zero_pass'])}")
+              f"({f['share_with_a_pass']})  rows {f['rows']:5d}  zero-pass {len(f['zero_pass'])}  passed, not trained "
+              f"{len(f['passed_not_trained'])}")
     print(json.dumps({k: s[k] for k in ("dropped", "gate_file", "data_scan")}, indent=1))
     print(f"EXPORT: {s['rows']} rows from {s['jobs_with_a_pass']} of {s['jobs_sampled']} sampled jobs "
           f"({s['share_with_a_pass']}), at most {s['per_case']} a job; {s['files']['train_local.gated.jsonl']}")
