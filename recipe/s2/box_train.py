@@ -67,9 +67,11 @@ def main():
     ap.add_argument("--merge-only", default="", help="adapter dir: merge and save, no training")
     ap.add_argument("--micro", type=int, default=1, help="examples per forward pass (length-bucketed)")
     ap.add_argument("--micro-tokens", type=int, default=24000, help="token ceiling per forward pass")
+    ap.add_argument("--seed", type=int, default=7, help="torch (LoRA init) and data-draw seed; Gate 1 runs one recipe "
+                    "under several seeds to measure run-to-run training noise")
     a = ap.parse_args()
-    torch.manual_seed(7)
-    random.seed(7)
+    torch.manual_seed(a.seed)
+    random.seed(a.seed)
     tok = transformers.AutoTokenizer.from_pretrained(a.model)
     cfg = transformers.AutoConfig.from_pretrained(a.model)
     cls = getattr(transformers, cfg.architectures[0])
@@ -261,7 +263,10 @@ def draw_settings(a):
                 h.update(chunk)
         a.data_sha256 = h.hexdigest()
     return {"accum": a.accum, "micro": a.micro, "micro_tokens": a.micro_tokens, "max_len": a.max_len,
-            "data_sha256": a.data_sha256}
+            "data_sha256": a.data_sha256, "seed": a.seed}
+
+
+SEED_BEFORE_FLAG = {"seed": 7}
 
 
 def resume_mismatch(meta, now):
@@ -270,6 +275,7 @@ def resume_mismatch(meta, now):
     had = meta.get("draws")
     if had is None:
         return None
+    had = dict(SEED_BEFORE_FLAG, **had)   # a checkpoint from before --seed (2026-11-28) drew with seed 7
     bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if had.get(k) != v]   # the data by its sha
     return ("the checkpoint's data draws differ: " + "; ".join(bad)) if bad else None
 

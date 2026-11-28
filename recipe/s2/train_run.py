@@ -198,7 +198,7 @@ def train(box, a, run_dir):
             log(f"resuming from {json.load(open(ckpt_tar + '.json'))}", run_dir)
         cmd = (f"{ALLOC} python box_train.py --model /workspace/base --data train.jsonl --out out --epochs {a.epochs} "
                f"--rank {a.rank} --accum {a.accum} --lr {a.lr} --save-every {a.save_every} --max-len {a.max_len} "
-               f"--micro {a.micro} --micro-tokens {a.micro_tokens}{resume}")
+               f"--micro {a.micro} --micro-tokens {a.micro_tokens} --seed {a.seed}{resume}")
     code, smi = box.sh("nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; "
                        "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader", timeout=60)
     log(f"GPU before training: {' | '.join(smi.strip().splitlines()) or 'no compute apps'}", run_dir)
@@ -490,6 +490,7 @@ def main():
                     help="keep only the adapter; a winner is rebuilt later (bounded space)")
     ap.add_argument("--micro", type=int, default=8, help="examples per forward pass")
     ap.add_argument("--micro-tokens", type=int, default=48000, help="token ceiling per forward pass")
+    ap.add_argument("--seed", type=int, default=7, help="box_train.py --seed: LoRA init and data draws (Gate 1 noise)")
     ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
     ap.add_argument("--meter-lane", default="grux-local")
     ap.add_argument("--charter", default="", help="swing charter file the meter checks before a GPU box")

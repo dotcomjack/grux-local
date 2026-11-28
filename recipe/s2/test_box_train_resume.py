@@ -11,8 +11,9 @@ import random
 import sys
 
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "box_train.py")).read()
-fns = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef)
-       and n.name in ("next_draw", "buckets", "resume_mismatch")]
+fns = [n for n in ast.parse(src).body if (isinstance(n, ast.FunctionDef)
+       and n.name in ("next_draw", "buckets", "resume_mismatch")) or (isinstance(n, ast.Assign)
+       and [getattr(t, "id", "") for t in n.targets] == ["SEED_BEFORE_FLAG"])]
 ns = {"random": random}
 exec(compile(ast.Module(body=fns, type_ignores=[]), "box_train.py", "exec"), ns)
 fails = 0
@@ -24,9 +25,9 @@ def check(name, ok):
     fails += 0 if ok else 1
 
 
-def run(examples, micro, accum, steps, start):
-    """The draws of steps start..steps-1, the way main() makes them: seed 7, replay start x accum, then train."""
-    random.seed(7)
+def run(examples, micro, accum, steps, start, seed=7):
+    """The draws of steps start..steps-1, the way main() makes them: seed, replay start x accum, then train."""
+    random.seed(seed)
     d = {"order": [], "queue": []}
     for _ in range(start * accum):
         ns["next_draw"](d, examples, micro, 4000)
@@ -51,6 +52,25 @@ check("a resume with another accum, micro or data file (same name, other bytes) 
       all(ns["resume_mismatch"]({"step": 5, "draws": dict(now, **{k: v})}, now)
           for k, v in (("accum", 4), ("micro", 1), ("micro_tokens", 16000), ("max_len", 8192), ("data_sha256", "bb" * 32))))
 check("a checkpoint from before draws were recorded resumes", ns["resume_mismatch"]({"step": 5}, now) is None)
+# --seed (2026-11-28, Gate 1): one recipe under several seeds measures run-to-run training noise.
+check("another seed draws another data order (micro 1 and buckets)",
+      all(run(examples, m, 8, 20, 0, seed=101) != run(examples, m, 8, 20, 0, seed=102) for m in (1, 4)))
+for micro in (1, 4):
+    whole = run(examples, micro, 8, 60, 0, seed=101)
+    check(f"micro {micro}: a seed-101 run resumed at step 13 trains what an unbroken seed-101 run trains",
+          run(examples, micro, 8, 60, 13, seed=101) == whole[13 * 8:])
+s7, s101 = dict(now, seed=7), dict(now, seed=101)
+check("a resume under another seed is refused", ns["resume_mismatch"]({"step": 5, "draws": dict(s101, seed=102)}, s101))
+check("a checkpoint recorded before --seed (no seed key) resumes at seed 7, the seed it drew with",
+      ns["resume_mismatch"]({"step": 5, "draws": dict(now)}, s7) is None)
+check("a checkpoint recorded before --seed is refused under any other seed",
+      ns["resume_mismatch"]({"step": 5, "draws": dict(now)}, s101) is not None)
+check("the seed reaches torch and the draws, and is recorded in every checkpoint",
+      "torch.manual_seed(a.seed)" in src and "random.seed(a.seed)" in src and "torch.manual_seed(7)" not in src
+      and '"seed": a.seed}' in src.split("def draw_settings")[1].split("def ")[0])
+tr = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_run.py")).read()
+check("train_run passes --seed to every fresh or resumed training run",
+      "--seed {a.seed}{resume}" in tr and 'ap.add_argument("--seed", type=int, default=7' in tr)
 check("the refusal is wired into the resume, before any step",
       'why = resume_mismatch(meta, draw_settings(a))' in src and src.index("resume_mismatch(meta") < src.index("model.train()")
       and "save_ckpt(model, opt, sched, step + 1, total, a.out, draw_settings(a))" in src)
