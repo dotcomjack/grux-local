@@ -198,7 +198,7 @@ def train(box, a, run_dir):
             log(f"resuming from {json.load(open(ckpt_tar + '.json'))}", run_dir)
         cmd = (f"{ALLOC} python box_train.py --model /workspace/base --data train.jsonl --out out --epochs {a.epochs} "
                f"--rank {a.rank} --accum {a.accum} --lr {a.lr} --save-every {a.save_every} --max-len {a.max_len} "
-               f"--micro {a.micro} --micro-tokens {a.micro_tokens}{resume}")
+               f"--micro {a.micro} --micro-tokens {a.micro_tokens} --seed {a.seed}{resume}")
     code, smi = box.sh("nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; "
                        "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader", timeout=60)
     log(f"GPU before training: {' | '.join(smi.strip().splitlines()) or 'no compute apps'}", run_dir)
@@ -367,7 +367,7 @@ def exit_code(status):
     """0 only for "done". 6: no box came up for --capacity-wait-hours. 7: every allowed box was reclaimed (the
     checkpoint is kept, a rerun resumes from it). 8: anything else that did not finish (meter refused, train or boot
     failed, not started). All of these used to end 0, so a chain logged "exit 0" for a run that had given up
-    (2026-11-20)."""
+    (2026-11-20). Before any box: 3 data scan refused, 4 scoring preflight refused, 9 seed refused (seed_conflict)."""
     if status == "done":
         return 0
     if status.startswith("no capacity"):
@@ -460,6 +460,23 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
     return status, spent
 
 
+def seed_conflict(run_dir, seed):
+    """None, or why a launch into run_dir under `seed` must stop: the run dir already holds a manifest, a checkpoint
+    or an adapter made under another seed (a manifest from before --seed, 2026-11-28, ran at 7). Checked here at $0;
+    box_train.py's resume_mismatch would only refuse a checkpoint after a box was paid for, and the merge-only path
+    (adapter out) never consults the seed."""
+    p = os.path.join(run_dir, "manifest.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        had = json.load(open(p)).get("seed", 7)
+    except (OSError, ValueError) as e:
+        return f"{p} unreadable ({type(e).__name__}); the run's seed is unknown"
+    if had != seed:
+        return f"{run_dir} was launched with seed {had}, this launch says {seed}: relaunch with --seed {had}"
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -490,6 +507,7 @@ def main():
                     help="keep only the adapter; a winner is rebuilt later (bounded space)")
     ap.add_argument("--micro", type=int, default=8, help="examples per forward pass")
     ap.add_argument("--micro-tokens", type=int, default=48000, help="token ceiling per forward pass")
+    ap.add_argument("--seed", type=int, default=7, help="box_train.py --seed: LoRA init and data draws (Gate 1 noise)")
     ap.add_argument("--meter", default="", help="path to a spend meter CLI (reserve/settle) to call around every box")
     ap.add_argument("--meter-lane", default="grux-local")
     ap.add_argument("--charter", default="", help="swing charter file the meter checks before a GPU box")
@@ -502,6 +520,12 @@ def main():
     a.data = os.path.abspath(a.data)
     size = a.model.split("-")[-1].lower()
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
+    why = seed_conflict(run_dir, a.seed)
+    if why:   # before the manifest is rewritten: a relaunch must not relabel a run, nor merge one seed under another.
+        # "STOP:" is what grux-round-watch.py reads as final (paged once, never relaunched); status.json is left as
+        # it was, so a finished tier still reads as scored.
+        log("STOP: seed refused: " + why, run_dir)
+        sys.exit(9)
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     if a.until == "all":   # scoring runs on this machine against the box: prove every set builds before paying
