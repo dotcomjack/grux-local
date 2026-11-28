@@ -6,9 +6,11 @@ buckets out of box_train.py (which imports torch at the top) so this runs anywhe
   python3 recipe/s2/test_box_train_resume.py
 """
 import ast
+import json
 import os
 import random
 import sys
+import tempfile
 
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "box_train.py")).read()
 fns = [n for n in ast.parse(src).body if (isinstance(n, ast.FunctionDef)
@@ -68,7 +70,23 @@ check("a checkpoint recorded before --seed is refused under any other seed",
 check("the seed reaches torch and the draws, and is recorded in every checkpoint",
       "torch.manual_seed(a.seed)" in src and "random.seed(a.seed)" in src and "torch.manual_seed(7)" not in src
       and '"seed": a.seed}' in src.split("def draw_settings")[1].split("def ")[0])
+check("a current checkpoint (seed recorded) resumes under its own seed",
+      ns["resume_mismatch"]({"step": 5, "draws": dict(s101)}, s101) is None)
 tr = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_run.py")).read()
+tns = {"os": os, "json": json}
+exec(compile(ast.Module(body=[n for n in ast.parse(tr).body if isinstance(n, ast.FunctionDef)
+                              and n.name == "seed_conflict"], type_ignores=[]), "train_run.py", "exec"), tns)
+with tempfile.TemporaryDirectory() as d:
+    check("a fresh run dir takes any seed", tns["seed_conflict"](d, 101) is None)
+    json.dump({"seed": 101}, open(os.path.join(d, "manifest.json"), "w"))
+    check("a relaunch with the run's own seed goes on", tns["seed_conflict"](d, 101) is None)
+    check("a relaunch that forgets --seed (7) into a seed-101 run is refused", tns["seed_conflict"](d, 7))
+    json.dump({"model": "Qwen/Qwen3.5-2B"}, open(os.path.join(d, "manifest.json"), "w"))
+    check("a manifest from before --seed is seed 7: a relaunch at 7 goes on, at 101 is refused",
+          tns["seed_conflict"](d, 7) is None and tns["seed_conflict"](d, 101))
+check("the seed check runs before the manifest is rewritten",
+      "why = seed_conflict(run_dir, a.seed)" in tr
+      and tr.index("why = seed_conflict(run_dir, a.seed)") < tr.index('open(os.path.join(run_dir, "manifest.json"), "w")'))
 check("train_run passes --seed to every fresh or resumed training run",
       "--seed {a.seed}{resume}" in tr and 'ap.add_argument("--seed", type=int, default=7' in tr)
 check("the refusal is wired into the resume, before any step",

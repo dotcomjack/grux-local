@@ -273,8 +273,8 @@ def resume_mismatch(meta, now):
     """None when a checkpoint's draw settings match this run's, else why the resume must stop. A checkpoint from
     before 2026-11-23 has none recorded; it resumes (its own run reseeded, so nothing it trained matches anyway)."""
     had = meta.get("draws")
-    if had is None:
-        return None
+    if had is None:   # before 2026-11-23: it reseeded on resume, so no seed check can make it match; train_run's
+        return None   # seed_conflict still refuses a relaunch under another seed than the run's manifest
     had = dict(SEED_BEFORE_FLAG, **had)   # a checkpoint from before --seed (2026-11-28) drew with seed 7
     bad = [f"{k} {had.get(k)!r} then, {v!r} now" for k, v in now.items() if had.get(k) != v]   # the data by its sha
     return ("the checkpoint's data draws differ: " + "; ".join(bad)) if bad else None

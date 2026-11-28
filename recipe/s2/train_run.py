@@ -460,6 +460,23 @@ def box_loop(a, run_dir, tag, base_tag, spent, box=None, meter=None, waiter=None
     return status, spent
 
 
+def seed_conflict(run_dir, seed):
+    """None, or why a launch into run_dir under `seed` must stop: the run dir already holds a manifest, a checkpoint
+    or an adapter made under another seed (a manifest from before --seed, 2026-11-28, ran at 7). Checked here at $0;
+    box_train.py's resume_mismatch would only refuse a checkpoint after a box was paid for, and the merge-only path
+    (adapter out) never consults the seed."""
+    p = os.path.join(run_dir, "manifest.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        had = json.load(open(p)).get("seed", 7)
+    except (OSError, ValueError) as e:
+        return f"{p} unreadable ({type(e).__name__}); the run's seed is unknown"
+    if had != seed:
+        return f"{run_dir} was launched with seed {had}, this launch says {seed}: relaunch with --seed {had}"
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -503,6 +520,10 @@ def main():
     a.data = os.path.abspath(a.data)
     size = a.model.split("-")[-1].lower()
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
+    why = seed_conflict(run_dir, a.seed)
+    if why:   # before the manifest is rewritten: a relaunch must not relabel a run, nor merge one seed under another
+        log("REFUSED: " + why, run_dir)
+        sys.exit(2)
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     if a.until == "all":   # scoring runs on this machine against the box: prove every set builds before paying
