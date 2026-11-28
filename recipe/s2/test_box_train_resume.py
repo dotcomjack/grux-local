@@ -84,6 +84,8 @@ with tempfile.TemporaryDirectory() as d:
     json.dump({"model": "Qwen/Qwen3.5-2B"}, open(os.path.join(d, "manifest.json"), "w"))
     check("a manifest from before --seed is seed 7: a relaunch at 7 goes on, at 101 is refused",
           tns["seed_conflict"](d, 7) is None and tns["seed_conflict"](d, 101))
+check("a seed refusal is a STOP: line (the round watcher's final state, never relaunched) with its own exit 9",
+      'log("STOP: seed refused: " + why, run_dir)' in tr and "sys.exit(9)" in tr.split("why = seed_conflict(")[1][:600])
 check("the seed check runs before the manifest is rewritten",
       "why = seed_conflict(run_dir, a.seed)" in tr
       and tr.index("why = seed_conflict(run_dir, a.seed)") < tr.index('open(os.path.join(run_dir, "manifest.json"), "w")'))

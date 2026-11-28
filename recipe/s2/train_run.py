@@ -367,7 +367,7 @@ def exit_code(status):
     """0 only for "done". 6: no box came up for --capacity-wait-hours. 7: every allowed box was reclaimed (the
     checkpoint is kept, a rerun resumes from it). 8: anything else that did not finish (meter refused, train or boot
     failed, not started). All of these used to end 0, so a chain logged "exit 0" for a run that had given up
-    (2026-11-20)."""
+    (2026-11-20). Before any box: 3 data scan refused, 4 scoring preflight refused, 9 seed refused (seed_conflict)."""
     if status == "done":
         return 0
     if status.startswith("no capacity"):
@@ -521,9 +521,11 @@ def main():
     size = a.model.split("-")[-1].lower()
     tag, base_tag = a.tag or f"grux-qwen35-{size}", f"base-qwen35-{size}"
     why = seed_conflict(run_dir, a.seed)
-    if why:   # before the manifest is rewritten: a relaunch must not relabel a run, nor merge one seed under another
-        log("REFUSED: " + why, run_dir)
-        sys.exit(2)
+    if why:   # before the manifest is rewritten: a relaunch must not relabel a run, nor merge one seed under another.
+        # "STOP:" is what grux-round-watch.py reads as final (paged once, never relaunched); status.json is left as
+        # it was, so a finished tier still reads as scored.
+        log("STOP: seed refused: " + why, run_dir)
+        sys.exit(9)
     json.dump({**vars(a), "tag": tag, "base_tag": base_tag, "holdout_sha": "1623e0e7", "think": suite.THINK,
                "train_rows": sum(1 for _ in open(a.data))}, open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     if a.until == "all":   # scoring runs on this machine against the box: prove every set builds before paying
