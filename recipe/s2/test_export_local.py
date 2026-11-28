@@ -5,11 +5,12 @@ No Daytona box, no registry, no model: a stub box answers each request with a re
   1. eval_run --set train_local, through main(): --passes 3 samples every job three times, pass k at seed 7 + k - 1,
      one window at a time, only the jobs 3.3.1 sends (the rest listed in the manifest); every sample keeps its
      request as sent, its reply as returned and its score; --temperature reaches every request, without it the
-     app's 0.5 does, and on any other set it is refused;
+     app's 0.5 does, and on any other set it is refused; --retry-failed is refused on this set;
   2. export_local turns the passing samples into rows: at most --per-case distinct replies a job (the same words in
      other spacing are one reply, the same tool with other arguments are two), paired only with the job and the
-     request a sample answered, never a prefilled turn, never a row TrainGate or the data scan flags; jobs with no
-     pass are listed by family; one model's samples only; a refused export leaves nothing a launcher could train on;
+     request a sample answered, never a prefilled turn, never a reply cut off at num_predict, never a row TrainGate
+     or the data scan flags, tool arguments always an object; jobs with no pass are listed by family; one model's
+     samples only; a refused export leaves nothing a launcher could train on;
   3. the output passes contamination --gate (its .gate.json, nothing dropped) and data_scan.check, and every row
      renders through box_train.render_target (read out of box_train.py, which imports torch at the top). The other
      half of box_train's parsing, tokenizer.apply_chat_template over messages and tools, needs the model's tokenizer
@@ -209,6 +210,10 @@ p = subprocess.run([sys.executable, os.path.join(RECIPE, "eval_run.py"), "--run"
                     "holdout_v4", "--models", MODEL, "--temperature", "0.7"], capture_output=True, text=True)
 check("--temperature on any other set is refused before any box",
       p.returncode != 0 and "--temperature is for --set train_local only" in p.stderr, p.stderr[-200:])
+p = subprocess.run([sys.executable, os.path.join(RECIPE, "eval_run.py"), "--run", tempfile.mkdtemp(), "--set",
+                    "train_local", "--models", MODEL, "--passes", "2", "--retry-failed"], capture_output=True, text=True)
+check("--retry-failed on train_local is refused before any box (a job passed once would get no second sample)",
+      p.returncode != 0 and "--retry-failed is not for --set train_local" in p.stderr, p.stderr[-200:])
 
 # --------------------------------------------------------------------------- 2 and 3. export_local
 
@@ -351,6 +356,17 @@ try:
     check("an export with no identity vocabulary is refused", False)
 except SystemExit as e:
     check("an export with no identity vocabulary is refused", "no identity vocabulary" in str(e))
+cut = stub_sample(plain, pg)
+cut["done_reason"] = "length"   # a reply Ollama stopped at num_predict: the scorer passes it, it never ended
+as_text = stub_sample(tool_job, dict(g, tool_calls=[{"function": dict(
+    g["tool_calls"][0]["function"], arguments=json.dumps(g["tool_calls"][0]["function"]["arguments"]))}]))
+s8, r8, e8 = export_rows([cut, as_text])
+check("a passing reply cut off at num_predict is not a row; it is counted as truncated",
+      cut["pass"] and not e8 and s8["dropped"]["truncated"] == 1 and [r["id"].split("#")[0] for r in r8]
+      == [tool_job["id"]], (e8, s8.get("dropped")))
+check("tool arguments the model sent as a JSON string become the object render_target walks",
+      as_text["pass"] and r8 and r8[0]["target"]["tool_calls"][0]["arguments"]
+      == g["tool_calls"][0]["function"]["arguments"] and render_target(r8[0]["target"]).endswith("<|im_end|>\n"))
 
 print("SELF-TEST", "PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

@@ -186,7 +186,8 @@ for c in [x for x in sent if x["family"] == "injection"]:
 n_inj = sum(c["family"] == "injection" for c in sent)
 check(f"on all {n_inj} sent injection cases the task done without naming the steering fails here and passes "
       "train_bank.score_train", not silent and n_inj > 300, silent[:3])
-web = next(c for c in sent if c["family"] == "injection" and "search the web" in c["inject"].lower())   # by its words
+web = next(c for c in sent if c["family"] == "injection" and "search the web" in c["inject"].lower()   # by its words
+           and "search_web" in reqs[c["id"]]["offered"])   # offered, so only the target rule can fail the call
 ro = next((n for n in reqs[web["id"]]["offered"] if n in rules.READ_ONLY and n != "search_web"), None)
 check("the read-only tool the paste asked for fails; another offered read-only tool passes",
       not tl.score_local(web, raw(ideal(web, reqs[web["id"]])["message"]["content"], [("search_web", {"query": "x"})]),

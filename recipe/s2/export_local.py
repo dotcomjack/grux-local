@@ -2,7 +2,8 @@
 """Training rows from a model's own samples of the train_local jobs (eval_run.py --set train_local --passes K).
 
 Rejection sampling. A sample is kept only when held-out local's scorer passed it (holdout_local.score_local:
-holdout_v2.score_v2 against the tools the turn offered), and a job keeps at most --per-case distinct replies (the
+holdout_v2.score_v2 against the tools the turn offered) and the model finished it (done_reason "stop": a reply cut off
+at num_predict would be trained as a finished one), and a job keeps at most --per-case distinct replies (the
 same words, normalized, and the same tool calls with the same arguments are one reply). Each kept reply is one row in
 box_train.py's shape, the shape export_v3.py and gen_data.py write: the request the model answered, rebuilt from
 s2/train_local.py (deterministic) and compared with the request the sample recorded, and the model's reply as the
@@ -53,17 +54,21 @@ def samples(run_dir):
 
 
 def calls(reply):
-    """The reply's tool calls as box_train.render_target reads them: [{"name", "arguments"}]."""
+    """The reply's tool calls as box_train.render_target reads them: [{"name", "arguments"}], the arguments read as the
+    scorer reads them (suite._args: a JSON string becomes its object), so a row never carries a string render_target
+    cannot walk."""
     out = []
     for x in reply.get("tool_calls") or []:
         f = x.get("function") or x
-        out.append({"name": f.get("name"), "arguments": f.get("arguments") or {}})
+        out.append({"name": f.get("name"), "arguments": suite._args({"function": f})})
     return out
 
 
 def reply_key(reply):
-    """One key per distinct reply: its words normalized, and each tool call with its arguments."""
-    return suite._norm(reply.get("content") or ""), json.dumps(calls(reply), sort_keys=True, ensure_ascii=False)
+    """One key per distinct reply: its words normalized (or, when no Latin letter or digit is left, its stripped text),
+    and each tool call with its arguments."""
+    text = reply.get("content") or ""
+    return suite._norm(text) or text.strip(), json.dumps(calls(reply), sort_keys=True, ensure_ascii=False)
 
 
 def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
@@ -84,8 +89,8 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
         raise SystemExit(f"refused: samples from {len(models)} models ({models}); rejection sampling trains a model on "
                          "its own replies, so export one model's run")
     gate = ct.TrainGate()
-    drop = {"job_gone": 0, "job_changed": 0, "request_changed": 0, "prefilled": 0, "duplicate": 0, "over_cap": 0,
-            "gate": {}, "data_scan": {}}
+    drop = {"job_gone": 0, "truncated": 0, "job_changed": 0, "request_changed": 0, "prefilled": 0, "duplicate": 0,
+            "over_cap": 0, "gate": {}, "data_scan": {}}
     seen, kept, sampled, passing, rebuilt = {}, {}, {}, {}, {}
     out_rows = []
     for _, _, r in sorted(rows_in, key=lambda x: (x[2].get("seed") or 0, x[0], x[1])):
@@ -93,10 +98,15 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
         if case is None:
             drop["job_gone"] += 1
             continue
+        if r.get("status") != "scored":   # the server never answered it: no reply, so not a sample of the model
+            continue
         sampled[case["id"]] = sampled.get(case["id"], 0) + 1
         if not r.get("pass"):
             continue
         passing[case["id"]] = passing.get(case["id"], 0) + 1
+        if r.get("done_reason") != "stop":   # cut off at num_predict: render_target would train it as finished
+            drop["truncated"] += 1
+            continue
         if r.get("job_sha") != train_local.case_sha([case]):
             drop["job_changed"] += 1
             continue
@@ -157,6 +167,8 @@ def export(run_dir, out_dir, per_case=PER_CASE, vocab=""):
                "jobs_with_a_pass": sum(bool(passing.get(i)) for i in tried),
                "share_with_a_pass": round(sum(bool(passing.get(i)) for i in tried) / len(tried), 3) if tried else None,
                "rows": len(out_rows), "samples": sum(sampled.values()), "passing_samples": sum(passing.values()),
+               "temperatures": sorted({r.get("temperature") for _, _, r in rows_in if r.get("status") == "scored"},
+                                      key=str),
                "dropped": drop, "families": fams, "gate_file": {k: gate_rep[k] for k in ("rows", "kept", "dropped")},
                "data_scan": scan_msg, "files": {k: os.path.abspath(p) for k, p in paths.items()}}
     with open(paths["export_local.json"], "x", encoding="utf-8") as f:

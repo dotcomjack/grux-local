@@ -461,6 +461,9 @@ def main():
         raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
     if a.temperature is not None and a.set != "train_local":
         raise SystemExit("--temperature is for --set train_local only: a scoring run keeps its baseline's sampling")
+    if a.retry_failed and a.set == "train_local":
+        raise SystemExit("--retry-failed is not for --set train_local: every pass samples every job, or a job the model "
+                         "passed once never gets the second reply --per-case can keep")
     NUM_BATCH = a.num_batch
     if a.set in ("holdout_v3", "holdout_v4", "train_v3"):
         sys.path.insert(0, os.path.join(HERE, "s2"))
@@ -557,7 +560,7 @@ def _run(a, run_dir, models, cases, expect, base_seed, extra=None):
                                     + (f"-{a.set}" if V3 or LOCAL else ""))
                 path = stem + (f"-pass{k}" if a.passes > 1 else "") + ".jsonl"
                 # scoring passes keep one seed (baseline); a train_local pass is a new sample of every job
-                suite.SEED = base_seed + (k - 1 if a.retry_failed or LOCAL else 0)
+                suite.SEED = base_seed + (k - 1 if a.retry_failed or LOCAL is not None else 0)
                 HINT_NOW = bool(a.hint_from_pass) and k >= a.hint_from_pass
                 skip = passed_ids([f"{stem}-pass{j}.jsonl" for j in range(1, k)]) if a.retry_failed and k > 1 else ()
                 last = not any(m == model for m, _ in pending[1:])
