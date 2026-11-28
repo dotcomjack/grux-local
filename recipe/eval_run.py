@@ -11,6 +11,13 @@ cases already scored are skipped. Stops at the card's dollar cap.
 
 --set holdout_v3 --models a,b scores held-out v3 (s2/holdout_v3.py) instead, each job step by step; --set holdout_v4
 scores held-out v4 (s2/holdout_v4.py) the same way, through v3's runner and scorer.
+
+--set train_local --models <the current model> --passes K samples that model's own replies to the train_local jobs
+(s2/train_local.py: the training bank's chat turns as Grux 3.3.1 sends them, each at its own window and clock), K
+times per job: pass k sends seed + k - 1, and --temperature T replaces the app's 0.5. Each sample is scored by
+held-out local's scorer and written with its full request, its full reply and the score, so s2/export_local.py can
+rebuild the training row and pair it only with the request it answered. Jobs go out one window at a time (Ollama
+reloads the runner when num_ctx changes); jobs 3.3.1 answers with no model are listed in the manifest, never sent.
 """
 import argparse
 import urllib.error
@@ -63,9 +70,13 @@ KEEP_RAW = False   # train_v3: keep each step's raw answer, the training target 
 TRAIN_PROMPT = None   # train_v3: s2/train_prompt.py, the job's own tools (decision 1) and the retry hint (decision 2)
 HINT_NOW = False      # this pass sends the hint to the teacher
 NUM_BATCH = 0         # train_v3: llama.cpp batch size sent with every request (0 = Ollama's default, 512)
+LOCAL = None          # train_local: s2/train_local.py (its requests, held-out local's scorer)
+TEMPERATURE = None    # train_local: options.temperature on every request (None keeps the app's 0.5)
 
 
 def one(box, model, case):
+    if LOCAL is not None:
+        return one_local(box, model, case)
     if V3 is not None:
         return one_v3(box, model, case)
     req = suite.request(case, model)
@@ -118,6 +129,32 @@ def one_v3(box, model, case):
             row["tools_sha"] = TRAIN_PROMPT.tools_sha(case)   # ... and only with the tools it was offered
             row["hint"] = bool(hint and TRAIN_PROMPT.hint_for(case))
     return row
+
+
+def one_local(box, model, case):
+    """One sample of a train_local job: the 3.3.1 request at the job's window and clock under this pass's seed (and
+    --temperature, when given), scored by held-out local's scorer. The row keeps the request as sent, the reply as
+    returned and the score; a malformed reply fails its sample, a failed post is retried by the caller."""
+    req = LOCAL.request_local(case, model)
+    body = req["body"]
+    if TEMPERATURE is not None:
+        body = dict(body, options=dict(body["options"], temperature=TEMPERATURE))
+    t0 = time.time()
+    try:
+        raw = box.post(req["path"], body, timeout=600)
+    except Exception as e:
+        return {"case": case["id"], "family": case["family"], "status": "error",
+                "error": f"{type(e).__name__}: {str(e)[:200]}", "s": round(time.time() - t0, 2)}
+    try:
+        ok, why, got = LOCAL.score_local(case, raw, req)
+    except (TypeError, ValueError, AttributeError, KeyError, IndexError) as e:
+        ok, why, got = False, f"unparseable answer ({type(e).__name__})", {}
+    return {"case": case["id"], "family": case["family"], "status": "scored", "pass": ok, "why": why, "got": got,
+            "s": round(time.time() - t0, 2), "model": model, "seed": body["options"]["seed"],
+            "temperature": body["options"]["temperature"], "num_ctx": body["options"]["num_ctx"],
+            "job_sha": LOCAL.case_sha([case]), "offered": req["offered"], "prefill": req["prefill"],
+            "request": body, "reply": raw.get("message") or {}, "done_reason": raw.get("done_reason"),
+            "prompt_tokens": raw.get("prompt_eval_count"), "out_tokens": raw.get("eval_count")}
 
 
 def probe(box, model, expect_digest=None, timeout=900):
@@ -231,8 +268,13 @@ def interleave(cases):
 
 
 def todo_for(cases, have):
-    """The jobs left to run: a teacher pass (train_v3) interleaves families; a scoring run keeps bank order."""
+    """The jobs left to run: a teacher pass (train_v3) interleaves families; a scoring run keeps bank order; a
+    train_local pass runs one window at a time (Ollama reloads the runner when num_ctx changes), families
+    interleaved within each."""
     todo = [c for c in cases if c["id"] not in have]
+    if LOCAL is not None:
+        return [c for w in sorted({x["num_ctx"] for x in todo}) for c in interleave([x for x in todo
+                                                                                       if x["num_ctx"] == w])]
     return interleave(todo) if KEEP_RAW else todo
 
 
@@ -383,10 +425,15 @@ def main():
     ap.add_argument("--candidates", action="store_true", help="run candidates.json instead of the Cookbook catalog")
     ap.add_argument("--meter", default="", help="spend meter CLI: each box is reserved and settled on its own")
     ap.add_argument("--meter-lane", default="grux")
-    ap.add_argument("--set", choices=["s1", "holdout_v3", "holdout_v4", "train_v3"], default="s1",
+    ap.add_argument("--set", choices=["s1", "holdout_v3", "holdout_v4", "train_v3", "train_local"], default="s1",
                     help="holdout_v3: held-out v3 (s2/holdout_v3.py), each job step by step; holdout_v4: held-out v4 "
                          "(s2/holdout_v4.py), the same way; train_v3: the v3 training "
-                         "bank (s2/train_bank_v3.py) answered by a teacher, raw answers kept; both need --models")
+                         "bank (s2/train_bank_v3.py) answered by a teacher, raw answers kept; train_local: the "
+                         "train_local jobs (s2/train_local.py) sampled from the model itself, --passes K samples per "
+                         "job; all need --models")
+    ap.add_argument("--temperature", type=float, default=None,
+                    help="train_local only: options.temperature on every request (default: the app's own 0.5); "
+                         "scoring runs keep their baseline's sampling")
     ap.add_argument("--seed", type=int, default=None, help="request seed; with --retry-failed pass k uses seed + k - 1")
     ap.add_argument("--hint-from-pass", type=int, default=0,
                     help="train_v3: from this pass on, the teacher's system prompt carries the family hint (0 = never)")
@@ -409,14 +456,20 @@ def main():
         suite.THINK = False
     run_dir = os.path.abspath(a.run)
     os.makedirs(run_dir, exist_ok=True)
-    global KEEP_RAW, TRAIN_PROMPT, NUM_BATCH
+    global KEEP_RAW, TRAIN_PROMPT, NUM_BATCH, LOCAL, TEMPERATURE
     if a.num_batch and a.set != "train_v3":
         raise SystemExit("--num-batch is for --set train_v3 only: a scoring run keeps its baseline's runtime")
+    if a.temperature is not None and a.set != "train_local":
+        raise SystemExit("--temperature is for --set train_local only: a scoring run keeps its baseline's sampling")
+    if a.retry_failed and a.set == "train_local":
+        raise SystemExit("--retry-failed is not for --set train_local: every pass samples every job, or a job the model "
+                         "passed once never gets the second reply --per-case can keep")
     NUM_BATCH = a.num_batch
     if a.set in ("holdout_v3", "holdout_v4", "train_v3"):
         sys.path.insert(0, os.path.join(HERE, "s2"))
         import holdout_v3
         V3 = holdout_v3   # the runner and scorer for every v3-shaped set
+    extra = {}
     if a.set == "train_v3":
         import train_bank_v3
         import train_prompt
@@ -425,13 +478,21 @@ def main():
     elif a.set == "holdout_v4":
         import holdout_v4
         cases = holdout_v4.cases()
+    elif a.set == "train_local":
+        sys.path.insert(0, os.path.join(HERE, "s2"))
+        import train_local
+        LOCAL, TEMPERATURE = train_local, a.temperature
+        every = train_local.cases()
+        cases = train_local.sent(every)   # 3.3.1 answers the rest itself: listed in the manifest, never sent
+        extra = {"sent": len(cases), "not_sent": train_local.not_sent(every),
+                 "dropped_before_sampling": len(train_local.dropped())}
     else:
         cases = V3.cases() if V3 else suite.cases()
     base_seed = a.seed if a.seed is not None else suite.SEED
     if a.limit:
         seen = {}
         cases = [c for c in cases if seen.setdefault(c["family"], []).append(1) or len(seen[c["family"]]) <= a.limit]
-    if V3:
+    if V3 or LOCAL:
         if not a.models:
             raise SystemExit(f"--set {a.set} needs --models (the catalog is the S1 Cookbook's)")
         models = a.models.split(",")
@@ -448,18 +509,19 @@ def main():
         raise SystemExit(f"REFUSED before any box: no registry serves {gone}; could not verify {unsure}")
     claim_pid(run_dir)
     try:
-        _run(a, run_dir, models, cases, expect, base_seed)
+        _run(a, run_dir, models, cases, expect, base_seed, extra)
     finally:
         release_pid(run_dir)
 
 
-def _run(a, run_dir, models, cases, expect, base_seed):
+def _run(a, run_dir, models, cases, expect, base_seed, extra=None):
     global HINT_NOW
     json.dump({"cases": len(cases), "families": suite.family_counts(cases), "models": models, "set": a.set,
                "gpu": a.gpu, "cap": a.cap, "think": a.think, "mlx": a.mlx, "passes": a.passes, "limit": a.limit,
                "kill": [a.kill_model, a.kill_at], "expect_digest": expect, "hint_from_pass": a.hint_from_pass,
-               "num_batch": a.num_batch,
-               "suite_sha": V3.case_sha(cases) if V3 else suite.fingerprint(cases)},
+               "num_batch": a.num_batch, "temperature": a.temperature,
+               "suite_sha": (V3 or LOCAL).case_sha(cases) if V3 or LOCAL else suite.fingerprint(cases),
+               **(extra or {})},
               open(os.path.join(run_dir, "manifest.json"), "w"), indent=1)
     spent = 0.0
     attempts = 0
@@ -494,9 +556,11 @@ def _run(a, run_dir, models, cases, expect, base_seed):
                     not_run, stopped_by, pending = list(pending), "cap", []
                     break
                 model, k = pending[0]
-                stem = os.path.join(run_dir, model.replace(":", "_").replace("/", "_") + (f"-{a.set}" if V3 else ""))
+                stem = os.path.join(run_dir, model.replace(":", "_").replace("/", "_")
+                                    + (f"-{a.set}" if V3 or LOCAL else ""))
                 path = stem + (f"-pass{k}" if a.passes > 1 else "") + ".jsonl"
-                suite.SEED = base_seed + (k - 1 if a.retry_failed else 0)   # scoring passes keep one seed (baseline)
+                # scoring passes keep one seed (baseline); a train_local pass is a new sample of every job
+                suite.SEED = base_seed + (k - 1 if a.retry_failed or LOCAL is not None else 0)
                 HINT_NOW = bool(a.hint_from_pass) and k >= a.hint_from_pass
                 skip = passed_ids([f"{stem}-pass{j}.jsonl" for j in range(1, k)]) if a.retry_failed and k > 1 else ()
                 last = not any(m == model for m, _ in pending[1:])

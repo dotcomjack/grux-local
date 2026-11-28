@@ -1097,14 +1097,16 @@ _VOLATILE_SUBS = {  # each interpolation in the volatile literals that is not a 
 }
 
 
-def volatile_v331(asks):
+def volatile_v331(asks, now_line=None):
     """The uncached per-turn block of a lean 3.3.1 turn, read from its literals (ChatService.swift:3219-3279) for a
     fresh install: no tasks, actions, focus events or macros (VoiceMacros.swift:579-581), no ambient or pending
     memories, nothing retrieved, nobody known named; the NOW, mode, music, task and app lines are suite.VOLATILE's
     (unchanged since 3.1.0). Which sections ride is ChatIntentClassifier.classify's call (asks["sections"]); the
-    weather note and the draft, list or pasted-text note are the app's own (asks["notes"])."""
+    weather note and the draft, list or pasted-text note are the app's own (asks["notes"]). now_line replaces the NOW
+    line (s2/train_local.py: a training case's dates are relative to its own clock), as chat_request's does."""
     chat = _chat_source_v331(src_v331())
-    lines = dict(line.split(": ", 1) for line in suite.VOLATILE.strip().split("\n")[:5])
+    vol = suite.VOLATILE if now_line is None else suite.VOLATILE.replace("NOW: " + suite.NOW, "NOW: " + now_line, 1)
+    lines = dict(line.split(": ", 1) for line in vol.strip().split("\n")[:5])
     task, proposed, focus, macros = asks["sections"]
     blocks = {
         "taskStackBlock": _literal_after(chat, "let taskStackBlock = intent.taskStack ? ", {"TASKS": "(empty)"}) if task else "",
@@ -1127,10 +1129,10 @@ def volatile_v331(asks):
     return _literal_after(chat, "let volatile = ", names)
 
 
-def system_blocks_v331(model_id, asks):
+def system_blocks_v331(model_id, asks, now_line=None):
     """ChatService.composeSystemBlocks(stable:developer: nil, summary: nil, volatile:), ChatService.swift:3301-3316."""
     return [{"type": "text", "text": lean_system_v331(model_id), "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": volatile_v331(asks)}]
+            {"type": "text", "text": volatile_v331(asks, now_line)}]
 
 
 # --------------------------------------------------------------------------- the asks the app answers itself
@@ -1206,13 +1208,13 @@ def not_sent_reason(asks):
 
 # --------------------------------------------------------------------------- the 3.3.1 turn
 
-def assemble_v331(text, model_id, memory_gb=16, asks=None):
+def assemble_v331(text, model_id, memory_gb=16, asks=None, now_line=None):
     """ChatService.assemblePendingContext's lean branch, ChatService.swift:1092-1208, for a one-message chat with no
     preset, no image and no tool run in the last fifteen minutes. Returns the system blocks, the messages, the
     offered tools (wire order), which list the turn took and why, and what was cut."""
     asks = asks or asks_v331(text)
     window = context_tokens(memory_gb)                       # LocalTurn.contextTokens, LocalTurn.swift:23-29
-    blocks = system_blocks_v331(model_id, asks)
+    blocks = system_blocks_v331(model_id, asks, now_line)
     every = all_tools_v331()
     tools = relevance_filter_v331(every, text)               # ChatService.swift:1108-1112
     messages = [{"role": "user", "content": text}]           # ChatService.modelFacingMessages, ChatService.swift:1706-1728
@@ -1283,19 +1285,20 @@ def wire_messages_v331(blocks, messages):
     return [{"role": "system", "content": stable}] + out
 
 
-def chat_request_v331(text, model, memory_gb=16):
+def chat_request_v331(text, model, memory_gb=16, now_line=None, asks=None):
     """The request Grux 3.3.1 sends Ollama for a one-message local chat turn, or, when the app answers the message
     itself, no request: {"not_sent": <fast path>}. num_ctx is this Mac's window (LocalTurn.contextTokens), seed 7 is
     the eval's own (suite.SEED), and every other field is the app's (OpenAICompatBackend.ollamaChatBody,
-    OpenAICompatBackend.swift:290-309; streamedChatBody, OpenAICompatBackend.swift:552-563)."""
+    OpenAICompatBackend.swift:290-309; streamedChatBody, OpenAICompatBackend.swift:552-563). now_line and asks are
+    for a message read at another clock (s2/train_local.py): its NOW line and what the app's classifiers said at it."""
     # A waiting workflow's gate (ChatService.swift:215) needs a run in flight: a fresh install has none.
     if commands_v2_match(text):                              # ChatService.swift:221-270
         return {"not_sent": "commands_v2"}
-    asks = asks_v331(text)
+    asks = asks or asks_v331(text)
     reason = not_sent_reason(asks)
     if reason:
         return {"not_sent": reason}
-    turn = assemble_v331(text, model, memory_gb, asks)
+    turn = assemble_v331(text, model, memory_gb, asks, now_line)
     body = {"model": model, "messages": wire_messages_v331(turn["system_blocks"], turn["messages"]), "stream": False,
             "think": False, "keep_alive": KEEP_ALIVE,
             "options": {"num_ctx": turn["window"], "num_predict": CHAT_MAX_TOKENS, "temperature": 0.5,
